@@ -23,6 +23,8 @@
 #include <ArduinoOTA.h>
 #include <thingsboard.h>
 #include <TaskManagerIO.h>
+#include "logging.h"
+#include "serialLogger.h"
 
 #define countof(a) (sizeof(a) / sizeof(a[0]))
 #define COMPILED __DATE__ " " __TIME__
@@ -130,6 +132,9 @@ Config config;
 ConfigCoMCU configcomcu;
 ThingsBoardSized<DOCSIZE, 64> tb(ssl);
 volatile bool provisionResponseProcessed = false;
+ESP32SerialLogger serial_logger;
+LogManager *log_manager = LogManager::GetInstance(LogLevel::VERBOSE);
+
 
 void startup() {
   // put your setup code here, to run once:
@@ -139,6 +144,7 @@ void startup() {
   #endif
 
   config.logLev = 5;
+  log_manager->add_logger(&serial_logger);
   if(!SPIFFS.begin(true))
   {
     //configReset();
