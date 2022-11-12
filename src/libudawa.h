@@ -39,9 +39,6 @@
 
 const char* configFile = "/cfg.json";
 const char* configFileCoMCU = "/comcu.json";
-char logBuff[LOG_REC_LENGTH];
-char _logRec[LOG_REC_SIZE][LOG_REC_LENGTH];
-uint8_t _logRecIndex;
 bool FLAG_IOT_SUBSCRIBE = false;
 bool FLAG_IOT_INIT = false;
 bool FLAG_OTA_UPDATE_INIT = false;
@@ -112,8 +109,6 @@ void configCoMCUSave();
 void configCoMCUReset();
 bool loadFile(const char* filePath, char* buffer);
 callbackResponse processProvisionResponse(const callbackData &data);
-void recordLog(uint8_t level, const char* fileName, int, const char* functionName);
-void iotSendLog();
 void iotInit();
 void startup();
 void networkInit();
@@ -149,14 +144,11 @@ void startup() {
   {
     //configReset();
     configLoadFailSafe();
-    log_manager->error(PSTR("SPIFFS"), PSTR("Problem with file system. Failsafe config was loaded."));
-    sprintf_P(logBuff, PSTR("Problem with file system. Failsafe config was loaded."));
-    recordLog(1, PSTR(__FILE__), __LINE__, PSTR(__func__));
+    log_manager->error(PSTR(__func__), PSTR("Problem with file system. Failsafe config was loaded.\n"));
   }
   else
   {
-    sprintf_P(logBuff, PSTR("Loading config..."));
-    recordLog(5, PSTR(__FILE__), __LINE__, PSTR(__func__));
+    log_manager->info(PSTR(__func__), PSTR("Loading config...\n"));
     configLoad();
   }
 }
@@ -171,8 +163,7 @@ void networkInit()
   if(!config.wssid || *config.wssid == 0x00 || strlen(config.wssid) > 32)
   {
     configLoadFailSafe();
-    sprintf_P(logBuff, PSTR("SSID too long or missing! Failsafe config was loaded."));
-    recordLog(1, PSTR(__FILE__), __LINE__, PSTR(__func__));
+    log_manager->error(PSTR(__func__), PSTR("SSID too long or missing! Failsafe config was loaded.\n"));
   }
   WiFi.begin(config.wssid, config.wpass);
   WiFi.setHostname(config.name);
@@ -220,8 +211,7 @@ void udawa() {
 
 void reboot()
 {
-  sprintf_P(logBuff, PSTR("Device rebooting..."));
-  recordLog(1, PSTR(__FILE__), __LINE__, PSTR(__func__));
+  log_manager->info(PSTR(__func__),PSTR("Device rebooting...\n"));
   esp_task_wdt_init(1,true);
   esp_task_wdt_add(NULL);
   while(true);
@@ -268,12 +258,10 @@ void otaUpdateInit()
 void iotInit()
 {
   int freeHeap = ESP.getFreeHeap();
-  sprintf_P(logBuff, PSTR("Initializing IoT, available memory: %d"), freeHeap);
-  recordLog(4, PSTR(__FILE__), __LINE__, PSTR(__func__));
+  log_manager->info(PSTR(__func__),PSTR("Initializing IoT, available memory: %d\n"), freeHeap);
   if(freeHeap < 92000)
   {
-    sprintf_P(logBuff, PSTR("Unable to init IoT, insufficient memory: %d"), freeHeap);
-    recordLog(4, PSTR(__FILE__), __LINE__, PSTR(__func__));
+    log_manager->error(PSTR(__func__),PSTR("Unable to init IoT, insufficient memory: %d\n"), freeHeap);
     return;
   }
   if(!config.provSent)
@@ -281,12 +269,10 @@ void iotInit()
     ThingsBoardSized<DOCSIZE, 64> tbProvision(ssl);
     if(!tbProvision.connected())
     {
-      sprintf_P(logBuff, PSTR("Starting provision initiation to %s:%d"),  config.broker, config.port);
-      recordLog(4, PSTR(__FILE__), __LINE__, PSTR(__func__));
+      log_manager->info(PSTR(__func__),PSTR("Starting provision initiation to %s:%d\n"),  config.broker, config.port);
       if(tbProvision.connect(config.broker, "provision", config.port))
       {
-        sprintf_P(logBuff, PSTR("Connected to provisioning server: %s:%d"),  config.broker, config.port);
-        recordLog(5, PSTR(__FILE__), __LINE__, PSTR(__func__));
+        log_manager->info(PSTR(__func__),PSTR("Connected to provisioning server: %s:%d\n"),  config.broker, config.port);
 
         GenericCallback cb[2] = {
           { "provisionResponse", processProvisionResponse },
@@ -296,8 +282,7 @@ void iotInit()
         {
           if(tbProvision.sendProvisionRequest(config.name, config.provisionDeviceKey, config.provisionDeviceSecret))
           {
-            sprintf_P(logBuff, PSTR("Provision request was sent! Waiting for response."));
-            recordLog(5, PSTR(__FILE__), __LINE__, PSTR(__func__));
+            log_manager->info(PSTR(__func__),PSTR("Provision request was sent! Waiting for response.\n"));
             unsigned long timer = millis();
             while(true)
             {
@@ -313,8 +298,7 @@ void iotInit()
       }
       else
       {
-        sprintf_P(logBuff, PSTR("Failed to connect to provisioning server: %s:%d"),  config.broker, config.port);
-        recordLog(1, PSTR(__FILE__), __LINE__, PSTR(__func__));
+        log_manager->error(PSTR(__func__),PSTR("Failed to connect to provisioning server: %s:%d\n"),  config.broker, config.port);
         return;
       }
     }
@@ -323,18 +307,14 @@ void iotInit()
   {
     if(!tb.connected())
     {
-      sprintf_P(logBuff, PSTR("Connecting to broker %s:%d"), config.broker, config.port);
-      recordLog(5, PSTR(__FILE__), __LINE__, PSTR(__func__));
+      log_manager->info(PSTR(__func__),PSTR("Connecting to broker %s:%d\n"), config.broker, config.port);
       if(!tb.connect(config.broker, config.accessToken, config.port, config.name))
       {
-        sprintf_P(logBuff, PSTR("Failed to connect to IoT Broker %s"), config.broker);
-        recordLog(1, PSTR(__FILE__), __LINE__, PSTR(__func__));
+        log_manager->error(PSTR(__func__),PSTR("Failed to connect to IoT Broker %s\n"), config.broker);
         return;
       }
 
-      iotSendLog();
-      sprintf_P(logBuff, PSTR("IoT Connected!"));
-      recordLog(5, PSTR(__FILE__), __LINE__, PSTR(__func__));
+      log_manager->info(PSTR(__func__),PSTR("IoT Connected!"));
       FLAG_IOT_SUBSCRIBE = true;
     }
   }
@@ -342,8 +322,7 @@ void iotInit()
 
 void cbWifiOnConnected(WiFiEvent_t event, WiFiEventInfo_t info)
 {
-  sprintf_P(logBuff, PSTR("WiFi Connected to %s"), WiFi.SSID().c_str());
-  recordLog(4, PSTR(__FILE__), __LINE__, PSTR(__func__));
+  log_manager->info(PSTR(__func__),PSTR("WiFi Connected to %s\n"), WiFi.SSID().c_str());
   WIFI_RECONNECT_ATTEMPT = 0;
 }
 
@@ -354,15 +333,13 @@ void cbWiFiOnDisconnected(WiFiEvent_t event, WiFiEventInfo_t info)
   {
     if(!WIFI_IS_DEFAULT)
     {
-      sprintf_P(logBuff, PSTR("WiFi (%s) Disconnected! Attempt: %d/%d"), config.dssid, WIFI_RECONNECT_ATTEMPT, WIFI_FALLBACK_COUNTER);
-      recordLog(4, PSTR(__FILE__), __LINE__, PSTR(__func__));
+      log_manager->error(PSTR(__func__),PSTR("WiFi (%s) Disconnected! Attempt: %d/%d\n"), config.dssid, WIFI_RECONNECT_ATTEMPT, WIFI_FALLBACK_COUNTER);
       WiFi.begin(config.dssid, config.dpass);
       WIFI_IS_DEFAULT = true;
     }
     else
     {
-      sprintf_P(logBuff, PSTR("WiFi (%s) Disconnected! Attempt: %d/%d"), config.wssid, WIFI_RECONNECT_ATTEMPT, WIFI_FALLBACK_COUNTER);
-      recordLog(4, PSTR(__FILE__), __LINE__, PSTR(__func__));
+      log_manager->info(PSTR(__func__),PSTR("WiFi (%s) Disconnected! Attempt: %d/%d\n"), config.wssid, WIFI_RECONNECT_ATTEMPT, WIFI_FALLBACK_COUNTER);
       WiFi.begin(config.wssid, config.wpass);
       WIFI_IS_DEFAULT = false;
     }
@@ -376,8 +353,7 @@ void cbWiFiOnDisconnected(WiFiEvent_t event, WiFiEventInfo_t info)
 
 void cbWiFiOnLostIp(WiFiEvent_t event, WiFiEventInfo_t info)
 {
-  sprintf_P(logBuff, PSTR("WiFi (%s) IP Lost!"), WiFi.SSID().c_str());
-  recordLog(4, PSTR(__FILE__), __LINE__, PSTR(__func__));
+  log_manager->error(PSTR(__func__),PSTR("WiFi (%s) IP Lost!\n"), WiFi.SSID().c_str());
   WiFi.reconnect();
 }
 
@@ -392,19 +368,16 @@ void configReset()
   bool formatted = SPIFFS.format();
   if(formatted)
   {
-    sprintf_P(logBuff, PSTR("SPIFFS formatting success."));
-    recordLog(3, PSTR(__FILE__), __LINE__, PSTR(__func__));
+    log_manager->info(PSTR(__func__),PSTR("SPIFFS formatting success.\n"));
   }
   else
   {
-    sprintf_P(logBuff, PSTR("SPIFFS formatting failed."));
-    recordLog(3, PSTR(__FILE__), __LINE__, PSTR(__func__));
+    log_manager->error(PSTR(__func__),PSTR("SPIFFS formatting failed.\n"));
   }
   File file;
   file = SPIFFS.open(configFile, FILE_WRITE);
   if (!file) {
-    sprintf_P(logBuff, PSTR("Failed to create config file. Config reset is cancelled."));
-    recordLog(1, PSTR(__FILE__), __LINE__, PSTR(__func__));
+    log_manager->error(PSTR(__func__),PSTR("Failed to create config file. Config reset is cancelled.\n"));
     file.close();
     return;
   }
@@ -432,32 +405,26 @@ void configReset()
   size_t size = serializeJson(doc, file);
   file.close();
 
-  sprintf_P(logBuff, PSTR("Verifiying resetted config file (size: %d) is written successfully..."), size);
-  recordLog(5, PSTR(__FILE__), __LINE__, PSTR(__func__));
+  log_manager->info(PSTR(__func__),PSTR("Resetted config file (size: %d) is written successfully...\n"), size);
   file = SPIFFS.open(configFile, FILE_READ);
   if (!file)
   {
-    sprintf_P(logBuff, PSTR("Failed to open the config file!"));
-    recordLog(5, PSTR(__FILE__), __LINE__, PSTR(__func__));
+    log_manager->error(PSTR(__func__),PSTR("Failed to open the config file!"));
   }
   else
   {
-    sprintf_P(logBuff, PSTR("New config file opened, size: %d"), file.size());
-    recordLog(5, PSTR(__FILE__), __LINE__, PSTR(__func__));
+    log_manager->info(PSTR(__func__),PSTR("New config file opened, size: %d\n"), file.size());
 
     if(file.size() < 1)
     {
-      sprintf_P(logBuff, PSTR("Config file size is abnormal: %d, trying to rewrite..."), file.size());
-      recordLog(1, PSTR(__FILE__), __LINE__, PSTR(__func__));
+      log_manager->error(PSTR(__func__),PSTR("Config file size is abnormal: %d, trying to rewrite...\n"), file.size());
 
       size_t size = serializeJson(doc, file);
-      sprintf_P(logBuff, PSTR("Writing: %d of data, file size: %d"), size, file.size());
-      recordLog(1, PSTR(__FILE__), __LINE__, PSTR(__func__));
+      log_manager->info(PSTR(__func__),PSTR("Writing: %d of data, file size: %d\n"), size, file.size());
     }
     else
     {
-      sprintf_P(logBuff, PSTR("Config file size is normal: %d, trying to reboot..."), file.size());
-      recordLog(1, PSTR(__FILE__), __LINE__, PSTR(__func__));
+      log_manager->info(PSTR(__func__),PSTR("Config file size is normal: %d, trying to reboot...\n"), file.size());
       file.close();
       reboot();
     }
@@ -492,18 +459,15 @@ void configLoadFailSafe()
 void configLoad()
 {
   File file = SPIFFS.open(configFile, FILE_READ);
-  sprintf_P(logBuff, PSTR("Loading config file."));
-  recordLog(5, PSTR(__FILE__), __LINE__, PSTR(__func__));
+  log_manager->info(PSTR(__func__),PSTR("Loading config file.\n"));
   if(file.size() > 1)
   {
-    sprintf_P(logBuff, PSTR("Config file size is normal: %d, trying to fit it in %d docsize."), file.size(), DOCSIZE);
-    recordLog(5, PSTR(__FILE__), __LINE__, PSTR(__func__));
+    log_manager->info(PSTR(__func__),PSTR("Config file size is normal: %d, trying to fit it in %d docsize.\n"), file.size(), DOCSIZE);
   }
   else
   {
     file.close();
-    sprintf_P(logBuff, PSTR("Config file size is abnormal: %d. Closing file and trying to reset..."), file.size());
-    recordLog(1, PSTR(__FILE__), __LINE__, PSTR(__func__));
+    log_manager->error(PSTR(__func__),PSTR("Config file size is abnormal: %d. Closing file and trying to reset...\n"), file.size());
     configReset();
     return;
   }
@@ -513,8 +477,7 @@ void configLoad()
 
   if(error)
   {
-    sprintf_P(logBuff, PSTR("Failed to load config file! (%s - %s - %d). Falling back to failsafe."), configFile, error.c_str(), file.size());
-    recordLog(1, PSTR(__FILE__), __LINE__, PSTR(__func__));
+    log_manager->error(PSTR(__func__),PSTR("Failed to load config file! (%s - %s - %d). Falling back to failsafe.\n"), configFile, error.c_str(), file.size());
     file.close();
     configLoadFailSafe();
     return;
@@ -525,8 +488,7 @@ void configLoad()
     sprintf(dv, "%s", getDeviceId());
     strlcpy(config.hwid, dv, sizeof(config.hwid));
 
-    sprintf_P(logBuff, PSTR("Device ID: %s"), dv);
-    recordLog(4, PSTR(__FILE__), __LINE__, PSTR(__func__));
+    log_manager->info(PSTR(__func__),PSTR("Device ID: %s\n"), dv);
 
 
     String name = "UDAWA" + String(dv);
@@ -547,8 +509,7 @@ void configLoad()
     strlcpy(config.provisionDeviceKey, doc["provisionDeviceKey"].as<const char*>(), sizeof(config.provisionDeviceKey));
     strlcpy(config.provisionDeviceSecret, doc["provisionDeviceSecret"].as<const char*>(), sizeof(config.provisionDeviceSecret));
 
-    sprintf_P(logBuff, PSTR("Config loaded successfuly."));
-    recordLog(4, PSTR(__FILE__), __LINE__, PSTR(__func__));
+    log_manager->info(PSTR(__func__),PSTR("Config loaded successfuly.\n"));
   }
   file.close();
 }
@@ -557,8 +518,7 @@ void configSave()
 {
   if(!SPIFFS.remove(configFile))
   {
-    sprintf_P(logBuff, PSTR("Failed to delete the old configFile: %s"), configFile);
-    recordLog(1, PSTR(__FILE__), __LINE__, PSTR(__func__));
+    log_manager->error(PSTR(__func__),PSTR("Failed to delete the old configFile: %s\n"), configFile);
   }
   File file = SPIFFS.open(configFile, FILE_WRITE);
   if (!file)
@@ -624,8 +584,7 @@ void configCoMCUReset()
   serializeJson(doc, file);
   file.close();
 
-  sprintf_P(logBuff, PSTR("ConfigCoMCU hard reset:"));
-  recordLog(4, PSTR(__FILE__), __LINE__, PSTR(__func__));
+  log_manager->info(PSTR(__func__),PSTR("ConfigCoMCU hard reset:"));
   serializeJsonPretty(doc, Serial);
 }
 
@@ -665,8 +624,7 @@ void configCoMCULoad()
 
     configcomcu.pin1Wire = doc["pin1Wire"].as<uint8_t>();
 
-    sprintf_P(logBuff, PSTR("ConfigCoMCU loaded successfuly."));
-    recordLog(4, PSTR(__FILE__), __LINE__, PSTR(__func__));
+    log_manager->info(PSTR(__func__),PSTR("ConfigCoMCU loaded successfuly.\n"));
   }
   file.close();
 }
@@ -675,8 +633,7 @@ void configCoMCUSave()
 {
   if(!SPIFFS.remove(configFileCoMCU))
   {
-    sprintf_P(logBuff, PSTR("Failed to delete the old configFileCoMCU: %s"), configFileCoMCU);
-    recordLog(1, PSTR(__FILE__), __LINE__, PSTR(__func__));
+    log_manager->error(PSTR(__func__),PSTR("Failed to delete the old configFileCoMCU: %s\n"), configFileCoMCU);
   }
   File file = SPIFFS.open(configFileCoMCU, FILE_WRITE);
   if (!file)
@@ -768,28 +725,24 @@ bool loadFile(const char* filePath, char *buffer)
 
 callbackResponse processProvisionResponse(const callbackData &data)
 {
-  sprintf_P(logBuff, PSTR("Received device provision response"));
-  recordLog(4, PSTR(__FILE__), __LINE__, PSTR(__func__));
+  log_manager->info(PSTR(__func__),PSTR("Received device provision response\n"));
   int jsonSize = measureJson(data) + 1;
   char buffer[jsonSize];
   serializeJson(data, buffer, jsonSize);
 
   if (strncmp(data["status"], "SUCCESS", strlen("SUCCESS")) != 0)
   {
-    sprintf_P(logBuff, PSTR("Provision response contains the error: %s"), data["errorMsg"].as<const char*>());
-    recordLog(1, PSTR(__FILE__), __LINE__, PSTR(__func__));
+    log_manager->error(PSTR(__func__),PSTR("Provision response contains the error: %s\n"), data["errorMsg"].as<const char*>());
     provisionResponseProcessed = true;
     return callbackResponse("provisionResponse", 1);
   }
   else
   {
-    sprintf_P(logBuff, PSTR("Provision response credential type: %s"), data["credentialsType"].as<const char*>());
-    recordLog(1, PSTR(__FILE__), __LINE__, PSTR(__func__));
+    log_manager->info(PSTR(__func__),PSTR("Provision response credential type: %s\n"), data["credentialsType"].as<const char*>());
   }
   if (strncmp(data["credentialsType"], "ACCESS_TOKEN", strlen("ACCESS_TOKEN")) == 0)
   {
-    sprintf_P(logBuff, PSTR("ACCESS TOKEN received: %s"), data["credentialsValue"].as<String>().c_str());
-    recordLog(5, PSTR(__FILE__), __LINE__, PSTR(__func__));
+    log_manager->info(PSTR(__func__),PSTR("ACCESS TOKEN received: %s\n"), data["credentialsValue"].as<String>().c_str());
     strlcpy(config.accessToken, data["credentialsValue"].as<String>().c_str(), sizeof(config.accessToken));
     config.provSent = true;
     configSave();
@@ -807,57 +760,6 @@ callbackResponse processProvisionResponse(const callbackData &data)
   reboot();
 }
 
-void recordLog(uint8_t level, const char* fileName, int lineNumber, const char* functionName)
-{
-  if(level > config.logLev)
-  {
-    return;
-  }
-  const char *levels;
-  if(level == 5){levels = "D";}
-  else if(level == 4){levels = "I";}
-  else if(level == 3){levels = "W";}
-  else if(level == 2){levels = "C";}
-  else if(level == 1){levels = "E";}
-  else{levels = "X";}
-
-  char formattedLog[LOG_REC_LENGTH];
-  uint32_t freeHeap = ESP.getFreeHeap();
-  sprintf_P(formattedLog, PSTR("[%s][%d][%s:%d] %s: %s"), levels, freeHeap, fileName, lineNumber, functionName, logBuff);
-  if(tb.connected())
-  {
-    StaticJsonDocument<DOCSIZE> doc;
-    doc["log"] = formattedLog;
-    tb.sendTelemetryDoc(doc);
-    doc.clear();
-  }
-  else
-  {
-    if(_logRecIndex == LOG_REC_SIZE)
-    {
-      _logRecIndex = 0;
-    }
-    sprintf_P(_logRec[_logRecIndex], PSTR("[%s][%d][%s:%d] %s: %s"), levels, freeHeap, fileName, lineNumber, functionName, logBuff);
-    _logRecIndex++;
-  }
-  Serial.println(formattedLog);
-}
-
-void iotSendLog()
-{
-  StaticJsonDocument<DOCSIZE> doc;
-  for(uint8_t i = 0; i < LOG_REC_SIZE; i++)
-  {
-    if(_logRec[i][0] != '\0')
-    {
-      doc["log"] = String(_logRec[i]);
-      tb.sendTelemetryDoc(doc);
-      _logRec[i][0] = '\0';
-    }
-  }
-  doc.clear();
-}
-
 void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE> &doc, bool isRpc)
 {
   if(false)
@@ -865,8 +767,7 @@ void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE> &doc, bool isRpc)
     StringPrint stream;
     serializeJson(doc, stream);
     String result = stream.str();
-    sprintf_P(logBuff, PSTR("%s"), result.c_str());
-    recordLog(5, PSTR(__FILE__), __LINE__, PSTR(__func__));
+    log_manager->debug(PSTR(__func__),PSTR("%s\n"), result.c_str());
   }
   serializeJson(doc, Serial2);
   serializeJsonPretty(doc, Serial);
@@ -887,14 +788,12 @@ void serialReadFromCoMcu(StaticJsonDocument<DOCSIZE> &doc)
   if (err == DeserializationError::Ok)
   {
     #ifdef SHOW_SERIAL_READ_FROM_COMCU
-      sprintf_P(logBuff, PSTR("%s"), result.c_str());
-      recordLog(5, PSTR(__FILE__), __LINE__, PSTR(__func__));
+      log_manager->debug(PSTR(__func__),PSTR("%s\n"), result.c_str());
     #endif
   }
   else
   {
-    sprintf_P(logBuff, PSTR("Serial2CoMCU DeserializeJson() returned: %s, content: %s"), err.c_str(), result.c_str());
-    recordLog(5, PSTR(__FILE__), __LINE__, PSTR(__func__));
+    log_manager->debug(PSTR(__func__),PSTR("Serial2CoMCU DeserializeJson() returned: %s, content: %s\n"), err.c_str(), result.c_str());
     return;
   }
 }
