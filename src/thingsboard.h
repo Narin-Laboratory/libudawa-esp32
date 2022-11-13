@@ -12,11 +12,10 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include "ArduinoJson/Polyfills/type_traits.hpp"
+#include <logging.h>
 
 #define Default_Payload 1500
 #define Default_Fields_Amt 64
-
-class ThingsBoardDefaultLogger;
 
 // Telemetry record class, allows to store different data using common interface.
 class Telemetry {
@@ -114,19 +113,14 @@ class GenericCallback {
     processFn   m_cb;       // Callback to call
 };
 
-class ThingsBoardDefaultLogger
-{
-  public:
-    static void log(const char *msg);
-};
 
 // ThingsBoardSized client class
 template<size_t PayloadSize = Default_Payload,
          size_t MaxFieldsAmt = Default_Fields_Amt,
-         typename Logger = ThingsBoardDefaultLogger>
+         typename Logger = LogManager>
 class ThingsBoardSized
 {
-
+    Logger *log_manager = Logger::GetInstance(LogLevel::VERBOSE);
     bool provision_mode = false;
 
   public:
@@ -233,8 +227,7 @@ class ThingsBoardSized
       char requestPayload[objectSize];
       serializeJson(requestObject, requestPayload, objectSize);
 
-      Logger::log("Provision request:");
-      Logger::log(requestPayload);
+      log_manager->info(PSTR(__func__), "Provision request: %s\n", requestPayload);
       return m_client.publish("/provision/request", requestPayload);
     }
     //----------------------------------------------------------------------------
@@ -291,11 +284,11 @@ class ThingsBoardSized
 
     inline bool callbackUnsubscribe()
     {
-      bool flag1 = m_client.unsubscribe("v1/devices/me/rpc/request/+");
-      bool flag2 = m_client.unsubscribe("v1/devices/me/attributes/response/+");
-      bool flag3 = m_client.unsubscribe("v1/devices/me/attributes");
-      bool flag4 = m_client.unsubscribe("v2/fw/response/#");
-      bool flag5 = m_client.unsubscribe("/provision/response");
+      bool flag1 = m_client.unsubscribe("v1/devices/me/rpc/request/+\n");
+      bool flag2 = m_client.unsubscribe("v1/devices/me/attributes/response/+\n");
+      bool flag3 = m_client.unsubscribe("v1/devices/me/attributes\n");
+      bool flag4 = m_client.unsubscribe("v2/fw/response/#\n");
+      bool flag5 = m_client.unsubscribe("/provision/response\n");
       ThingsBoardSized::m_subscribedInstance = NULL;
       return (flag1 && flag2 && flag3 && flag4 && flag5);
     }
@@ -313,7 +306,7 @@ class ThingsBoardSized
       }
 
       // Update state
-      Firmware_Send_State("CHECKING FIRMWARE");
+      Firmware_Send_State("CHECKING FIRMWARE\n");
 
       // Request the firmware informations
       if (!Shared_Attributes_Request("fw_checksum,fw_checksum_algorithm,fw_size,fw_title,fw_version")) {
@@ -329,35 +322,34 @@ class ThingsBoardSized
 
       // Check if firmware is available for our device
       if (m_fwVersion.isEmpty() || m_fwTitle.isEmpty()) {
-        Logger::log("No firmware found !");
-        Firmware_Send_State("NO FIRMWARE FOUND");
+        log_manager->info(PSTR(__func__), "No firmware found !\n");
+        Firmware_Send_State("NO FIRMWARE FOUND\n");
         return false;
       }
 
       // If firmware is the same, we do not update it
       if ((String(currFwTitle) == m_fwTitle) and (String(currFwVersion) == m_fwVersion)) {
-        Logger::log("Firmware is already up to date !");
-        Firmware_Send_State("UP TO DATE");
+        log_manager->info(PSTR(__func__), "Firmware is already up to date !\n");
+        Firmware_Send_State("UP TO DATE\n");
         return false;
       }
 
       // If firmware title is not the same, we quit now
       if (String(currFwTitle) != m_fwTitle) {
-        Logger::log("Firmware is not for us (title is different) !");
-        Firmware_Send_State("NO FIRMWARE FOUND");
+        log_manager->warn(PSTR(__func__), "Firmware is not for us (title is different) !\n");
+        Firmware_Send_State("NO FIRMWARE FOUND\n");
         return false;
       }
 
       if (m_fwChecksumAlgorithm != "MD5") {
-        Logger::log("Checksum algorithm is not supported, please use MD5 only");
-        Firmware_Send_State("CHKS IS NOT MD5");
+        log_manager->warn(PSTR(__func__), "Checksum algorithm is not supported, please use MD5 only\n");
+        Firmware_Send_State("CHKS IS NOT MD5\n");
         return false;
       }
 
-      Logger::log("=================================");
-      Logger::log("A new Firmware is available :");
-      Logger::log(String(String(currFwVersion) + " => " + m_fwVersion).c_str());
-      Logger::log("Try to download it...");
+      log_manager->info(PSTR(__func__), "=================================\n");
+      log_manager->info(PSTR(__func__), "A new Firmware is available : %s\n", String(String(currFwVersion) + " => " + m_fwVersion).c_str());
+      log_manager->info(PSTR(__func__), "Try to download it...\n");
 
       int chunkSize = 4096;   // maybe less if we don't have enough RAM
       int numberOfChunk = int(m_fwSize / chunkSize) + 1;
@@ -366,12 +358,12 @@ class ThingsBoardSized
 
       // Increase size of receive buffer
       if (!m_client.setBufferSize(chunkSize + 50)) {
-        Logger::log("Not enough RAM");
+        log_manager->error(PSTR(__func__), "Not enough RAM\n");
         return false;
       }
 
       // Update state
-      Firmware_Send_State("DOWNLOADING");
+      Firmware_Send_State("DOWNLOADING\n");
 
       // Download the firmware
       do {
@@ -394,7 +386,7 @@ class ThingsBoardSized
             else {
               nbRetry--;
               if (nbRetry == 0) {
-                Logger::log("Unable to write firmware");
+                log_manager->error(PSTR(__func__), "Unable to write firmware\n");
                 return false;
               }
             }
@@ -409,7 +401,7 @@ class ThingsBoardSized
         else {
           nbRetry--;
           if (nbRetry == 0) {
-            Logger::log("Unable to download firmware");
+            log_manager->error(PSTR(__func__), "Unable to download firmware\n");
             return false;
           }
         }
@@ -483,12 +475,12 @@ class ThingsBoardSized
         StaticJsonDocument<JSON_OBJECT_SIZE(1)>jsonBuffer;
         JsonVariant object = jsonBuffer.template to<JsonVariant>();
         if (t.serializeKeyval(object) == false) {
-          Logger::log("unable to serialize data");
+          log_manager->error(PSTR(__func__), "unable to serialize data\n");
           return false;
         }
 
         if (measureJson(jsonBuffer) > PayloadSize - 1) {
-          Logger::log("too small buffer for JSON data");
+          log_manager->error(PSTR(__func__), "too small buffer for JSON data\n");
           return false;
         }
         serializeJson(object, payload, sizeof(payload));
@@ -503,7 +495,7 @@ class ThingsBoardSized
         StaticJsonDocument<JSON_OBJECT_SIZE(MaxFieldsAmt)> jsonBuffer;
         DeserializationError error = deserializeJson(jsonBuffer, payload, length);
         if (error) {
-          Logger::log("unable to de-serialize RPC");
+          log_manager->error(PSTR(__func__), "unable to de-serialize RPC\n");
           return;
         }
         const JsonObject &data = jsonBuffer.template as<JsonObject>();
@@ -511,22 +503,20 @@ class ThingsBoardSized
         const char *params = data["params"];
 
         if (methodName) {
-          Logger::log("received RPC:");
-          Logger::log(methodName);
+          log_manager->info(PSTR(__func__), "received RPC: %s\n", methodName);
         } else {
-          Logger::log("RPC method is NULL");
+          log_manager->warn(PSTR(__func__), "RPC method is NULL\n");
           return;
         }
 
         for (size_t i = 0; i < sizeof(m_genericCallbacks) / sizeof(*m_genericCallbacks); ++i) {
           if (m_genericCallbacks[i].m_cb && !strcmp(m_genericCallbacks[i].m_name, methodName)) {
 
-            Logger::log("calling RPC:");
-            Logger::log(m_genericCallbacks[i].m_name);
+            log_manager->info(PSTR(__func__), "calling RPC: %s\n", m_genericCallbacks[i].m_name);
 
             // Do not inform client, if parameter field is missing for some reason
             if (!data.containsKey("params")) {
-              Logger::log("no parameters passed with RPC, passing null JSON");
+              log_manager->warn(PSTR(__func__), "no parameters passed with RPC, passing null JSON\n");
             }
 
             // try to de-serialize params
@@ -534,12 +524,10 @@ class ThingsBoardSized
             DeserializationError err_param = deserializeJson(doc, params);
             //if failed to de-serialize params then send JsonObject instead
             if (err_param) {
-              Logger::log("params:");
-              Logger::log(data["params"].as<String>().c_str());
+              log_manager->error(PSTR(__func__), "params: %s\n", data["params"].as<String>().c_str());
               r = m_genericCallbacks[i].m_cb(data);
             } else {
-              Logger::log("JsonObject params:");
-              Logger::log(params);
+              log_manager->info(PSTR(__func__), "JsonObject params: %s\n", params);
               const JsonObject &param = doc.template as<JsonObject>();
               // Getting non-existing field from JSON should automatically
               // set JSONVariant to null
@@ -556,20 +544,19 @@ class ThingsBoardSized
       JsonVariant resp_obj = respBuffer.template to<JsonVariant>();
 
       if (r.serializeKeyval(resp_obj) == false) {
-        Logger::log("unable to serialize data");
+        log_manager->error(PSTR(__func__), "unable to serialize data\n");
         return;
       }
 
       if (measureJson(respBuffer) > PayloadSize - 1) {
-        Logger::log("too small buffer for JSON data");
+        log_manager->error(PSTR(__func__), "too small buffer for JSON data\n");
         return;
       }
       serializeJson(resp_obj, responsePayload, sizeof(responsePayload));
 
       String responseTopic = String(topic);
-      responseTopic.replace("request", "response");
-      Logger::log("response:");
-      Logger::log(responsePayload);
+      responseTopic.replace("request", "response\n");
+      log_manager->info(PSTR(__func__), "response: %s\n", responsePayload);
       m_client.publish(responseTopic.c_str(), responsePayload);
     }
 
@@ -579,7 +566,7 @@ class ThingsBoardSized
       static MD5Builder md5;
 
       m_fwChunkReceive = atoi(strrchr(topic, '/') + 1);
-      Logger::log(String("Receive chunk " + String(m_fwChunkReceive) + ", size " + String(length) + " bytes").c_str());
+      log_manager->verbose(PSTR(__func__), "Received chuch %d, size %d bytes.\n", m_fwChunkReceive, length);
 
       m_fwState = "DOWNLOADING";
 
@@ -591,7 +578,7 @@ class ThingsBoardSized
         if(Update.isRunning()){Update.abort();}
         // Initialize Flash
         if (!Update.begin(m_fwSize)) {
-          Logger::log("Error during Update.begin");
+          log_manager->error(PSTR(__func__), "Error during Update.begin\n");
           m_fwState = "UPDATE ERROR";
           return;
         }
@@ -599,7 +586,7 @@ class ThingsBoardSized
 
       // Write data to Flash
       if (Update.write(payload, length) != length) {
-        Logger::log("Error during Update.write");
+        log_manager->error(PSTR(__func__), "Error during Update.write\n");
         m_fwState = "UPDATE ERROR";
         return;
       }
@@ -612,22 +599,22 @@ class ThingsBoardSized
       if (m_fwSize == sizeReceive) {
         md5.calculate();
         String md5Str = md5.toString();
-        Logger::log(String("md5 compute:  " + md5Str).c_str());
-        Logger::log(String("md5 firmware: " + m_fwChecksum).c_str());
+        log_manager->info(PSTR(__func__), "md5 compute: %s\n", md5Str);
+        log_manager->info(PSTR(__func__), "md5 compute: %s\n", m_fwChecksum);
         // Check MD5
         if (md5Str != m_fwChecksum) {
-          Logger::log("Checksum verification failed !");
+          log_manager->error(PSTR(__func__), "Checksum verification failed !\n");
           Update.abort();
           m_fwState = "CHECKSUM ERROR";
         }
         else {
-          Logger::log("Checksum is OK !");
+          log_manager->info(PSTR(__func__), "Checksum is OK !\n");
           if (Update.end(true)) {
-            Logger::log("Update Success !");
+            log_manager->info(PSTR(__func__), "Update Success !\n");
             m_fwState = "SUCCESS";
           }
           else {
-            Logger::log("Update Fail !");
+            log_manager->error(PSTR(__func__), "Update Fail !\n");
             m_fwState = "FAILED";
           }
         }
@@ -639,18 +626,18 @@ class ThingsBoardSized
       StaticJsonDocument<JSON_OBJECT_SIZE(MaxFieldsAmt)> jsonBuffer;
       DeserializationError error = deserializeJson(jsonBuffer, payload, length);
       if (error) {
-        Logger::log("Unable to de-serialize Shared attribute update request");
+        log_manager->error(PSTR(__func__), "Unable to de-serialize Shared attribute update request\n");
         return;
       }
       JsonObject data = jsonBuffer.template as<JsonObject>();
 
       if (data && (data.size() >= 1)) {
-        Logger::log("Received shared attribute update request");
+        log_manager->info(PSTR(__func__), "Received shared attribute update request\n");
         if (data["shared"]) {
           data = data["shared"];
         }
       } else {
-        Logger::log("Shared attribute update key not found.");
+        log_manager->error(PSTR(__func__), "Shared attribute update key not found.\n");
         return;
       }
 
@@ -672,35 +659,33 @@ class ThingsBoardSized
 
       if(m_genericCallbacks[0].m_cb)
       {
-        Logger::log("Calling callbacks for updated attribute:");
-        Logger::log(m_genericCallbacks[0].m_name);
+        log_manager->info(PSTR(__func__), "Calling callbacks for updated attribute: %s\n", m_genericCallbacks[0].m_name);
         m_genericCallbacks[0].m_cb(data);
       }
     }
 
     // Processes provisioning response
     void process_provisioning_response(char* topic, uint8_t* payload, unsigned int length) {
-      Logger::log("Process provisioning response");
+      log_manager->info(PSTR(__func__), "Process provisioning response\n");
 
       StaticJsonDocument<JSON_OBJECT_SIZE(MaxFieldsAmt)> jsonBuffer;
       DeserializationError error = deserializeJson(jsonBuffer, payload, length);
       if (error) {
-        Logger::log("Unable to de-serialize provision response");
+        log_manager->error(PSTR(__func__), "Unable to de-serialize provision response\n");
         return;
       }
 
       const JsonObject &data = jsonBuffer.template as<JsonObject>();
 
-      Logger::log("Received provision response");
+      log_manager->info(PSTR(__func__), "Received provision response\n");
 
       if (data["status"] == "SUCCESS" && data["credentialsType"] == "X509_CERTIFICATE") {
-        Logger::log("Provision response contains X509_CERTIFICATE credentials, it is not supported yet.");
+        log_manager->error(PSTR(__func__), "Provision response contains X509_CERTIFICATE credentials, it is not supported yet.\n");
         return;
       }
 
       if (m_genericCallbacks[1].m_cb) {
-        Logger::log("Calling callbacks for provisioning response:");
-        Logger::log(m_genericCallbacks[0].m_name);
+        log_manager->info(PSTR(__func__), "Calling callbacks for provisioning response: %s\n", m_genericCallbacks[0].m_name);
         m_genericCallbacks[1].m_cb(data);
       }
     }
@@ -708,7 +693,7 @@ class ThingsBoardSized
     // Sends array of attributes or telemetry to ThingsBoard
     bool sendDataArray(const Telemetry *data, size_t data_count, bool telemetry = true) {
       if (MaxFieldsAmt < data_count) {
-        Logger::log("too much JSON fields passed");
+        log_manager->error(PSTR(__func__), "too much JSON fields passed\n");
         return false;
       }
       char payload[PayloadSize];
@@ -718,12 +703,12 @@ class ThingsBoardSized
 
         for (size_t i = 0; i < data_count; ++i) {
           if (data[i].serializeKeyval(object) == false) {
-            Logger::log("unable to serialize data");
+            log_manager->error(PSTR(__func__), "unable to serialize data\n");
             return false;
           }
         }
         if (measureJson(jsonBuffer) > PayloadSize - 1) {
-          Logger::log("too small buffer for JSON data");
+          log_manager->error(PSTR(__func__), "too small buffer for JSON data\n");
           return false;
         }
         serializeJson(object, payload, sizeof(payload));
@@ -749,7 +734,8 @@ class ThingsBoardSized
     // The callback for when a PUBLISH message is received from the server.
     static void on_message(char* topic, uint8_t* payload, unsigned int length)
     {
-        Logger::log(String("Callback on_message from topic: " + String(topic)).c_str());
+        Logger *log_manager = Logger::GetInstance(LogLevel::VERBOSE);
+        log_manager->info(PSTR(__func__), "Callback from topic: %s\n", topic);
         if (!ThingsBoardSized::m_subscribedInstance){return;}
 
         if (strncmp("v1/devices/me/rpc", topic, strlen("v1/devices/me/rpc")) == 0)
