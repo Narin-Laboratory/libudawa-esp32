@@ -25,6 +25,7 @@
 #include <TaskManagerIO.h>
 #include "logging.h"
 #include "serialLogger.h"
+#include <ESP32Time.h>
 
 #define countof(a) (sizeof(a) / sizeof(a[0]))
 #define COMPILED __DATE__ " " __TIME__
@@ -36,6 +37,9 @@
 #ifndef DOCSIZE
   #define DOCSIZE 1024
 #endif
+
+namespace libudawa
+{
 
 const char* configFile = "/cfg.json";
 const char* configFileCoMCU = "/comcu.json";
@@ -67,6 +71,8 @@ struct Config
   char provisionDeviceSecret[24];
 
   uint8_t relayChannels[4];
+
+  int gmtOffset;
 };
 
 struct ConfigCoMCU
@@ -120,16 +126,29 @@ void syncConfigCoMCU();
 void readSettings(StaticJsonDocument<DOCSIZE> &doc,const char* path);
 void writeSettings(StaticJsonDocument<DOCSIZE> &doc, const char* path);
 void setCoMCUPin(uint8_t pin, char type, bool mode, uint16_t aval, bool state);
+void rtcUpdate(long ts = 0);
 
-
+ESP32SerialLogger serial_logger;
+LogManager *log_manager = LogManager::GetInstance(LogLevel::VERBOSE);
 WiFiClientSecure ssl = WiFiClientSecure();
 Config config;
 ConfigCoMCU configcomcu;
-ThingsBoardSized<DOCSIZE, 64> tb(ssl);
+ThingsBoardSized<DOCSIZE, 64, LogManager> tb(ssl);
 volatile bool provisionResponseProcessed = false;
-ESP32SerialLogger serial_logger;
-LogManager *log_manager = LogManager::GetInstance(LogLevel::VERBOSE);
+ESP32Time rtc(28800);
 
+
+void rtcUpdate(long ts){
+  if(ts == 0){
+    configTime(config.gmtOffset, 0, "pool.ntp.org");
+    struct tm timeinfo;
+    if (getLocalTime(&timeinfo)){
+      rtc.setTimeStruct(timeinfo);
+    }
+  }else{
+      rtc.setTime(ts);
+  }
+}
 
 void startup() {
   // put your setup code here, to run once:
@@ -150,6 +169,7 @@ void startup() {
   {
     log_manager->info(PSTR(__func__), PSTR("Loading config...\n"));
     configLoad();
+    log_manager->set_log_level(PSTR("*"), (LogLevel) config.logLev);
   }
 }
 
@@ -361,6 +381,7 @@ void cbWiFiOnGotIp(WiFiEvent_t event, WiFiEventInfo_t info)
 {
   FLAG_OTA_UPDATE_INIT = 1;
   FLAG_IOT_INIT = 1;
+  rtcUpdate(0);
 }
 
 void configReset()
@@ -401,6 +422,7 @@ void configReset()
   doc["provisionDeviceKey"] = provisionDeviceKey;
   doc["provisionDeviceSecret"] = provisionDeviceSecret;
   doc["logLev"] = 5;
+  doc["gmtOffset"] = 28880;
 
   size_t size = serializeJson(doc, file);
   file.close();
@@ -454,6 +476,7 @@ void configLoadFailSafe()
   strlcpy(config.provisionDeviceKey, provisionDeviceKey, sizeof(config.provisionDeviceKey));
   strlcpy(config.provisionDeviceSecret, provisionDeviceSecret, sizeof(config.provisionDeviceSecret));
   config.logLev = 5;
+  config.gmtOffset = 28800;
 }
 
 void configLoad()
@@ -506,6 +529,7 @@ void configLoad()
     config.provSent = doc["provSent"].as<int>();
     config.port = doc["port"].as<uint16_t>() ? doc["port"].as<uint16_t>() : port;
     config.logLev = doc["logLev"].as<uint8_t>();
+    config.gmtOffset = doc["gmtOffset"].as<int>();
     strlcpy(config.provisionDeviceKey, doc["provisionDeviceKey"].as<const char*>(), sizeof(config.provisionDeviceKey));
     strlcpy(config.provisionDeviceSecret, doc["provisionDeviceSecret"].as<const char*>(), sizeof(config.provisionDeviceSecret));
 
@@ -543,6 +567,7 @@ void configSave()
   doc["provisionDeviceKey"] = config.provisionDeviceKey;
   doc["provisionDeviceSecret"] = config.provisionDeviceSecret;
   doc["logLev"] = config.logLev;
+  doc["gmtOffset"] = config.gmtOffset;
 
   serializeJson(doc, file);
   file.close();
@@ -838,4 +863,5 @@ void setCoMCUPin(uint8_t pin, char type, bool mode, uint16_t aval, bool state)
   serialWriteToCoMcu(doc, false);
 }
 
+} // namespace libudawa
 #endif
