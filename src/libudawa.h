@@ -47,6 +47,7 @@ bool FLAG_IOT_SUBSCRIBE = false;
 bool FLAG_IOT_INIT = false;
 bool FLAG_OTA_UPDATE_INIT = false;
 uint8_t WIFI_RECONNECT_ATTEMPT = 0;
+uint8_t IOT_RECONNECT_ATTEMPT = 0;
 bool WIFI_IS_DEFAULT = false;
 
 struct Config
@@ -144,9 +145,11 @@ void rtcUpdate(long ts){
     struct tm timeinfo;
     if (getLocalTime(&timeinfo)){
       rtc.setTimeStruct(timeinfo);
+      log_manager->debug(PSTR(__func__), "Updated time via NTP: %s\n", rtc.getDateTime().c_str());
     }
   }else{
       rtc.setTime(ts);
+      log_manager->debug(PSTR(__func__), "Updated time via timestamp: %s\n", rtc.getDateTime().c_str());
   }
 }
 
@@ -171,6 +174,8 @@ void startup() {
     configLoad();
     log_manager->set_log_level(PSTR("*"), (LogLevel) config.logLev);
   }
+
+  log_manager->debug(PSTR(__func__), "Startup time: %s\n", rtc.getDateTime().c_str());
 }
 
 void networkInit()
@@ -330,11 +335,16 @@ void iotInit()
       log_manager->info(PSTR(__func__),PSTR("Connecting to broker %s:%d\n"), config.broker, config.port);
       if(!tb.connect(config.broker, config.accessToken, config.port, config.name))
       {
-        log_manager->error(PSTR(__func__),PSTR("Failed to connect to IoT Broker %s\n"), config.broker);
+        log_manager->error(PSTR(__func__),PSTR("Failed to connect to IoT Broker %s [%d/20]\n"), config.broker, IOT_RECONNECT_ATTEMPT);
+        IOT_RECONNECT_ATTEMPT++;
+        if(IOT_RECONNECT_ATTEMPT >= 20){
+          config.provSent= 0;
+        }
         return;
       }
 
-      log_manager->info(PSTR(__func__),PSTR("IoT Connected!"));
+      log_manager->info(PSTR(__func__),PSTR("IoT Connected!\n"));
+      IOT_RECONNECT_ATTEMPT = 0;
       FLAG_IOT_SUBSCRIBE = true;
     }
   }
