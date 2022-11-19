@@ -797,15 +797,11 @@ callbackResponse processProvisionResponse(const callbackData &data)
 
 void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE> &doc, bool isRpc)
 {
-  if(false)
-  {
-    StringPrint stream;
-    serializeJson(doc, stream);
-    String result = stream.str();
-    log_manager->debug(PSTR(__func__),PSTR("%s\n"), result.c_str());
-  }
   serializeJson(doc, Serial2);
-  serializeJsonPretty(doc, Serial);
+  StringPrint stream;
+  serializeJsonPretty(doc, stream);
+  String result = stream.str();
+  log_manager->debug(PSTR(__func__),PSTR("Sent to CoMCU:\n%s\n"), result.c_str());
   if(isRpc)
   {
     delay(50);
@@ -822,9 +818,7 @@ void serialReadFromCoMcu(StaticJsonDocument<DOCSIZE> &doc)
   result = stream.str();
   if (err == DeserializationError::Ok)
   {
-    #ifdef SHOW_SERIAL_READ_FROM_COMCU
-      log_manager->debug(PSTR(__func__),PSTR("%s\n"), result.c_str());
-    #endif
+    log_manager->debug(PSTR(__func__),PSTR("Received from CoMCU\n%s\n"), result.c_str());
   }
   else
   {
