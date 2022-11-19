@@ -490,6 +490,7 @@ class ThingsBoardSized
 
     // Processes RPC message
     void process_rpc_message(char* topic, uint8_t* payload, unsigned int length) {
+      log_manager->debug(PSTR(__func__), "Incomming topic: %s\n", topic);
       callbackResponse r;
       {
         StaticJsonDocument<JSON_OBJECT_SIZE(MaxFieldsAmt)> jsonBuffer;
@@ -555,8 +556,8 @@ class ThingsBoardSized
       serializeJson(resp_obj, responsePayload, sizeof(responsePayload));
 
       String responseTopic = String(topic);
-      responseTopic.replace("request", "response\n");
-      log_manager->info(PSTR(__func__), "response: %s\n", responsePayload);
+      responseTopic.replace("request", "response");
+      log_manager->info(PSTR(__func__), "response: %s to %s \n", responsePayload, responseTopic.c_str());
       m_client.publish(responseTopic.c_str(), responsePayload);
     }
 
