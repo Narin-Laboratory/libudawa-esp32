@@ -79,24 +79,12 @@ struct Config
 struct ConfigCoMCU
 {
   bool fPanic;
-  float pEcKcoe;
-  float pEcTcoe;
-  float pEcVin;
-  float pEcPpm;
-  uint16_t pEcR1;
-  uint16_t pEcRa;
-
   uint16_t bfreq;
   bool fBuzz;
-
   uint8_t pinBuzzer;
   uint8_t pinLedR;
   uint8_t pinLedG;
   uint8_t pinLedB;
-  uint8_t pinEcPower;
-  uint8_t pinEcGnd;
-  uint8_t pinEcData;
-  uint8_t pin1Wire;
 };
 
 
