@@ -596,12 +596,6 @@ void configCoMCUReset()
   StaticJsonDocument<DOCSIZE> doc;
 
   doc["fPanic"] = false;
-  doc["pEcKcoe"] = 2.9;
-  doc["pEcTcoe"] = 0.019;
-  doc["pEcVin"] = 4.54;
-  doc["pEcPpm"] = 0.5;
-  doc["pEcR1"] = 1000;
-  doc["pEcRa"] =  25;
 
   doc["bfreq"] = 1600;
   doc["fBuzz"] = 1;
@@ -610,11 +604,6 @@ void configCoMCUReset()
   doc["pinLedR"] = 9;
   doc["pinLedG"] = 10;
   doc["pinLedB"] = 11;
-  doc["pinEcPower"] = 15;
-  doc["pinEcGnd"] = 16;
-  doc["pinEcData"] = 14;
-
-  doc["pin1Wire"] = 2;
 
   serializeJson(doc, file);
   file.close();
@@ -639,13 +628,6 @@ void configCoMCULoad()
   {
 
     configcomcu.fPanic = doc["fPanic"].as<bool>();
-    configcomcu.pEcKcoe = doc["pEcKcoe"].as<float>();
-    configcomcu.pEcTcoe = doc["pEcTcoe"].as<float>();
-    configcomcu.pEcVin = doc["pEcVin"].as<float>();
-    configcomcu.pEcPpm = doc["pEcPpm"].as<float>();
-    configcomcu.pEcR1 = doc["pEcR1"].as<uint16_t>();
-    configcomcu.pEcRa =  doc["pEcRa"].as<uint16_t>();
-
     configcomcu.bfreq = doc["bfreq"].as<uint16_t>();
     configcomcu.fBuzz = doc["fBuzz"].as<bool>();
 
@@ -653,11 +635,6 @@ void configCoMCULoad()
     configcomcu.pinLedR = doc["pinLedR"].as<uint8_t>();
     configcomcu.pinLedG = doc["pinLedG"].as<uint8_t>();
     configcomcu.pinLedB = doc["pinLedB"].as<uint8_t>();
-    configcomcu.pinEcPower = doc["pinEcPower"].as<uint8_t>();
-    configcomcu.pinEcGnd = doc["pinEcGnd"].as<uint8_t>();
-    configcomcu.pinEcData = doc["pinEcData"].as<uint8_t>();
-
-    configcomcu.pin1Wire = doc["pin1Wire"].as<uint8_t>();
 
     log_manager->info(PSTR(__func__),PSTR("ConfigCoMCU loaded successfuly.\n"));
   }
@@ -680,12 +657,6 @@ void configCoMCUSave()
   StaticJsonDocument<DOCSIZE> doc;
 
   doc["fPanic"] = configcomcu.fPanic;
-  doc["pEcKcoe"] = configcomcu.pEcKcoe;
-  doc["pEcTcoe"] = configcomcu.pEcTcoe;
-  doc["pEcVin"] = configcomcu.pEcVin;
-  doc["pEcPpm"] = configcomcu.pEcPpm;
-  doc["pEcR1"] = configcomcu.pEcR1;
-  doc["pEcRa"] = configcomcu.pEcRa;
 
   doc["bfreq"] = configcomcu.bfreq;
   doc["fBuzz"] = configcomcu.fBuzz;
@@ -694,9 +665,6 @@ void configCoMCUSave()
   doc["pinLedR"] = configcomcu.pinLedR;
   doc["pinLedG"] = configcomcu.pinLedG;
   doc["pinLedB"] = configcomcu.pinLedB;
-  doc["pinEcPower"] = configcomcu.pinEcPower;
-  doc["pinEcGnd"] = configcomcu.pinEcGnd;
-  doc["pinEcData"] = configcomcu.pinEcData;
 
   doc["pin1Wire"] = configcomcu.pin1Wire;
 
@@ -709,33 +677,13 @@ void syncConfigCoMCU()
   configCoMCULoad();
 
   StaticJsonDocument<DOCSIZE> doc;
-  doc["method"] = "setConfigCoMCU";
-
   doc["fPanic"] = configcomcu.fPanic;
-  doc["pEcKcoe"] = configcomcu.pEcKcoe;
-  doc["pEcTcoe"] = configcomcu.pEcTcoe;
-  doc["pEcVin"] = configcomcu.pEcVin;
-  doc["pEcPpm"] = configcomcu.pEcPpm;
-  doc["pEcR1"] = configcomcu.pEcR1;
-  doc["pEcRa"] = configcomcu.pEcRa;
-
-  doc["method"] = "setConfigCoMCU";
-  serialWriteToCoMcu(doc, 0);
-  doc.clear();
-
   doc["bfreq"] = configcomcu.bfreq;
   doc["fBuzz"] = configcomcu.fBuzz;
-
   doc["pinBuzzer"] = configcomcu.pinBuzzer;
   doc["pinLedR"] = configcomcu.pinLedR;
   doc["pinLedG"] = configcomcu.pinLedG;
   doc["pinLedB"] = configcomcu.pinLedB;
-  doc["pinEcPower"] = configcomcu.pinEcPower;
-  doc["pinEcGnd"] = configcomcu.pinEcGnd;
-  doc["pinEcData"] = configcomcu.pinEcData;
-
-  doc["pin1Wire"] = configcomcu.pin1Wire;
-
   doc["method"] = "setConfigCoMCU";
   serialWriteToCoMcu(doc, 0);
   doc.clear();
