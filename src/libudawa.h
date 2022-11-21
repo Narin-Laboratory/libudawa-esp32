@@ -654,8 +654,6 @@ void configCoMCUSave()
   doc["pinLedG"] = configcomcu.pinLedG;
   doc["pinLedB"] = configcomcu.pinLedB;
 
-  doc["pin1Wire"] = configcomcu.pin1Wire;
-
   serializeJson(doc, file);
   file.close();
 }
