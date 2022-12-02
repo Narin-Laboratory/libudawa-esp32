@@ -71,8 +71,6 @@ struct Config
   char provisionDeviceKey[24];
   char provisionDeviceSecret[24];
 
-  uint8_t relayChannels[4];
-
   int gmtOffset;
 };
 
@@ -133,10 +131,10 @@ void rtcUpdate(long ts){
     struct tm timeinfo;
     if (getLocalTime(&timeinfo)){
       rtc.setTimeStruct(timeinfo);
-      log_manager->debug(PSTR(__func__), "Updated time via NTP: %s\n", rtc.getDateTime().c_str());
+      log_manager->debug(PSTR(__func__), "Updated time via NTP: %s GMT Offset:%d (%d) \n", rtc.getDateTime().c_str(), config.gmtOffset, config.gmtOffset / 3600);
     }
   }else{
-      rtc.setTime(ts);
+      rtc.setTime(ts / 1000);
       log_manager->debug(PSTR(__func__), "Updated time via timestamp: %s\n", rtc.getDateTime().c_str());
   }
 }
