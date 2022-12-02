@@ -134,7 +134,7 @@ void rtcUpdate(long ts){
       log_manager->debug(PSTR(__func__), "Updated time via NTP: %s GMT Offset:%d (%d) \n", rtc.getDateTime().c_str(), config.gmtOffset, config.gmtOffset / 3600);
     }
   }else{
-      rtc.setTime(ts / 1000);
+      rtc.setTime(ts);
       log_manager->debug(PSTR(__func__), "Updated time via timestamp: %s\n", rtc.getDateTime().c_str());
   }
 }
