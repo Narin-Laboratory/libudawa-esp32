@@ -122,7 +122,7 @@ Config config;
 ConfigCoMCU configcomcu;
 ThingsBoardSized<DOCSIZE, 64, LogManager> tb(ssl);
 volatile bool provisionResponseProcessed = false;
-ESP32Time rtc(28800);
+ESP32Time rtc(0);
 
 
 void rtcUpdate(long ts){
