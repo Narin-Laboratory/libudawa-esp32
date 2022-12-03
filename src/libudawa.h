@@ -29,8 +29,6 @@
 
 #define countof(a) (sizeof(a) / sizeof(a[0]))
 #define COMPILED __DATE__ " " __TIME__
-#define LOG_REC_SIZE 10
-#define LOG_REC_LENGTH 192
 #define PIN_RXD2 16
 #define PIN_TXD2 17
 #define WIFI_FALLBACK_COUNTER 5
