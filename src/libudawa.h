@@ -110,7 +110,7 @@ void serialReadFromCoMcu(StaticJsonDocument<DOCSIZE> &doc);
 void syncConfigCoMCU();
 void readSettings(StaticJsonDocument<DOCSIZE> &doc,const char* path);
 void writeSettings(StaticJsonDocument<DOCSIZE> &doc, const char* path);
-void setCoMCUPin(uint8_t pin, char type, bool mode, uint16_t aval, bool state);
+void setCoMCUPin(uint8_t pin, uint8_t op, bool mode, uint16_t aval, bool state);
 void rtcUpdate(long ts = 0);
 
 ESP32SerialLogger serial_logger;
@@ -248,17 +248,20 @@ void otaUpdateInit()
           type = "sketch";
       else // U_SPIFFS
           type = "filesystem";
+      log_manager->warn(PSTR(__func__),PSTR("Starting OTA %s\n"), type.c_str());
     })
     .onEnd([]()
     {
+      log_manager->warn(PSTR(__func__),PSTR("Device rebooting...\n"));
       reboot();
     })
     .onProgress([](unsigned int progress, unsigned int total)
     {
-
+      log_manager->warn(PSTR(__func__),PSTR("OTA progress: %d/%d\n"), progress, total);
     })
     .onError([](ota_error_t error)
     {
+      log_manager->error(PSTR(__func__),PSTR("OTA Failed: %d\n"), error);
       reboot();
     }
   );
@@ -784,14 +787,14 @@ void writeSettings(StaticJsonDocument<DOCSIZE> &doc, const char* path)
   file.close();
 }
 
-void setCoMCUPin(uint8_t pin, char type, bool mode, uint16_t aval, bool state)
+void setCoMCUPin(uint8_t pin, uint8_t op, bool mode, uint16_t aval, bool state)
 {
   StaticJsonDocument<DOCSIZE> doc;
   JsonObject params = doc.createNestedObject("params");
   doc["method"] = "setPin";
   params["pin"] = pin;
   params["mode"] = mode;
-  params["type"] = type;
+  params["op"] = op;
   params["state"] = state;
   params["aval"] = aval;
   serialWriteToCoMcu(doc, false);
