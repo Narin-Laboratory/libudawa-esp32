@@ -156,7 +156,7 @@ void startup() {
     log_manager->set_log_level(PSTR("*"), (LogLevel) config.logLev);
   }
   #ifdef USE_SERIAL2
-    log_manager->debug(PSTR(__func__), "Serial 2 - CoMCU Activated!");
+    log_manager->debug(PSTR(__func__), PSTR("Serial 2 - CoMCU Activated!\n"));
     Serial2.begin(115200, SERIAL_8N1, PIN_RXD2, PIN_TXD2);
   #endif
 
