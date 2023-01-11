@@ -140,10 +140,6 @@ void rtcUpdate(long ts){
 void startup() {
   // put your setup code here, to run once:
   Serial.begin(115200);
-  #ifdef USE_SERIAL2
-    log_manager->debug(PSTR(__func__), "Serial 2 - CoMCU Activated!");
-    Serial2.begin(115200, SERIAL_8N1, PIN_RXD2, PIN_TXD2);
-  #endif
 
   config.logLev = 5;
   log_manager->add_logger(&serial_logger);
@@ -159,6 +155,10 @@ void startup() {
     configLoad();
     log_manager->set_log_level(PSTR("*"), (LogLevel) config.logLev);
   }
+  #ifdef USE_SERIAL2
+    log_manager->debug(PSTR(__func__), "Serial 2 - CoMCU Activated!");
+    Serial2.begin(115200, SERIAL_8N1, PIN_RXD2, PIN_TXD2);
+  #endif
 
   log_manager->debug(PSTR(__func__), "Startup time: %s\n", rtc.getDateTime().c_str());
 }
