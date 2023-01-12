@@ -29,8 +29,8 @@
 
 #define countof(a) (sizeof(a) / sizeof(a[0]))
 #define COMPILED __DATE__ " " __TIME__
-#define PIN_RXD2 16
-#define PIN_TXD2 17
+#define S2_RX 16
+#define S2_TX 17
 #define WIFI_FALLBACK_COUNTER 5
 #ifndef DOCSIZE
   #define DOCSIZE 1024
@@ -157,7 +157,7 @@ void startup() {
   }
   #ifdef USE_SERIAL2
     log_manager->debug(PSTR(__func__), PSTR("Serial 2 - CoMCU Activated!\n"));
-    Serial2.begin(115200, SERIAL_8N1, PIN_RXD2, PIN_TXD2);
+    Serial2.begin(115200, SERIAL_8N1, S2_RX, S2_TX);
   #endif
 
   log_manager->debug(PSTR(__func__), "Startup time: %s\n", rtc.getDateTime().c_str());
