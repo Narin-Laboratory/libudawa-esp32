@@ -739,6 +739,7 @@ void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE> &doc, bool isRpc)
   if(isRpc)
   {
     delay(50);
+    doc.clear();
     serialReadFromCoMcu(doc);
   }
 }
