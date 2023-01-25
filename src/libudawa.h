@@ -670,7 +670,7 @@ void syncConfigCoMCU()
   doc["pinLedR"] = configcomcu.pinLedR;
   doc["pinLedG"] = configcomcu.pinLedG;
   doc["pinLedB"] = configcomcu.pinLedB;
-  doc["method"] = "setConfigCoMCU";
+  doc["method"] = "sCfg";
   serialWriteToCoMcu(doc, 0);
   doc.clear();
 }
