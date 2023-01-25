@@ -110,7 +110,7 @@ void serialReadFromCoMcu(StaticJsonDocument<DOCSIZE> &doc);
 void syncConfigCoMCU();
 void readSettings(StaticJsonDocument<DOCSIZE> &doc,const char* path);
 void writeSettings(StaticJsonDocument<DOCSIZE> &doc, const char* path);
-void setCoMCUPin(uint8_t pin, uint8_t op, bool mode, uint16_t aval, bool state);
+void setCoMCUPin(uint8_t pin, uint8_t op, uint8_t mode, uint16_t aval, uint8_t state)
 void rtcUpdate(long ts = 0);
 
 ESP32SerialLogger serial_logger;
@@ -789,7 +789,7 @@ void writeSettings(StaticJsonDocument<DOCSIZE> &doc, const char* path)
   file.close();
 }
 
-void setCoMCUPin(uint8_t pin, uint8_t op, uint8_t mode, uint16_t aval, bool uint8_t)
+void setCoMCUPin(uint8_t pin, uint8_t op, uint8_t mode, uint16_t aval, uint8_t state)
 {
   StaticJsonDocument<DOCSIZE> doc;
   JsonObject params = doc.createNestedObject("params");
