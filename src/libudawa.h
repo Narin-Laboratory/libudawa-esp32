@@ -667,6 +667,9 @@ void syncConfigCoMCU()
   doc["bfreq"] = configcomcu.bfreq;
   doc["fBuzz"] = configcomcu.fBuzz;
   doc["pinBuzzer"] = configcomcu.pinBuzzer;
+  doc["method"] = "sCfg";
+  serialWriteToCoMcu(doc, 0);
+  doc.clear();
   doc["pinLedR"] = configcomcu.pinLedR;
   doc["pinLedG"] = configcomcu.pinLedG;
   doc["pinLedB"] = configcomcu.pinLedB;
