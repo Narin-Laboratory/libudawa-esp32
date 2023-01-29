@@ -81,6 +81,7 @@ struct ConfigCoMCU
   uint8_t pinLedR;
   uint8_t pinLedG;
   uint8_t pinLedB;
+  uint8_t ledON;
 };
 
 
@@ -592,6 +593,7 @@ void configCoMCUReset()
   doc["pinLedR"] = 9;
   doc["pinLedG"] = 10;
   doc["pinLedB"] = 11;
+  doc["ledON"] = 255;
 
   serializeJson(doc, file);
   file.close();
@@ -623,6 +625,7 @@ void configCoMCULoad()
     configcomcu.pinLedR = doc["pinLedR"].as<uint8_t>();
     configcomcu.pinLedG = doc["pinLedG"].as<uint8_t>();
     configcomcu.pinLedB = doc["pinLedB"].as<uint8_t>();
+    configcomcu.ledON = doc["ledON"].as<uint8_t>();
 
     log_manager->info(PSTR(__func__),PSTR("ConfigCoMCU loaded successfuly.\n"));
   }
@@ -653,6 +656,7 @@ void configCoMCUSave()
   doc["pinLedR"] = configcomcu.pinLedR;
   doc["pinLedG"] = configcomcu.pinLedG;
   doc["pinLedB"] = configcomcu.pinLedB;
+  doc["ledON"] = configcomcu.ledON;
 
   serializeJson(doc, file);
   file.close();
@@ -673,6 +677,7 @@ void syncConfigCoMCU()
   doc["pinLedR"] = configcomcu.pinLedR;
   doc["pinLedG"] = configcomcu.pinLedG;
   doc["pinLedB"] = configcomcu.pinLedB;
+  doc["ledON"] = configcomcu.ledON;
   doc["method"] = "sCfg";
   serialWriteToCoMcu(doc, 0);
   doc.clear();
