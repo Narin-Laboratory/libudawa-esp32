@@ -36,6 +36,11 @@
   #define DOCSIZE 1024
 #endif
 
+#ifndef DOCSIZE_MIN
+  #define DOCSIZE_MIN 384
+#endif
+
+
 namespace libudawa
 {
 
@@ -106,20 +111,24 @@ void startup();
 void networkInit();
 void udawa();
 void otaUpdateInit();
-void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE> &doc, bool isRpc);
-void serialReadFromCoMcu(StaticJsonDocument<DOCSIZE> &doc);
+void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc);
+void serialReadFromCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc);
 void syncConfigCoMCU();
 void readSettings(StaticJsonDocument<DOCSIZE> &doc,const char* path);
 void writeSettings(StaticJsonDocument<DOCSIZE> &doc, const char* path);
 void setCoMCUPin(uint8_t pin, uint8_t op, uint8_t mode, uint16_t aval, uint8_t state);
 void rtcUpdate(long ts = 0);
+void setBuzzer(uint16_t beepCount, uint16_t beepDelay);
+void setLed(uint8_t r, uint8_t g, uint8_t b, uint8_t isBlink, uint16_t blinkCount, uint16_t blinkDelay);
+void setLed(uint8_t color, uint8_t isBlink, uint16_t blinkCount, uint16_t blinkDelay);
+void setAlarm(uint8_t color, uint16_t blinkCount, uint16_t blinkDelay);
 
 ESP32SerialLogger serial_logger;
 LogManager *log_manager = LogManager::GetInstance(LogLevel::VERBOSE);
 WiFiClientSecure ssl = WiFiClientSecure();
 Config config;
 ConfigCoMCU configcomcu;
-ThingsBoardSized<DOCSIZE, 64, LogManager> tb(ssl);
+ThingsBoardSized<DOCSIZE_MIN, 64, LogManager> tb(ssl);
 volatile bool provisionResponseProcessed = false;
 ESP32Time rtc(0);
 
@@ -162,6 +171,7 @@ void startup() {
   #endif
 
   log_manager->debug(PSTR(__func__), "Startup time: %s\n", rtc.getDateTime().c_str());
+  setAlarm(0, 1, 1000);
 }
 
 void networkInit()
@@ -218,6 +228,89 @@ void udawa() {
     FLAG_IOT_INIT = 0;
     iotInit();
   }
+}
+
+void setBuzzer(uint16_t beepCount, uint16_t beepDelay){
+  StaticJsonDocument<DOCSIZE_MIN> doc;
+  JsonObject params = doc.createNestedObject("params");
+  doc["method"] = "sBuz";
+  params["beepCount"] = beepCount;
+  params["beepDelay"] = beepDelay;
+  serialWriteToCoMcu(doc, 0);
+}
+
+void setLed(uint8_t r, uint8_t g, uint8_t b, uint8_t isBlink, uint16_t blinkCount, uint16_t blinkDelay){
+  StaticJsonDocument<DOCSIZE_MIN> doc;
+  JsonObject params = doc.createNestedObject("params");
+  params["r"] = r;
+  params["g"] = g;
+  params["b"] = b;
+  params["isBlink"] = isBlink;
+  params["blinkCount"] = blinkCount;
+  params["blinkDelay"] = blinkDelay;
+  serialWriteToCoMcu(doc, 0);
+}
+
+void setLed(uint8_t color, uint8_t isBlink, uint16_t blinkCount, uint16_t blinkDelay){
+uint8_t r, g, b;
+  switch (color)
+  {
+  //Auto by network
+  case 0:
+    if(tb.connected()){
+      r = configcomcu.ledON == 0 ? 255 : 0;
+      g = configcomcu.ledON == 0 ? 255 : 0;
+      b = configcomcu.ledON;
+    }
+    else if(WiFi.status() == WL_CONNECTED){
+      r = configcomcu.ledON == 0 ? 255 : 0;
+      g = configcomcu.ledON;
+      b = configcomcu.ledON == 0 ? 255 : 0;
+    }
+    else{
+      r = configcomcu.ledON;
+      g = configcomcu.ledON == 0 ? 255 : 0;
+      b = configcomcu.ledON == 0 ? 255 : 0;
+    }
+    break;
+  //RED
+  case 1:
+    r = configcomcu.ledON;
+    g = configcomcu.ledON == 0 ? 255 : 0;
+    b = configcomcu.ledON == 0 ? 255 : 0;
+    break;
+  //GREEN
+  case 2:
+    r = configcomcu.ledON == 0 ? 255 : 0;
+    g = configcomcu.ledON;
+    b = configcomcu.ledON == 0 ? 255 : 0;
+    break;
+  //BLUE
+  case 3:
+    r = configcomcu.ledON == 0 ? 255 : 0;
+    g = configcomcu.ledON == 0 ? 255 : 0;
+    b = configcomcu.ledON;
+    break;
+  default:
+    r = configcomcu.ledON;
+    g = configcomcu.ledON;
+    b = configcomcu.ledON;
+  }
+  StaticJsonDocument<DOCSIZE_MIN> doc;
+  doc["method"] = "sLed";
+  JsonObject params = doc.createNestedObject("params");
+  params["r"] = r;
+  params["g"] = g;
+  params["b"] = b;
+  params["isBlink"] = isBlink;
+  params["blinkCount"] = blinkCount;
+  params["blinkDelay"] = blinkDelay;
+  serialWriteToCoMcu(doc, 0);
+}
+
+void setAlarm(uint8_t color, uint16_t blinkCount, uint16_t blinkDelay){
+  setLed(color, 1, blinkCount, blinkDelay);
+  setBuzzer(blinkCount, blinkDelay);
 }
 
 void reboot()
@@ -335,6 +428,7 @@ void iotInit()
       log_manager->info(PSTR(__func__),PSTR("IoT Connected!\n"));
       IOT_RECONNECT_ATTEMPT = 0;
       FLAG_IOT_SUBSCRIBE = true;
+      setAlarm(3, 3, 100);
     }
   }
 }
@@ -343,10 +437,12 @@ void cbWifiOnConnected(WiFiEvent_t event, WiFiEventInfo_t info)
 {
   log_manager->info(PSTR(__func__),PSTR("WiFi Connected to %s\n"), WiFi.SSID().c_str());
   WIFI_RECONNECT_ATTEMPT = 0;
+  setAlarm(2, 2, 100);
 }
 
 void cbWiFiOnDisconnected(WiFiEvent_t event, WiFiEventInfo_t info)
 {
+  setAlarm(1, 1, 1000);
   WIFI_RECONNECT_ATTEMPT += 1;
   if(WIFI_RECONNECT_ATTEMPT >= WIFI_FALLBACK_COUNTER)
   {
@@ -666,7 +762,7 @@ void syncConfigCoMCU()
 {
   configCoMCULoad();
 
-  StaticJsonDocument<DOCSIZE> doc;
+  StaticJsonDocument<DOCSIZE_MIN> doc;
   doc["fPanic"] = configcomcu.fPanic;
   doc["bfreq"] = configcomcu.bfreq;
   doc["fBuzz"] = configcomcu.fBuzz;
@@ -737,7 +833,7 @@ callbackResponse processProvisionResponse(const callbackData &data)
   reboot();
 }
 
-void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE> &doc, bool isRpc)
+void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc)
 {
   serializeJson(doc, Serial2);
   StringPrint stream;
@@ -752,7 +848,7 @@ void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE> &doc, bool isRpc)
   }
 }
 
-void serialReadFromCoMcu(StaticJsonDocument<DOCSIZE> &doc)
+void serialReadFromCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc)
 {
   StringPrint stream;
   String result;
@@ -799,7 +895,7 @@ void writeSettings(StaticJsonDocument<DOCSIZE> &doc, const char* path)
 
 void setCoMCUPin(uint8_t pin, uint8_t op, uint8_t mode, uint16_t aval, uint8_t state)
 {
-  StaticJsonDocument<DOCSIZE> doc;
+  StaticJsonDocument<DOCSIZE_MIN> doc;
   JsonObject params = doc.createNestedObject("params");
   doc["method"] = "sPin";
   params["pin"] = pin;
