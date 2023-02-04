@@ -118,10 +118,10 @@ void readSettings(StaticJsonDocument<DOCSIZE> &doc,const char* path);
 void writeSettings(StaticJsonDocument<DOCSIZE> &doc, const char* path);
 void setCoMCUPin(uint8_t pin, uint8_t op, uint8_t mode, uint16_t aval, uint8_t state);
 void rtcUpdate(long ts = 0);
-void setBuzzer(uint16_t beepCount, uint16_t beepDelay);
-void setLed(uint8_t r, uint8_t g, uint8_t b, uint8_t isBlink, uint16_t blinkCount, uint16_t blinkDelay);
-void setLed(uint8_t color, uint8_t isBlink, uint16_t blinkCount, uint16_t blinkDelay);
-void setAlarm(uint8_t color, uint16_t blinkCount, uint16_t blinkDelay);
+void setBuzzer(int32_t beepCount, uint16_t beepDelay);
+void setLed(uint8_t r, uint8_t g, uint8_t b, uint8_t isBlink, int32_t blinkCount, uint16_t blinkDelay);
+void setLed(uint8_t color, uint8_t isBlink, int32_t blinkCount, uint16_t blinkDelay);
+void setAlarm(uint8_t color, int32_t blinkCount, uint16_t blinkDelay);
 
 ESP32SerialLogger serial_logger;
 LogManager *log_manager = LogManager::GetInstance(LogLevel::VERBOSE);
@@ -230,7 +230,7 @@ void udawa() {
   }
 }
 
-void setBuzzer(uint16_t beepCount, uint16_t beepDelay){
+void setBuzzer(int32_t beepCount, uint16_t beepDelay){
   StaticJsonDocument<DOCSIZE_MIN> doc;
   JsonObject params = doc.createNestedObject("params");
   doc["method"] = "sBuz";
@@ -239,7 +239,7 @@ void setBuzzer(uint16_t beepCount, uint16_t beepDelay){
   serialWriteToCoMcu(doc, 0);
 }
 
-void setLed(uint8_t r, uint8_t g, uint8_t b, uint8_t isBlink, uint16_t blinkCount, uint16_t blinkDelay){
+void setLed(uint8_t r, uint8_t g, uint8_t b, uint8_t isBlink, int32_t blinkCount, uint16_t blinkDelay){
   StaticJsonDocument<DOCSIZE_MIN> doc;
   JsonObject params = doc.createNestedObject("params");
   params["r"] = r;
@@ -251,7 +251,7 @@ void setLed(uint8_t r, uint8_t g, uint8_t b, uint8_t isBlink, uint16_t blinkCoun
   serialWriteToCoMcu(doc, 0);
 }
 
-void setLed(uint8_t color, uint8_t isBlink, uint16_t blinkCount, uint16_t blinkDelay){
+void setLed(uint8_t color, uint8_t isBlink, int32_t blinkCount, uint16_t blinkDelay){
 uint8_t r, g, b;
   switch (color)
   {
@@ -308,7 +308,7 @@ uint8_t r, g, b;
   serialWriteToCoMcu(doc, 0);
 }
 
-void setAlarm(uint8_t color, uint16_t blinkCount, uint16_t blinkDelay){
+void setAlarm(uint8_t color, int32_t blinkCount, uint16_t blinkDelay){
   setLed(color, 1, blinkCount, blinkDelay);
   setBuzzer(blinkCount, blinkDelay);
 }
