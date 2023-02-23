@@ -1,9 +1,9 @@
 /*
-  ThingsBoard.cpp - Library for sending data to the ThingsBoard.
+  ThingsBoard.h - Library API for sending data to the ThingsBoard
   Based on PubSub MQTT library.
   Created by Olender M. Oct 2018.
+  Modified by Narin Laboratory. Nov 2021.
   Released into the public domain.
-  https://thingsboard.io/
 */
 
 #include "thingsboard.h"
