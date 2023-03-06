@@ -481,7 +481,7 @@ void cbWiFiOnGotIp(WiFiEvent_t event, WiFiEventInfo_t info)
 
 void configReset()
 {
-  /**bool formatted = SPIFFS.format();
+  /*bool formatted = SPIFFS.format();
   if(formatted)
   {
     log_manager->info(PSTR(__func__),PSTR("SPIFFS formatting success.\n"));
@@ -489,7 +489,7 @@ void configReset()
   else
   {
     log_manager->error(PSTR(__func__),PSTR("SPIFFS formatting failed.\n"));
-  }*//
+  }*/
   File file;
   file = SPIFFS.open(configFile, FILE_WRITE);
   if (!file) {
