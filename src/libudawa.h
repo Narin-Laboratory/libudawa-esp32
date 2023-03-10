@@ -343,6 +343,7 @@ void otaUpdateInit()
           type = "sketch";
       else // U_SPIFFS
           type = "filesystem";
+          SPIFFS.end();
       log_manager->warn(PSTR(__func__),PSTR("Starting OTA %s\n"), type.c_str());
     })
     .onEnd([]()
