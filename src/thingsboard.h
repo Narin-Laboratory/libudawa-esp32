@@ -444,6 +444,24 @@ class ThingsBoardSized
     }
 
     //----------------------------------------------------------------------------
+    // Custom function
+    bool server_rpc_call(const char* method, const char* params) {
+      StaticJsonDocument<JSON_OBJECT_SIZE(1)> requestBuffer;
+      JsonObject requestObject = requestBuffer.to<JsonObject>();
+
+      requestObject["method"] = method;
+      requestObject["params"] = params;
+
+      int objectSize = measureJson(requestBuffer) + 1;
+      char buffer[objectSize];
+      serializeJson(requestObject, buffer, objectSize);
+
+      m_requestId++;
+
+      return m_client.publish(String("v1/devices/me/rpc/request/" + String(m_requestId)).c_str(), buffer);
+    }
+
+    //----------------------------------------------------------------------------
     // Shared attributes API
 
     bool Shared_Attributes_Request(const char* attributes) {
