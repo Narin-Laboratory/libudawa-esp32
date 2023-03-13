@@ -31,7 +31,7 @@
 #define COMPILED __DATE__ " " __TIME__
 #define S2_RX 16
 #define S2_TX 17
-#define WIFI_FALLBACK_COUNTER 5
+#define WIFI_FALLBACK_COUNTER 3
 #ifndef DOCSIZE
   #define DOCSIZE 1024
 #endif
