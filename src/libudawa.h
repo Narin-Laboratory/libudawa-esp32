@@ -49,6 +49,8 @@ const char* configFileCoMCU = "/comcu.json";
 bool FLAG_IOT_SUBSCRIBE = false;
 bool FLAG_IOT_INIT = false;
 bool FLAG_OTA_UPDATE_INIT = false;
+bool FLAG_IOT_RECONNECT_DEFERRED = false;
+unsigned long LAST_IOT_DEFERRED_TIMESTAMP = 0;
 uint8_t WIFI_RECONNECT_ATTEMPT = 0;
 uint8_t IOT_RECONNECT_ATTEMPT = 0;
 bool WIFI_IS_DEFAULT = false;
@@ -413,15 +415,20 @@ void iotInit()
   }
   else if(config.provSent)
   {
-    if(!tb.connected())
+    if((millis() - LAST_IOT_DEFERRED_TIMESTAMP) > 1800){
+      FLAG_IOT_RECONNECT_DEFERRED = 0;
+    }
+    if(!tb.connected() && !FLAG_IOT_RECONNECT_DEFERRED)
     {
+      LAST_IOT_DEFERRED_TIMESTAMP = millis();
       log_manager->info(PSTR(__func__),PSTR("Connecting to broker %s:%d\n"), config.broker, config.port);
       if(!tb.connect(config.broker, config.accessToken, config.port, config.name))
       {
-        log_manager->error(PSTR(__func__),PSTR("Failed to connect to IoT Broker %s [%d/20]\n"), config.broker, IOT_RECONNECT_ATTEMPT);
+        log_manager->error(PSTR(__func__),PSTR("Failed to connect to IoT Broker %s [%d/3]\n"), config.broker, IOT_RECONNECT_ATTEMPT);
         IOT_RECONNECT_ATTEMPT++;
-        if(IOT_RECONNECT_ATTEMPT >= 20){
+        if(IOT_RECONNECT_ATTEMPT >= 3){
           config.provSent= 0;
+          FLAG_IOT_RECONNECT_DEFERRED = 1;
         }
         return;
       }
