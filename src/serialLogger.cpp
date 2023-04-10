@@ -16,6 +16,7 @@
 #define YELLOW_COLOR_CODE 33
 #define MAGENTA_COLOR_CODE 35
 #define CYAN_COLOR_CODE 34
+#define WHITE_COLOR_CODE 37
 
 static SemaphoreHandle_t xSemaphore = NULL;
 
@@ -23,6 +24,8 @@ char get_error_char(const LogLevel level)
 {
     switch(level)
     {
+        case LogLevel::CODE:
+            return 'E';
         case LogLevel::ERROR:
             return 'E';
         case LogLevel::WARN:
@@ -42,6 +45,8 @@ int get_console_color_code(const LogLevel level)
 {
     switch(level)
     {
+        case LogLevel::CODE:
+            return WHITE_COLOR_CODE;
         case LogLevel::ERROR:
             return RED_COLOR_CODE;
         case LogLevel::WARN:
@@ -63,6 +68,8 @@ int map_log_level(const LogLevel level)
     {
         case LogLevel::NONE:
             return ESP_LOG_NONE;
+        case LogLevel::CODE:
+            return ESP_LOG_CODE;
         case LogLevel::ERROR:
             return ESP_LOG_ERROR;
         case LogLevel::WARN:
