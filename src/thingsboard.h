@@ -30,7 +30,7 @@ class Telemetry {
     // EnableIf trick is required to overcome ambiguous float/integer conversion
     template <
       typename T,
-      typename = ARDUINOJSON_NAMESPACE::enable_if<ARDUINOJSON_NAMESPACE::is_integral<T>::value>
+      typename = ArduinoJson::enable_if<ArduinoJson::is_integral<T>::value>
       >
     inline Telemetry(const char *key, T val)
       : m_type(TYPE_INT), m_key(key), m_value()   {

@@ -815,7 +815,7 @@ callbackResponse processProvisionResponse(const callbackData &data)
   {
     log_manager->error(PSTR(__func__),PSTR("Provision response contains the error: %s\n"), data["errorMsg"].as<const char*>());
     provisionResponseProcessed = true;
-    return callbackResponse("provisionResponse", 1);
+    return callbackResponse("provisionResponse", "OK");
   }
   else
   {
