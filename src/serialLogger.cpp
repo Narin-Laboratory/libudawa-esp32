@@ -69,7 +69,7 @@ int map_log_level(const LogLevel level)
         case LogLevel::NONE:
             return ESP_LOG_NONE;
         case LogLevel::CODE:
-            return ESP_LOG_CODE;
+            return 6;
         case LogLevel::ERROR:
             return ESP_LOG_ERROR;
         case LogLevel::WARN:

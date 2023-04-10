@@ -28,11 +28,7 @@ class Telemetry {
 
     // Constructs telemetry record from integer value.
     // EnableIf trick is required to overcome ambiguous float/integer conversion
-    template <
-      typename T,
-      typename = ArduinoJson::enable_if<ArduinoJson::is_integral<T>::value>
-      >
-    inline Telemetry(const char *key, T val)
+    inline Telemetry(const char *key, int val)
       : m_type(TYPE_INT), m_key(key), m_value()   {
       m_value.integer = val;
     }
