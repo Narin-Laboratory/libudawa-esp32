@@ -14,8 +14,8 @@
 
 enum class LogLevel
 {
-    NONE,
     ALARM,
+    NONE,
     ERROR,
     WARN,
     INFO,
