@@ -24,8 +24,8 @@ char get_error_char(const LogLevel level)
 {
     switch(level)
     {
-        case LogLevel::CODE:
-            return 'E';
+        case LogLevel::ALARM:
+            return 'A';
         case LogLevel::ERROR:
             return 'E';
         case LogLevel::WARN:
@@ -45,7 +45,7 @@ int get_console_color_code(const LogLevel level)
 {
     switch(level)
     {
-        case LogLevel::CODE:
+        case LogLevel::ALARM:
             return WHITE_COLOR_CODE;
         case LogLevel::ERROR:
             return RED_COLOR_CODE;
@@ -66,10 +66,10 @@ int map_log_level(const LogLevel level)
 {
     switch(level)
     {
+        case LogLevel::ALARM:
+            return -1;
         case LogLevel::NONE:
             return ESP_LOG_NONE;
-        case LogLevel::CODE:
-            return 6;
         case LogLevel::ERROR:
             return ESP_LOG_ERROR;
         case LogLevel::WARN:

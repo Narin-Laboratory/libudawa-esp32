@@ -83,7 +83,7 @@ void LogManager::error(const char *tag, const char *fmt, ...)
     va_end(args);
 }
 
-void LogManager::code(const char *tag, const char *fmt, ...)
+void LogManager::alarm(const char *tag, const char *fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
