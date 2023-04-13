@@ -87,7 +87,7 @@ void LogManager::alarm(const char *tag, const char *fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    dispatch_message(tag, LogLevel::CODE, fmt, args);
+    dispatch_message(tag, LogLevel::ALARM, fmt, args);
     va_end(args);
 }
 
