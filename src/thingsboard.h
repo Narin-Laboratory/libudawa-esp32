@@ -539,7 +539,7 @@ class ThingsBoardSized
             DeserializationError err_param = deserializeJson(doc, params);
             //if failed to de-serialize params then send JsonObject instead
             if (err_param) {
-              log_manager->error(PSTR(__func__), "params: %s\n", data["params"].as<String>().c_str());
+              log_manager->info(PSTR(__func__), "params: %s\n", data["params"].as<String>().c_str());
               r = m_genericCallbacks[i].m_cb(data);
             } else {
               log_manager->info(PSTR(__func__), "JsonObject params: %s\n", params);
