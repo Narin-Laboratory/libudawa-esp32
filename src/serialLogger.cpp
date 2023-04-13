@@ -24,8 +24,6 @@ char get_error_char(const LogLevel level)
 {
     switch(level)
     {
-        case LogLevel::ALARM:
-            return 'A';
         case LogLevel::ERROR:
             return 'E';
         case LogLevel::WARN:
@@ -45,8 +43,6 @@ int get_console_color_code(const LogLevel level)
 {
     switch(level)
     {
-        case LogLevel::ALARM:
-            return WHITE_COLOR_CODE;
         case LogLevel::ERROR:
             return RED_COLOR_CODE;
         case LogLevel::WARN:
@@ -66,22 +62,20 @@ int map_log_level(const LogLevel level)
 {
     switch(level)
     {
-        case LogLevel::ALARM:
-            return -1;
         case LogLevel::NONE:
-            return 0;
+            return ESP_LOG_NONE;
         case LogLevel::ERROR:
-            return 1;
+            return ESP_LOG_ERROR;
         case LogLevel::WARN:
-            return 2;
+            return ESP_LOG_WARN;
         case LogLevel::INFO:
-            return 3;
+            return ESP_LOG_INFO;
         case LogLevel::DEBUG:
-            return 4;
+            return ESP_LOG_DEBUG;
         case LogLevel::VERBOSE:
-            return 5;
+            return ESP_LOG_VERBOSE;
         default:
-            return 5;
+            return ESP_LOG_VERBOSE;
     }
 }
 
@@ -94,8 +88,8 @@ void ESP32SerialLogger::log_message(const char *tag, LogLevel level, const char 
 
     if(xSemaphore != NULL && xSemaphoreTake(xSemaphore, (TickType_t) 20))
     {
-        esp_log_level_t esp_log_level = (esp_log_level_t)map_log_level(level);
-        //esp_log_level_t esp_log_level = ESP_LOG_ERROR;
+        //esp_log_level_t esp_log_level = (esp_log_level_t)map_log_level(level);
+        esp_log_level_t esp_log_level = ESP_LOG_NONE;
         esp_log_write(esp_log_level, tag, "\033[0;%dm%c (%d) %s: ", get_console_color_code(level), get_error_char(level), esp_log_timestamp(), tag);
         esp_log_writev(esp_log_level, tag, fmt, args);
         esp_log_write(esp_log_level, tag, "\033[0m");

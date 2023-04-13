@@ -83,14 +83,6 @@ void LogManager::error(const char *tag, const char *fmt, ...)
     va_end(args);
 }
 
-void LogManager::alarm(const char *tag, const char *fmt, ...)
-{
-    va_list args;
-    va_start(args, fmt);
-    dispatch_message(tag, LogLevel::ALARM, fmt, args);
-    va_end(args);
-}
-
 void LogManager::set_log_level(const char *tag, LogLevel level)
 {
     _log_level = level;

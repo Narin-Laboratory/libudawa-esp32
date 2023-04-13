@@ -14,7 +14,6 @@
 
 enum class LogLevel
 {
-    ALARM,
     NONE,
     ERROR,
     WARN,
@@ -50,7 +49,6 @@ class LogManager
         void info(const char *tag, const char *fmt, ...);
         void warn(const char *tag, const char *fmt, ...);
         void error(const char *tag, const char *fmt, ...);
-        void alarm(const char *tag, const char *fmt, ...);
         void set_log_level(const char *tag, LogLevel level);
 };
 
