@@ -354,7 +354,7 @@ class ThingsBoardSized
 
       // Increase size of receive buffer
       if (!m_client.setBufferSize(chunkSize + 50)) {
-        log_manager->error(PSTR(__func__), "Not enough RAM\n");
+        log_manager->warn(PSTR(__func__), "Not enough RAM\n");
         return false;
       }
 
@@ -382,7 +382,7 @@ class ThingsBoardSized
             else {
               nbRetry--;
               if (nbRetry == 0) {
-                log_manager->error(PSTR(__func__), "Unable to write firmware\n");
+                log_manager->warn(PSTR(__func__), "Unable to write firmware\n");
                 return false;
               }
             }
@@ -397,7 +397,7 @@ class ThingsBoardSized
         else {
           nbRetry--;
           if (nbRetry == 0) {
-            log_manager->error(PSTR(__func__), "Unable to download firmware\n");
+            log_manager->warn(PSTR(__func__), "Unable to download firmware\n");
             return false;
           }
         }
@@ -489,12 +489,12 @@ class ThingsBoardSized
         StaticJsonDocument<JSON_OBJECT_SIZE(1)>jsonBuffer;
         JsonVariant object = jsonBuffer.template to<JsonVariant>();
         if (t.serializeKeyval(object) == false) {
-          log_manager->error(PSTR(__func__), "unable to serialize data\n");
+          log_manager->warn(PSTR(__func__), "unable to serialize data\n");
           return false;
         }
 
         if (measureJson(jsonBuffer) > PayloadSize - 1) {
-          log_manager->error(PSTR(__func__), "too small buffer for JSON data\n");
+          log_manager->warn(PSTR(__func__), "too small buffer for JSON data\n");
           return false;
         }
         serializeJson(object, payload, sizeof(payload));
@@ -510,7 +510,7 @@ class ThingsBoardSized
         StaticJsonDocument<JSON_OBJECT_SIZE(MaxFieldsAmt)> jsonBuffer;
         DeserializationError error = deserializeJson(jsonBuffer, payload, length);
         if (error) {
-          log_manager->error(PSTR(__func__), "unable to de-serialize RPC\n");
+          log_manager->warn(PSTR(__func__), "unable to de-serialize RPC\n");
           return;
         }
         const JsonObject &data = jsonBuffer.template as<JsonObject>();
@@ -539,7 +539,7 @@ class ThingsBoardSized
             DeserializationError err_param = deserializeJson(doc, params);
             //if failed to de-serialize params then send JsonObject instead
             if (err_param) {
-              log_manager->info(PSTR(__func__), "params: %s\n", data["params"].as<String>().c_str());
+              log_manager->warn(PSTR(__func__), "params: %s\n", data["params"].as<String>().c_str());
               r = m_genericCallbacks[i].m_cb(data);
             } else {
               log_manager->info(PSTR(__func__), "JsonObject params: %s\n", params);
@@ -559,12 +559,12 @@ class ThingsBoardSized
       JsonVariant resp_obj = respBuffer.template to<JsonVariant>();
 
       if (r.serializeKeyval(resp_obj) == false) {
-        log_manager->error(PSTR(__func__), "unable to serialize data\n");
+        log_manager->warn(PSTR(__func__), "unable to serialize data\n");
         return;
       }
 
       if (measureJson(respBuffer) > PayloadSize - 1) {
-        log_manager->error(PSTR(__func__), "too small buffer for JSON data\n");
+        log_manager->warn(PSTR(__func__), "too small buffer for JSON data\n");
         return;
       }
       serializeJson(resp_obj, responsePayload, sizeof(responsePayload));
@@ -593,7 +593,7 @@ class ThingsBoardSized
         if(Update.isRunning()){Update.abort();}
         // Initialize Flash
         if (!Update.begin(m_fwSize)) {
-          log_manager->error(PSTR(__func__), "Error during Update.begin\n");
+          log_manager->warn(PSTR(__func__), "Error during Update.begin\n");
           m_fwState = "UPDATE ERROR";
           return;
         }
@@ -601,7 +601,7 @@ class ThingsBoardSized
 
       // Write data to Flash
       if (Update.write(payload, length) != length) {
-        log_manager->error(PSTR(__func__), "Error during Update.write\n");
+        log_manager->warn(PSTR(__func__), "Error during Update.write\n");
         m_fwState = "UPDATE ERROR";
         return;
       }
@@ -618,7 +618,7 @@ class ThingsBoardSized
         log_manager->info(PSTR(__func__), "md5 compute: %s\n", m_fwChecksum);
         // Check MD5
         if (md5Str != m_fwChecksum) {
-          log_manager->error(PSTR(__func__), "Checksum verification failed !\n");
+          log_manager->warn(PSTR(__func__), "Checksum verification failed !\n");
           Update.abort();
           m_fwState = "CHECKSUM ERROR";
         }
@@ -629,7 +629,7 @@ class ThingsBoardSized
             m_fwState = "SUCCESS";
           }
           else {
-            log_manager->error(PSTR(__func__), "Update Fail !\n");
+            log_manager->warn(PSTR(__func__), "Update Fail !\n");
             m_fwState = "FAILED";
           }
         }
@@ -641,7 +641,7 @@ class ThingsBoardSized
       StaticJsonDocument<JSON_OBJECT_SIZE(MaxFieldsAmt)> jsonBuffer;
       DeserializationError error = deserializeJson(jsonBuffer, payload, length);
       if (error) {
-        log_manager->error(PSTR(__func__), "Unable to de-serialize Shared attribute update request\n");
+        log_manager->warn(PSTR(__func__), "Unable to de-serialize Shared attribute update request\n");
         return;
       }
       JsonObject data = jsonBuffer.template as<JsonObject>();
@@ -652,7 +652,7 @@ class ThingsBoardSized
           data = data["shared"];
         }
       } else {
-        log_manager->error(PSTR(__func__), "Shared attribute update key not found.\n");
+        log_manager->warn(PSTR(__func__), "Shared attribute update key not found.\n");
         return;
       }
 
@@ -686,7 +686,7 @@ class ThingsBoardSized
       StaticJsonDocument<JSON_OBJECT_SIZE(MaxFieldsAmt)> jsonBuffer;
       DeserializationError error = deserializeJson(jsonBuffer, payload, length);
       if (error) {
-        log_manager->error(PSTR(__func__), "Unable to de-serialize provision response\n");
+        log_manager->warn(PSTR(__func__), "Unable to de-serialize provision response\n");
         return;
       }
 
@@ -695,7 +695,7 @@ class ThingsBoardSized
       log_manager->info(PSTR(__func__), "Received provision response\n");
 
       if (data["status"] == "SUCCESS" && data["credentialsType"] == "X509_CERTIFICATE") {
-        log_manager->error(PSTR(__func__), "Provision response contains X509_CERTIFICATE credentials, it is not supported yet.\n");
+        log_manager->warn(PSTR(__func__), "Provision response contains X509_CERTIFICATE credentials, it is not supported yet.\n");
         return;
       }
 
@@ -708,7 +708,7 @@ class ThingsBoardSized
     // Sends array of attributes or telemetry to ThingsBoard
     bool sendDataArray(const Telemetry *data, size_t data_count, bool telemetry = true) {
       if (MaxFieldsAmt < data_count) {
-        log_manager->error(PSTR(__func__), "too much JSON fields passed\n");
+        log_manager->warn(PSTR(__func__), "too much JSON fields passed\n");
         return false;
       }
       char payload[PayloadSize];
@@ -718,12 +718,12 @@ class ThingsBoardSized
 
         for (size_t i = 0; i < data_count; ++i) {
           if (data[i].serializeKeyval(object) == false) {
-            log_manager->error(PSTR(__func__), "unable to serialize data\n");
+            log_manager->warn(PSTR(__func__), "unable to serialize data\n");
             return false;
           }
         }
         if (measureJson(jsonBuffer) > PayloadSize - 1) {
-          log_manager->error(PSTR(__func__), "too small buffer for JSON data\n");
+          log_manager->warn(PSTR(__func__), "too small buffer for JSON data\n");
           return false;
         }
         serializeJson(object, payload, sizeof(payload));

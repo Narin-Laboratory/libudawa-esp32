@@ -91,6 +91,19 @@ struct ConfigCoMCU
   uint8_t ledON;
 };
 
+class GCB {
+  public:
+    using processFn = JsonObject (*)(const JsonObject &data);
+
+    inline GCB()
+      : m_name(), m_cb(NULL)                {  }
+
+    inline GCB(const char *methodName, processFn cb)
+      : m_name(methodName), m_cb(cb)        {  }
+
+    const char  *m_name;
+    processFn   m_cb;
+};
 
 void reboot();
 char* getDeviceId();
@@ -123,7 +136,10 @@ void rtcUpdate(long ts = 0);
 void setBuzzer(int32_t beepCount, uint16_t beepDelay);
 void setLed(uint8_t r, uint8_t g, uint8_t b, uint8_t isBlink, int32_t blinkCount, uint16_t blinkDelay);
 void setLed(uint8_t color, uint8_t isBlink, int32_t blinkCount, uint16_t blinkDelay);
-void setAlarm(uint8_t color, int32_t blinkCount, uint16_t blinkDelay);
+void setAlarm(uint16_t code, uint8_t color, int32_t blinkCount, uint16_t blinkDelay);
+void emitAlarm(int code);
+void cbSubscribe(const GenericCallback *callbacks, size_t callbacksSize);
+void runCb(const char *methodName, JsonObject &params);
 
 ESP32SerialLogger serial_logger;
 LogManager *log_manager = LogManager::GetInstance(LogLevel::VERBOSE);
@@ -133,7 +149,34 @@ ConfigCoMCU configcomcu;
 ThingsBoardSized<DOCSIZE_MIN, 64, LogManager> tb(ssl);
 volatile bool provisionResponseProcessed = false;
 ESP32Time rtc(0);
+GCB m_gcb[10];
 
+
+void cbSubscribe(const GCB *callbacks, size_t callbacksSize)
+{
+  for (size_t i = 0; i < callbacksSize; ++i) {
+    m_gcb[i] = callbacks[i];
+  }
+}
+
+void runCb(const char *methodName, JsonObject &params){
+  for (size_t i = 0; i < sizeof(m_gcb) / sizeof(*m_gcb); ++i) {
+    if (m_gcb[i].m_cb && !strcmp(m_gcb[i].m_name, methodName)) {
+      log_manager->info(PSTR(__func__), PSTR("calling generic RPC: %s\n"), m_gcb[i].m_name);
+      m_gcb[i].m_cb(params);
+      break;
+    }
+  }
+}
+
+void emitAlarm(int code){
+  StaticJsonDocument<DOCSIZE_MIN> doc;
+  doc["alarm"] = code;
+  tb.sendTelemetryDoc(doc);
+  log_manager->error(PSTR(__func__), PSTR("%i\n"), code);
+  JsonObject params = doc.template as<JsonObject>();
+  runCb("emitAlarmWs", params);
+}
 
 void rtcUpdate(long ts){
   if(ts == 0){
@@ -141,11 +184,11 @@ void rtcUpdate(long ts){
     struct tm timeinfo;
     if (getLocalTime(&timeinfo)){
       rtc.setTimeStruct(timeinfo);
-      log_manager->debug(PSTR(__func__), "Updated time via NTP: %s GMT Offset:%d (%d) \n", rtc.getDateTime().c_str(), config.gmtOffset, config.gmtOffset / 3600);
+      log_manager->debug(PSTR(__func__), PSTR("Updated time via NTP: %s GMT Offset:%d (%d) \n"), rtc.getDateTime().c_str(), config.gmtOffset, config.gmtOffset / 3600);
     }
   }else{
       rtc.setTime(ts);
-      log_manager->debug(PSTR(__func__), "Updated time via timestamp: %s\n", rtc.getDateTime().c_str());
+      log_manager->debug(PSTR(__func__), PSTR("Updated time via timestamp: %s\n"), rtc.getDateTime().c_str());
   }
 }
 
@@ -159,7 +202,7 @@ void startup() {
   {
     //configReset();
     configLoadFailSafe();
-    log_manager->error(PSTR(__func__), PSTR("Problem with file system. Failsafe config was loaded.\n"));
+    log_manager->warn(PSTR(__func__), PSTR("Problem with file system. Failsafe config was loaded.\n"));
   }
   else
   {
@@ -172,8 +215,9 @@ void startup() {
     Serial2.begin(115200, SERIAL_8N1, S2_RX, S2_TX);
   #endif
 
-  log_manager->debug(PSTR(__func__), "Startup time: %s\n", rtc.getDateTime().c_str());
-  setAlarm(0, 1, 1000);
+  log_manager->debug(PSTR(__func__), PSTR("Startup time: %s\n"), rtc.getDateTime().c_str());
+
+  setAlarm(0, 0, 3, 100);
 }
 
 void networkInit()
@@ -186,7 +230,7 @@ void networkInit()
   if(!config.wssid || *config.wssid == 0x00 || strlen(config.wssid) > 32)
   {
     configLoadFailSafe();
-    log_manager->error(PSTR(__func__), PSTR("SSID too long or missing! Failsafe config was loaded.\n"));
+    log_manager->warn(PSTR(__func__), PSTR("SSID too long or missing! Failsafe config was loaded.\n"));
   }
   WiFi.begin(config.wssid, config.wpass);
   WiFi.setHostname(config.name);
@@ -194,7 +238,7 @@ void networkInit()
 
   ssl.setCACert(CA_CERT);
 
-  taskManager.scheduleFixedRate(10000, [] {
+  taskManager.scheduleFixedRate(900000, [] {
     if(WiFi.status() == WL_CONNECTED && !tb.connected())
     {
       iotInit();
@@ -310,9 +354,12 @@ uint8_t r, g, b;
   serialWriteToCoMcu(doc, 0);
 }
 
-void setAlarm(uint8_t color, int32_t blinkCount, uint16_t blinkDelay){
+void setAlarm(uint16_t code, uint8_t color, int32_t blinkCount, uint16_t blinkDelay){
   setLed(color, 1, blinkCount, blinkDelay);
   setBuzzer(blinkCount, blinkDelay);
+  if(code > 0){
+    emitAlarm(code);
+  }
 }
 
 void reboot()
@@ -359,7 +406,7 @@ void otaUpdateInit()
     })
     .onError([](ota_error_t error)
     {
-      log_manager->error(PSTR(__func__),PSTR("OTA Failed: %d\n"), error);
+      log_manager->warn(PSTR(__func__),PSTR("OTA Failed: %d\n"), error);
       reboot();
     }
   );
@@ -371,7 +418,7 @@ void iotInit()
   log_manager->info(PSTR(__func__),PSTR("Initializing IoT, available memory: %d\n"), freeHeap);
   if(freeHeap < 92000)
   {
-    log_manager->error(PSTR(__func__),PSTR("Unable to init IoT, insufficient memory: %d\n"), freeHeap);
+    log_manager->warn(PSTR(__func__),PSTR("Unable to init IoT, insufficient memory: %d\n"), freeHeap);
     return;
   }
   if(!config.provSent)
@@ -408,7 +455,7 @@ void iotInit()
       }
       else
       {
-        log_manager->error(PSTR(__func__),PSTR("Failed to connect to provisioning server: %s:%d\n"),  config.broker, config.port);
+        log_manager->warn(PSTR(__func__),PSTR("Failed to connect to provisioning server: %s:%d\n"),  config.broker, config.port);
         return;
       }
     }
@@ -424,7 +471,7 @@ void iotInit()
       log_manager->info(PSTR(__func__),PSTR("Connecting to broker %s:%d\n"), config.broker, config.port);
       if(!tb.connect(config.broker, config.accessToken, config.port, config.name))
       {
-        log_manager->error(PSTR(__func__),PSTR("Failed to connect to IoT Broker %s [%d/3]\n"), config.broker, IOT_RECONNECT_ATTEMPT);
+        log_manager->warn(PSTR(__func__),PSTR("Failed to connect to IoT Broker %s [%d/3]\n"), config.broker, IOT_RECONNECT_ATTEMPT);
         IOT_RECONNECT_ATTEMPT++;
         if(IOT_RECONNECT_ATTEMPT >= 3){
           config.provSent= 0;
@@ -432,11 +479,10 @@ void iotInit()
         }
         return;
       }
-
+      setAlarm(0, 0, 3, 100);
       log_manager->info(PSTR(__func__),PSTR("IoT Connected!\n"));
       IOT_RECONNECT_ATTEMPT = 0;
       FLAG_IOT_SUBSCRIBE = true;
-      setAlarm(3, 3, 100);
     }
   }
 }
@@ -445,18 +491,17 @@ void cbWifiOnConnected(WiFiEvent_t event, WiFiEventInfo_t info)
 {
   log_manager->info(PSTR(__func__),PSTR("WiFi Connected to %s\n"), WiFi.SSID().c_str());
   WIFI_RECONNECT_ATTEMPT = 0;
-  setAlarm(2, 2, 100);
+  setAlarm(0, 0, 3, 100);
 }
 
 void cbWiFiOnDisconnected(WiFiEvent_t event, WiFiEventInfo_t info)
 {
-  setAlarm(1, 1, 1000);
   WIFI_RECONNECT_ATTEMPT += 1;
   if(WIFI_RECONNECT_ATTEMPT >= WIFI_FALLBACK_COUNTER)
   {
     if(!WIFI_IS_DEFAULT)
     {
-      log_manager->error(PSTR(__func__),PSTR("WiFi (%s) Disconnected! Attempt: %d/%d\n"), config.dssid, WIFI_RECONNECT_ATTEMPT, WIFI_FALLBACK_COUNTER);
+      log_manager->warn(PSTR(__func__),PSTR("WiFi (%s) Disconnected! Attempt: %d/%d\n"), config.dssid, WIFI_RECONNECT_ATTEMPT, WIFI_FALLBACK_COUNTER);
       WiFi.begin(config.dssid, config.dpass);
       WIFI_IS_DEFAULT = true;
     }
@@ -476,7 +521,7 @@ void cbWiFiOnDisconnected(WiFiEvent_t event, WiFiEventInfo_t info)
 
 void cbWiFiOnLostIp(WiFiEvent_t event, WiFiEventInfo_t info)
 {
-  log_manager->error(PSTR(__func__),PSTR("WiFi (%s) IP Lost!\n"), WiFi.SSID().c_str());
+  log_manager->warn(PSTR(__func__),PSTR("WiFi (%s) IP Lost!\n"), WiFi.SSID().c_str());
   WiFi.reconnect();
 }
 
@@ -496,12 +541,12 @@ void configReset()
   }
   else
   {
-    log_manager->error(PSTR(__func__),PSTR("SPIFFS formatting failed.\n"));
+    log_manager->warn(PSTR(__func__),PSTR("SPIFFS formatting failed.\n"));
   }*/
   File file;
   file = SPIFFS.open(configFile, FILE_WRITE);
   if (!file) {
-    log_manager->error(PSTR(__func__),PSTR("Failed to create config file. Config reset is cancelled.\n"));
+    log_manager->warn(PSTR(__func__),PSTR("Failed to create config file. Config reset is cancelled.\n"));
     file.close();
     return;
   }
@@ -534,7 +579,7 @@ void configReset()
   file = SPIFFS.open(configFile, FILE_READ);
   if (!file)
   {
-    log_manager->error(PSTR(__func__),PSTR("Failed to open the config file!"));
+    log_manager->warn(PSTR(__func__),PSTR("Failed to open the config file!"));
   }
   else
   {
@@ -542,7 +587,7 @@ void configReset()
 
     if(file.size() < 1)
     {
-      log_manager->error(PSTR(__func__),PSTR("Config file size is abnormal: %d, trying to rewrite...\n"), file.size());
+      log_manager->warn(PSTR(__func__),PSTR("Config file size is abnormal: %d, trying to rewrite...\n"), file.size());
 
       size_t size = serializeJson(doc, file);
       log_manager->info(PSTR(__func__),PSTR("Writing: %d of data, file size: %d\n"), size, file.size());
@@ -593,7 +638,7 @@ void configLoad()
   else
   {
     file.close();
-    log_manager->error(PSTR(__func__),PSTR("Config file size is abnormal: %d. Closing file and trying to reset...\n"), file.size());
+    log_manager->warn(PSTR(__func__),PSTR("Config file size is abnormal: %d. Closing file and trying to reset...\n"), file.size());
     configReset();
     return;
   }
@@ -603,7 +648,7 @@ void configLoad()
 
   if(error)
   {
-    log_manager->error(PSTR(__func__),PSTR("Failed to load config file! (%s - %s - %d). Falling back to failsafe.\n"), configFile, error.c_str(), file.size());
+    log_manager->warn(PSTR(__func__),PSTR("Failed to load config file! (%s - %s - %d). Falling back to failsafe.\n"), configFile, error.c_str(), file.size());
     file.close();
     configLoadFailSafe();
     return;
@@ -645,7 +690,7 @@ void configSave()
 {
   if(!SPIFFS.remove(configFile))
   {
-    log_manager->error(PSTR(__func__),PSTR("Failed to delete the old configFile: %s\n"), configFile);
+    log_manager->warn(PSTR(__func__),PSTR("Failed to delete the old configFile: %s\n"), configFile);
   }
   File file = SPIFFS.open(configFile, FILE_WRITE);
   if (!file)
@@ -740,7 +785,7 @@ void configCoMCUSave()
 {
   if(!SPIFFS.remove(configFileCoMCU))
   {
-    log_manager->error(PSTR(__func__),PSTR("Failed to delete the old configFileCoMCU: %s\n"), configFileCoMCU);
+    log_manager->warn(PSTR(__func__),PSTR("Failed to delete the old configFileCoMCU: %s\n"), configFileCoMCU);
   }
   File file = SPIFFS.open(configFileCoMCU, FILE_WRITE);
   if (!file)
@@ -813,7 +858,7 @@ callbackResponse processProvisionResponse(const callbackData &data)
 
   if (strncmp(data["status"], "SUCCESS", strlen("SUCCESS")) != 0)
   {
-    log_manager->error(PSTR(__func__),PSTR("Provision response contains the error: %s\n"), data["errorMsg"].as<const char*>());
+    log_manager->warn(PSTR(__func__),PSTR("Provision response contains the error: %s\n"), data["errorMsg"].as<const char*>());
     provisionResponseProcessed = true;
     return callbackResponse("provisionResponse", 1);
   }
