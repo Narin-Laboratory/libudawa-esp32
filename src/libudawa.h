@@ -196,7 +196,7 @@ void startup() {
   // put your setup code here, to run once:
   Serial.begin(115200);
 
-  config.logLev = 5;
+  config.logLev = 1;
   log_manager->add_logger(&serial_logger);
   if(!SPIFFS.begin(true))
   {
