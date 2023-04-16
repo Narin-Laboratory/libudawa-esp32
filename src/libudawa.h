@@ -198,6 +198,7 @@ void startup() {
 
   config.logLev = 1;
   log_manager->add_logger(&serial_logger);
+  log_manager->set_log_level(PSTR("*"), (LogLevel) config.logLev);
   if(!SPIFFS.begin(true))
   {
     //configReset();
@@ -249,7 +250,7 @@ void networkInit()
   while(true)
   {
     ArduinoOTA.handle();
-    if(millis() - otaTimer > 10000)
+    if(millis() - otaTimer > 60000)
     {
       break;
     }
