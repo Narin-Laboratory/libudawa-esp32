@@ -49,8 +49,6 @@ const char* configFileCoMCU = "/comcu.json";
 bool FLAG_IOT_SUBSCRIBE = false;
 bool FLAG_IOT_INIT = false;
 bool FLAG_OTA_UPDATE_INIT = false;
-bool FLAG_IOT_RECONNECT_DEFERRED = false;
-unsigned long LAST_IOT_DEFERRED_TIMESTAMP = 0;
 uint8_t WIFI_RECONNECT_ATTEMPT = 0;
 uint8_t IOT_RECONNECT_ATTEMPT = 0;
 bool WIFI_IS_DEFAULT = false;
@@ -77,6 +75,7 @@ struct Config
   char provisionDeviceSecret[24];
 
   int gmtOffset;
+  int useCloud = 1;
 };
 
 struct ConfigCoMCU
@@ -237,15 +236,6 @@ void networkInit()
   WiFi.setHostname(config.name);
   WiFi.setAutoReconnect(true);
 
-  ssl.setCACert(CA_CERT);
-
-  taskManager.scheduleFixedRate(900000, [] {
-    if(WiFi.status() == WL_CONNECTED && !tb.connected())
-    {
-      iotInit();
-    }
-  });
-
   unsigned long otaTimer = millis();
   while(true)
   {
@@ -256,6 +246,15 @@ void networkInit()
     }
     delay(10);
   }
+
+  ssl.setCACert(CA_CERT);
+
+  taskManager.scheduleFixedRate(10000, [] {
+    if(WiFi.status() == WL_CONNECTED && !tb.connected() && config.useCloud)
+    {
+      iotInit();
+    }
+  });
 }
 
 void udawa() {
@@ -270,7 +269,7 @@ void udawa() {
     otaUpdateInit();
   }
 
-  if(FLAG_IOT_INIT)
+  if(FLAG_IOT_INIT && config.useCloud)
   {
     FLAG_IOT_INIT = 0;
     iotInit();
@@ -463,12 +462,8 @@ void iotInit()
   }
   else if(config.provSent)
   {
-    if((millis() - LAST_IOT_DEFERRED_TIMESTAMP) > 1800){
-      FLAG_IOT_RECONNECT_DEFERRED = 0;
-    }
-    if(!tb.connected() && !FLAG_IOT_RECONNECT_DEFERRED)
+    if(!tb.connected())
     {
-      LAST_IOT_DEFERRED_TIMESTAMP = millis();
       log_manager->info(PSTR(__func__),PSTR("Connecting to broker %s:%d\n"), config.broker, config.port);
       if(!tb.connect(config.broker, config.accessToken, config.port, config.name))
       {
@@ -476,7 +471,6 @@ void iotInit()
         IOT_RECONNECT_ATTEMPT++;
         if(IOT_RECONNECT_ATTEMPT >= 3){
           config.provSent= 0;
-          FLAG_IOT_RECONNECT_DEFERRED = 1;
         }
         return;
       }
@@ -572,6 +566,7 @@ void configReset()
   doc["provisionDeviceSecret"] = provisionDeviceSecret;
   doc["logLev"] = 5;
   doc["gmtOffset"] = 28880;
+  doc["useCloud"] = 1;
 
   size_t size = serializeJson(doc, file);
   file.close();
@@ -679,6 +674,7 @@ void configLoad()
     config.port = doc["port"].as<uint16_t>() ? doc["port"].as<uint16_t>() : port;
     config.logLev = doc["logLev"].as<uint8_t>();
     config.gmtOffset = doc["gmtOffset"].as<int>();
+    config.useCloud = doc["useCloud"].as<int>();
     strlcpy(config.provisionDeviceKey, doc["provisionDeviceKey"].as<const char*>(), sizeof(config.provisionDeviceKey));
     strlcpy(config.provisionDeviceSecret, doc["provisionDeviceSecret"].as<const char*>(), sizeof(config.provisionDeviceSecret));
 
@@ -717,6 +713,7 @@ void configSave()
   doc["provisionDeviceSecret"] = config.provisionDeviceSecret;
   doc["logLev"] = config.logLev;
   doc["gmtOffset"] = config.gmtOffset;
+  doc["useCloud"] = config.useCloud;
 
   serializeJson(doc, file);
   file.close();
