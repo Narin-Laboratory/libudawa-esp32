@@ -236,25 +236,17 @@ void networkInit()
   WiFi.setHostname(config.name);
   WiFi.setAutoReconnect(true);
 
-  unsigned long otaTimer = millis();
-  while(true)
-  {
-    ArduinoOTA.handle();
-    if(millis() - otaTimer > 60000)
-    {
-      break;
-    }
-    delay(10);
-  }
-
   ssl.setCACert(CA_CERT);
 
   taskManager.scheduleFixedRate(10000, [] {
-    if(WiFi.status() == WL_CONNECTED && !tb.connected() && config.useCloud)
-    {
+  if(WiFi.status() == WL_CONNECTED && !tb.connected())
+  {
+    if(config.useCloud){
       iotInit();
     }
+  }
   });
+
 }
 
 void udawa() {
