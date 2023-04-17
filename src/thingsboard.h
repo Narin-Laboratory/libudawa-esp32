@@ -441,20 +441,15 @@ class ThingsBoardSized
 
     //----------------------------------------------------------------------------
     // Custom function
-    bool server_rpc_call(const char* method, const char* params) {
-      StaticJsonDocument<JSON_OBJECT_SIZE(1)> requestBuffer;
-      JsonObject requestObject = requestBuffer.to<JsonObject>();
-
-      requestObject["method"] = method;
-      requestObject["params"] = params;
-
-      int objectSize = measureJson(requestBuffer) + 1;
-      char buffer[objectSize];
-      serializeJson(requestObject, buffer, objectSize);
+    bool server_rpc_call(JsonObject &payload) {
+      String buffer;
+      serializeJson(payload, buffer);
 
       m_requestId++;
 
-      return m_client.publish(String("v1/devices/me/rpc/request/" + String(m_requestId)).c_str(), buffer);
+      log_manager->debug(PSTR(__func__), PSTR("Sending RPC to server: %s, msgId: %d\n"), buffer.c_str(), m_requestId);
+
+      return m_client.publish(String("v1/devices/me/rpc/request/" + String(m_requestId)).c_str(), buffer.c_str());
     }
 
     //----------------------------------------------------------------------------
