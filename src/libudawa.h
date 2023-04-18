@@ -238,7 +238,7 @@ void networkInit()
 
   ssl.setCACert(CA_CERT);
 
-  taskManager.scheduleFixedRate(10000, [] {
+  taskManager.scheduleFixedRate(3000, [] {
   if(WiFi.status() == WL_CONNECTED && !tb.connected())
   {
     if(config.useCloud){
@@ -461,8 +461,8 @@ void iotInit()
       {
         log_manager->warn(PSTR(__func__),PSTR("Failed to connect to IoT Broker %s [%d/3]\n"), config.broker, IOT_RECONNECT_ATTEMPT);
         IOT_RECONNECT_ATTEMPT++;
-        if(IOT_RECONNECT_ATTEMPT >= 3){
-          config.provSent= 0;
+        if(IOT_RECONNECT_ATTEMPT >= 60){
+          config.provSent = 0;
         }
         return;
       }
