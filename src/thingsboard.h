@@ -161,6 +161,15 @@ class ThingsBoardSized
     {
       return m_client.getBufferSize();
     }
+    uint16_t setKeepAlive(uint16_t keepAlive){
+      m_client.setKeepAlive(keepAlive);
+      return keepAlive;
+    }
+
+    uint16_t setSocketTimeout(uint16_t socketTimeout){
+      m_client.setSocketTimeout(socketTimeout);
+      return socketTimeout;
+    }
 
     // Connects to the specified ThingsBoard server and port.
     // Access token is used to authenticate a client.
