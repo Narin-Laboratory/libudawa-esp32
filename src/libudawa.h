@@ -17,15 +17,28 @@
 #include <SPIFFS.h>
 #include <Arduino.h>
 #include <WiFi.h>
+#include <WiFiMulti.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 #include <StreamUtils.h>
 #include <ArduinoOTA.h>
 #include <thingsboard.h>
-#include <TaskManagerIO.h>
 #include "logging.h"
 #include "serialLogger.h"
 #include <ESP32Time.h>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include <ESPmDNS.h>
+#define DISABLE_ALL_LIBRARY_WARNINGS
+#include <esp32FOTA.hpp>
+
+#define _TASK_TIMECRITICAL
+#define _TASK_STATUS_REQUEST
+#define _TASK_LTS_POINTER
+#define _TASK_TIMEOUT
+#define _TASK_EXPOSE_CHAIN
+#define _TASK_SELF_DESTRUCT
+#include <TaskScheduler.h>
 
 #define countof(a) (sizeof(a) / sizeof(a[0]))
 #define COMPILED __DATE__ " " __TIME__
@@ -49,45 +62,51 @@ const char* configFileCoMCU = "/comcu.json";
 bool FLAG_IOT_SUBSCRIBE = false;
 bool FLAG_IOT_INIT = false;
 bool FLAG_OTA_UPDATE_INIT = false;
-uint8_t WIFI_RECONNECT_ATTEMPT = 0;
-uint8_t IOT_RECONNECT_ATTEMPT = 0;
 bool WIFI_IS_DEFAULT = false;
 
 struct Config
 {
   char hwid[16];
-  char name[32];
+  char name[24];
   char model[16];
   char group[16];
   uint8_t logLev;
 
-  char broker[128];
+  char broker[48];
   uint16_t port;
-  char wssid[64];
-  char wpass[64];
-  char dssid[64];
-  char dpass[64];
+  char wssid[24];
+  char wpass[24];
+  char dssid[24];
+  char dpass[24];
   char upass[64];
-  char accessToken[64];
+  char accTkn[24];
   bool provSent;
 
-  char provisionDeviceKey[24];
-  char provisionDeviceSecret[24];
+  char provDK[24];
+  char provDS[24];
 
-  int gmtOffset;
-  int useCloud = 1;
+  int gmtOff;
+
+  bool fIoT;
+  bool fWOTA;
+  bool fIface;
+  char hname[40];
+  char htU[24];
+  char htP[24];
+
+  uint8_t tbDisco = 0;
 };
 
 struct ConfigCoMCU
 {
-  bool fPanic;
-  uint16_t bfreq;
-  bool fBuzz;
-  uint8_t pinBuzzer;
-  uint8_t pinLedR;
-  uint8_t pinLedG;
-  uint8_t pinLedB;
-  uint8_t ledON;
+  bool fP;
+  uint16_t bFr;
+  bool fB;
+  uint8_t pBz;
+  uint8_t pLR;
+  uint8_t pLG;
+  uint8_t pLB;
+  uint8_t lON;
 };
 
 class GCB {
@@ -104,6 +123,8 @@ class GCB {
     processFn   m_cb;
 };
 
+uint32_t micro2milli(uint32_t hi, uint32_t lo);
+double round2(double value);
 void reboot();
 char* getDeviceId();
 void cbWifiOnConnected(WiFiEvent_t event, WiFiEventInfo_t info);
@@ -120,11 +141,10 @@ void configCoMCUSave();
 void configCoMCUReset();
 bool loadFile(const char* filePath, char* buffer);
 callbackResponse processProvisionResponse(const callbackData &data);
-void iotInit();
 void startup();
-void networkInit();
+bool wifiKeeperEnable();
+void wifiKeeperCb();
 void udawa();
-void otaUpdateInit();
 void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc);
 void serialReadFromCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc);
 void syncConfigCoMCU();
@@ -139,57 +159,40 @@ void setAlarm(uint16_t code, uint8_t color, int32_t blinkCount, uint16_t blinkDe
 void emitAlarm(int code);
 void cbSubscribe(const GenericCallback *callbacks, size_t callbacksSize);
 void runCb(const char *methodName, JsonObject &params);
+void onWsEventCb(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len);
+bool ifaceLoopEnable();
+void ifaceLoopCb();
+void ifaceLoopDisable();
+bool wifiOtaEnable();
+void wifiOtaLoopCb();
+void wifiOtaDisable();
+void tbLoopCb();
+void tbLoopDisable();
+bool tbKeeperEnable();
+void tbKeeperCb();
+void tbKeeperDisable();
+void tbKeeperProvCb();
+void updateSpiffsCb();
 
 ESP32SerialLogger serial_logger;
 LogManager *log_manager = LogManager::GetInstance(LogLevel::VERBOSE);
 WiFiClientSecure ssl = WiFiClientSecure();
+WiFiMulti wifiMulti;
 Config config;
 ConfigCoMCU configcomcu;
 ThingsBoardSized<DOCSIZE_MIN, 64, LogManager> tb(ssl);
-volatile bool provisionResponseProcessed = false;
 ESP32Time rtc(0);
 GCB m_gcb[10];
+AsyncWebServer web(80);
+AsyncWebSocket ws("/ws");
+Scheduler r;
 
-
-void cbSubscribe(const GCB *callbacks, size_t callbacksSize)
-{
-  for (size_t i = 0; i < callbacksSize; ++i) {
-    m_gcb[i] = callbacks[i];
-  }
-}
-
-void runCb(const char *methodName, JsonObject &params){
-  for (size_t i = 0; i < sizeof(m_gcb) / sizeof(*m_gcb); ++i) {
-    if (m_gcb[i].m_cb && !strcmp(m_gcb[i].m_name, methodName)) {
-      log_manager->info(PSTR(__func__), PSTR("calling generic RPC: %s\n"), m_gcb[i].m_name);
-      m_gcb[i].m_cb(params);
-      break;
-    }
-  }
-}
-
-void emitAlarm(int code){
-  StaticJsonDocument<DOCSIZE_MIN> doc;
-  doc["alarm"] = code;
-  tb.sendTelemetryDoc(doc);
-  log_manager->error(PSTR(__func__), PSTR("%i\n"), code);
-  JsonObject params = doc.template as<JsonObject>();
-  runCb("emitAlarmWs", params);
-}
-
-void rtcUpdate(long ts){
-  if(ts == 0){
-    configTime(config.gmtOffset, 0, "pool.ntp.org");
-    struct tm timeinfo;
-    if (getLocalTime(&timeinfo)){
-      rtc.setTimeStruct(timeinfo);
-      log_manager->debug(PSTR(__func__), PSTR("Updated time via NTP: %s GMT Offset:%d (%d) \n"), rtc.getDateTime().c_str(), config.gmtOffset, config.gmtOffset / 3600);
-    }
-  }else{
-      rtc.setTime(ts);
-      log_manager->debug(PSTR(__func__), PSTR("Updated time via timestamp: %s\n"), rtc.getDateTime().c_str());
-  }
-}
+Task wifiKeeperLoop(30 * TASK_SECOND, TASK_FOREVER, &wifiKeeperCb, &r, 0, &wifiKeeperEnable, NULL, 0);
+Task tbKeeper(30 * TASK_SECOND, TASK_FOREVER, &tbKeeperCb, &r, 0, &tbKeeperEnable, &tbKeeperDisable, 0);
+Task ifaceLoop(10 * TASK_MILLISECOND, TASK_FOREVER, &ifaceLoopCb, &r, 0, &ifaceLoopEnable, &ifaceLoopDisable, 0);
+Task tbLoop(10 * TASK_MILLISECOND, TASK_FOREVER, &tbLoopCb, &r, 0, NULL, &tbLoopDisable, 0);
+Task wifiOtaLoop(10 * TASK_MILLISECOND, TASK_FOREVER, &wifiOtaLoopCb, &r, 0, &wifiOtaEnable, &wifiOtaDisable, 0);
+Task updateSpiffs(TASK_IMMEDIATE, TASK_ONCE, &updateSpiffsCb, &r, 0, NULL, NULL, 0);
 
 void startup() {
   // put your setup code here, to run once:
@@ -217,55 +220,370 @@ void startup() {
 
   log_manager->debug(PSTR(__func__), PSTR("Startup time: %s\n"), rtc.getDateTime().c_str());
 
+  wifiKeeperLoop.enable();
   setAlarm(0, 0, 3, 100);
 }
 
-void networkInit()
+
+void cbSubscribe(const GCB *callbacks, size_t callbacksSize)
 {
-  WiFi.onEvent(cbWifiOnConnected, ARDUINO_EVENT_WIFI_STA_CONNECTED);
-  WiFi.onEvent(cbWiFiOnDisconnected, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
-  WiFi.onEvent(cbWiFiOnLostIp, ARDUINO_EVENT_WIFI_STA_LOST_IP);
-  WiFi.onEvent(cbWiFiOnGotIp, ARDUINO_EVENT_WIFI_STA_GOT_IP);
+  for (size_t i = 0; i < callbacksSize; ++i) {
+    m_gcb[i] = callbacks[i];
+  }
+}
+
+void runCb(const char *methodName, JsonObject &params){
+  for (size_t i = 0; i < sizeof(m_gcb) / sizeof(*m_gcb); ++i) {
+    if (m_gcb[i].m_cb && !strcmp(m_gcb[i].m_name, methodName)) {
+      log_manager->debug(PSTR(__func__), PSTR("calling generic RPC: %s\n"), m_gcb[i].m_name);
+      m_gcb[i].m_cb(params);
+      break;
+    }
+  }
+}
+
+bool ifaceLoopEnable(){
+  if(WiFi.isConnected() && config.fIface){
+    web.begin();
+    web.serveStatic("/", SPIFFS, "/www/").setDefaultFile("index.html").setAuthentication(config.htU,config.htP);
+    ws.onEvent(onWsEventCb);
+    ws.setAuthentication(config.htU, config.htP);
+    ws.enable(true);
+    web.addHandler(&ws);
+    return true;
+  }
+  return false;
+}
+
+void ifaceLoopCb(){
+  ws.cleanupClients();
+}
+
+void ifaceLoopDisable(){
+  web.end();
+  ws.closeAll();
+  ws.enable(false);
+}
+
+bool wifiOtaEnable(){
+  if(config.fWOTA){
+    ArduinoOTA.setHostname(config.hname);
+    ArduinoOTA.setPasswordHash(config.upass);
+    ArduinoOTA.begin();
+
+    ArduinoOTA
+      .onStart([]()
+      {
+        String type;
+        if (ArduinoOTA.getCommand() == U_FLASH)
+            type = "sketch";
+        else // U_SPIFFS
+            type = "filesystem";
+            SPIFFS.end();
+        log_manager->warn(PSTR(__func__),PSTR("Starting OTA %s\n"), type.c_str());
+      })
+      .onEnd([]()
+      {
+        log_manager->warn(PSTR(__func__),PSTR("Device rebooting...\n"));
+        reboot();
+      })
+      .onProgress([](unsigned int progress, unsigned int total)
+      {
+        log_manager->warn(PSTR(__func__),PSTR("OTA progress: %d/%d\n"), progress, total);
+      })
+      .onError([](ota_error_t error)
+      {
+        log_manager->warn(PSTR(__func__),PSTR("OTA Failed: %d\n"), error);
+        reboot();
+      }
+    );
+    return true;
+  }
+  return false;
+}
+
+void wifiOtaLoopCb(){
+  ArduinoOTA.handle();
+}
+
+void wifiOtaDisable(){
+  ArduinoOTA.end();
+}
+
+void tbLoopCb(){
+  tb.loop();
+}
+void tbLoopDisable(){
+  tb.disconnect();
+}
+
+bool tbKeeperEnable(){
+  if(!config.fIoT){
+    return false;
+  }
+
+  int freeHeap = ESP.getFreeHeap();
+  log_manager->info(PSTR(__func__),PSTR("Initializing IoT, available memory: %d\n"), freeHeap);
+  if(freeHeap < 92000)
+  {
+    log_manager->warn(PSTR(__func__),PSTR("Unable to init IoT, insufficient memory: %d\n"), freeHeap);
+    return false;
+  }
+
+  if(!WiFi.isConnected()){
+    log_manager->warn(PSTR(__func__),PSTR("Unable to init IoT, WiFi is not connected!\n"));
+    return false;
+  }
+
+  tb.setBufferSize(DOCSIZE_MIN);
+
+  tbLoop.setInterval(25 * TASK_MILLISECOND);
+  tbLoop.setIterations(TASK_FOREVER);
+  tbLoop.enable();
+  return true;
+}
+void tbKeeperCb(){
+  if(!config.provSent)
+  {
+    tbKeeper.setCallback(tbKeeperProvCb);
+    tbKeeper.forceNextIteration();
+  }
+  else{
+    if(!tb.connected())
+    {
+      log_manager->info(PSTR(__func__),PSTR("Connecting to broker %s:%d\n"), config.broker, config.port);
+      if(!tb.connect(config.broker, config.accTkn, config.port, config.name))
+      {
+        config.tbDisco++;
+        log_manager->warn(PSTR(__func__),PSTR("Failed to connect to IoT Broker %s (%d)\n"), config.broker, config.tbDisco);
+        StaticJsonDocument<1> doc;
+        JsonObject params = doc.template as<JsonObject>();
+        runCb("onTbDisconnected", params);
+        if(config.tbDisco >= 10){
+          config.provSent = 0;
+          config.tbDisco = 0;
+        }
+        return;
+      }
+      StaticJsonDocument<1> doc;
+      JsonObject params = doc.template as<JsonObject>();
+      runCb("onTbConnected", params);
+      setAlarm(0, 0, 3, 100);
+      log_manager->info(PSTR(__func__),PSTR("IoT Connected!\n"));
+    }
+  }
+}
+
+void tbKeeperProvCb(){
+  log_manager->info(PSTR(__func__),PSTR("Starting provision initiation to %s:%d\n"),  config.broker, config.port);
+  if(tb.connect(config.broker, "provision", config.port))
+  {
+    log_manager->info(PSTR(__func__),PSTR("Connected to provisioning server: %s:%d\n"),  config.broker, config.port);
+
+    GenericCallback cb[2] = {
+      { "provisionResponse", processProvisionResponse },
+      { "provisionResponse", processProvisionResponse }
+    };
+    if(tb.callbackSubscribe(cb, 2))
+    {
+      if(tb.sendProvisionRequest(config.name, config.provDK, config.provDS))
+      {
+        log_manager->info(PSTR(__func__),PSTR("Provision request was sent! Waiting for response.\n"));
+      }
+    }
+  }
+  else
+  {
+    log_manager->warn(PSTR(__func__),PSTR("Failed to connect to provisioning server: %s:%d\n"),  config.broker, config.port);
+    return;
+  }
+}
+
+void tbKeeperDisable(){
+  tbLoop.disable();
+}
+
+void emitAlarm(int code){
+  StaticJsonDocument<DOCSIZE_MIN> doc;
+  doc["alarm"] = code;
+  tb.sendTelemetryDoc(doc);
+  log_manager->error(PSTR(__func__), PSTR("%i\n"), code);
+  JsonObject params = doc.template as<JsonObject>();
+  runCb("emitAlarmWs", params);
+}
+
+void rtcUpdate(long ts){
+  if(ts == 0){
+    configTime(config.gmtOff, 0, "pool.ntp.org");
+    struct tm timeinfo;
+    if (getLocalTime(&timeinfo)){
+      rtc.setTimeStruct(timeinfo);
+      log_manager->debug(PSTR(__func__), PSTR("Updated time via NTP: %s GMT Offset:%d (%d) \n"), rtc.getDateTime().c_str(), config.gmtOff, config.gmtOff / 3600);
+    }
+  }else{
+      rtc.setTime(ts);
+      log_manager->debug(PSTR(__func__), PSTR("Updated time via timestamp: %s\n"), rtc.getDateTime().c_str());
+  }
+}
+
+void cbWifiOnConnected(WiFiEvent_t event, WiFiEventInfo_t info)
+{
+  log_manager->info(PSTR(__func__),PSTR("WiFi Connected to %s\n"), WiFi.SSID().c_str());
+}
+
+void cbWiFiOnDisconnected(WiFiEvent_t event, WiFiEventInfo_t info)
+{
+  log_manager->warn(PSTR(__func__),PSTR("WiFi (%s and %s) Disconnected!\n"), config.wssid, config.dssid);
+  if(config.fIoT){
+    tbKeeper.disable();
+  }
+  if(config.fIface){
+    ifaceLoop.disable();
+  }
+  if(config.fWOTA){
+    wifiOtaLoop.disable();
+  }
+}
+
+void cbWiFiOnLostIp(WiFiEvent_t event, WiFiEventInfo_t info)
+{
+  log_manager->warn(PSTR(__func__),PSTR("WiFi (%s) IP Lost!\n"), WiFi.SSID().c_str());
+}
+
+void cbWiFiOnGotIp(WiFiEvent_t event, WiFiEventInfo_t info)
+{
+  IPAddress ip = WiFi.localIP();
+  char ipa[25];
+  sprintf(ipa, "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+  log_manager->warn(PSTR(__func__),PSTR("WiFi (%s) IP Assigned: %s!\n"), WiFi.SSID().c_str(), ipa);
+
+  ssl.setCACert(CA_CERT);
+
+  MDNS.begin(config.hname);
+  MDNS.addService("http", "tcp", 80);
+  log_manager->info(PSTR(__func__),PSTR("Started MDNS on %s\n"), config.hname);
+
+  rtcUpdate(0);
+  if(config.fWOTA){
+    wifiOtaLoop.enable();
+  }
+
+  if(config.fIface){
+    ifaceLoop.enable();
+  }
+
+  if(config.fIoT){
+    tbKeeper.enable();
+  }
+
+  setAlarm(0, 0, 3, 100);
+}
+
+bool wifiKeeperEnable()
+{
+  log_manager->debug(PSTR(__func__),PSTR("Initializing wifi network...\n"));
   WiFi.mode(WIFI_STA);
+  WiFi.setHostname(config.hname);
+  WiFi.setAutoReconnect(true);
   if(!config.wssid || *config.wssid == 0x00 || strlen(config.wssid) > 32)
   {
     configLoadFailSafe();
     log_manager->warn(PSTR(__func__), PSTR("SSID too long or missing! Failsafe config was loaded.\n"));
   }
-  WiFi.begin(config.wssid, config.wpass);
-  WiFi.setHostname(config.name);
-  WiFi.setAutoReconnect(true);
+  wifiMulti.addAP(config.wssid, config.wpass);
+  wifiMulti.addAP(config.dssid, config.dpass);
 
-  ssl.setCACert(CA_CERT);
+  WiFi.onEvent(cbWifiOnConnected, ARDUINO_EVENT_WIFI_STA_CONNECTED);
+  WiFi.onEvent(cbWiFiOnDisconnected, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+  WiFi.onEvent(cbWiFiOnLostIp, ARDUINO_EVENT_WIFI_STA_LOST_IP);
+  WiFi.onEvent(cbWiFiOnGotIp, ARDUINO_EVENT_WIFI_STA_GOT_IP);
 
-  taskManager.scheduleFixedRate(3000, [] {
-  if(WiFi.status() == WL_CONNECTED && !tb.connected())
-  {
-    if(config.useCloud){
-      iotInit();
+  return true;
+}
+
+void wifiKeeperCb(){
+  wifiMulti.run();
+}
+
+void onWsEventCb(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len){
+  StaticJsonDocument<DOCSIZE_MIN> doc;
+  DeserializationError err = deserializeJson(doc, data);
+
+  if(type == WS_EVT_CONNECT){
+    log_manager->debug(PSTR(__func__), PSTR("ws[%s][%u] connect\n"), server->url(), client->id());
+    doc["evType"] = (int)WS_EVT_CONNECT;
+    JsonObject root = doc.template as<JsonObject>();
+    runCb("wsEvent", root);
+  } else if(type == WS_EVT_DISCONNECT){
+    log_manager->debug(PSTR(__func__), PSTR("ws[%s][%u] disconnect\n"), server->url(), client->id());
+    doc["evType"] = (int)WS_EVT_DISCONNECT;
+    JsonObject root = doc.template as<JsonObject>();
+    runCb("wsEvent", root);
+  } else if(type == WS_EVT_ERROR){
+    log_manager->warn(PSTR(__func__), PSTR("ws[%s][%u] error(%u): %s\n"), server->url(), client->id(), *((uint16_t*)arg), (char*)data);
+    doc["evType"] = (int)WS_EVT_ERROR;
+    JsonObject root = doc.template as<JsonObject>();
+    runCb("wsEvent", root);
+  } else if(type == WS_EVT_PONG){
+    doc["evType"] = (int)WS_EVT_PONG;
+    JsonObject root = doc.template as<JsonObject>();
+    log_manager->debug(PSTR(__func__), PSTR("ws[%s][%u] pong[%u]: %s\n"), server->url(), client->id(), len, (len)?(char*)data:"");
+    runCb("wsEvent", root);
+  } else if(type == (int)WS_EVT_DATA){
+    if (err == DeserializationError::Ok)
+    {
+      doc["evType"] = (int)WS_EVT_DATA;
+      JsonObject root = doc.template as<JsonObject>();
+      log_manager->debug(PSTR(__func__), PSTR("WS message parsing %s\n"), err.c_str());
+      serializeJsonPretty(doc, Serial);
+      runCb("wsEvent", root);
+    }
+    else
+    {
+      log_manager->warn(PSTR(__func__), PSTR("WS message parsing error: %s\n"), err.c_str());
     }
   }
-  });
-
 }
 
 void udawa() {
-  taskManager.runLoop();
-  ArduinoOTA.handle();
+  r.execute();
+}
 
-  tb.loop();
+void updateSpiffsCb(){
+  esp32FOTA esp32FOTA(CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION);
 
-  if(FLAG_OTA_UPDATE_INIT)
-  {
-    FLAG_OTA_UPDATE_INIT = 0;
-    otaUpdateInit();
-  }
+  CryptoMemAsset  *MyRootCA = new CryptoMemAsset("Root CA", CA_CERT, strlen(CA_CERT)+1 );
 
-  if(FLAG_IOT_INIT && config.useCloud)
-  {
-    FLAG_IOT_INIT = 0;
-    iotInit();
-  }
+  esp32FOTA.setManifestURL(mnfstUrl);
+  esp32FOTA.setRootCA(MyRootCA);
+  esp32FOTA.setCertFileSystem(nullptr);
+  esp32FOTA.setProgressCb( [](size_t progress, size_t size) {
+      if( progress == size || progress == 0 ) Serial.println();
+      Serial.print(".");
+  });
+  esp32FOTA.setUpdateCheckFailCb( [](int partition, int error_code) {
+    Serial.printf("Update could validate %s partition (error %d)\n", partition==U_SPIFFS ? "spiffs" : "firmware", error_code );
+    // error codes:
+    //  -1 : partition not found
+    //  -2 : validation (signature check) failed
+  });
+  esp32FOTA.setUpdateBeginFailCb( [](int partition) {
+
+  });
+  esp32FOTA.setUpdateEndCb( [](int partition) {
+
+  });
+  esp32FOTA.setUpdateFinishedCb( [](int partition, bool restart_after) {
+    StaticJsonDocument<1> doc;
+    doc["partition"] = partition;
+    JsonObject root = doc.template as<JsonObject>();
+    configSave();
+    configCoMCUSave();
+    runCb("onUpdateFinished", root);
+  });
+
+  esp32FOTA.execHTTPcheck();
+  esp32FOTA.execOTASPIFFS();
 }
 
 void setBuzzer(int32_t beepCount, uint16_t beepDelay){
@@ -296,43 +614,43 @@ uint8_t r, g, b;
   //Auto by network
   case 0:
     if(tb.connected()){
-      r = configcomcu.ledON == 0 ? 255 : 0;
-      g = configcomcu.ledON == 0 ? 255 : 0;
-      b = configcomcu.ledON;
+      r = configcomcu.lON == 0 ? 255 : 0;
+      g = configcomcu.lON == 0 ? 255 : 0;
+      b = configcomcu.lON;
     }
     else if(WiFi.status() == WL_CONNECTED){
-      r = configcomcu.ledON == 0 ? 255 : 0;
-      g = configcomcu.ledON;
-      b = configcomcu.ledON == 0 ? 255 : 0;
+      r = configcomcu.lON == 0 ? 255 : 0;
+      g = configcomcu.lON;
+      b = configcomcu.lON == 0 ? 255 : 0;
     }
     else{
-      r = configcomcu.ledON;
-      g = configcomcu.ledON == 0 ? 255 : 0;
-      b = configcomcu.ledON == 0 ? 255 : 0;
+      r = configcomcu.lON;
+      g = configcomcu.lON == 0 ? 255 : 0;
+      b = configcomcu.lON == 0 ? 255 : 0;
     }
     break;
   //RED
   case 1:
-    r = configcomcu.ledON;
-    g = configcomcu.ledON == 0 ? 255 : 0;
-    b = configcomcu.ledON == 0 ? 255 : 0;
+    r = configcomcu.lON;
+    g = configcomcu.lON == 0 ? 255 : 0;
+    b = configcomcu.lON == 0 ? 255 : 0;
     break;
   //GREEN
   case 2:
-    r = configcomcu.ledON == 0 ? 255 : 0;
-    g = configcomcu.ledON;
-    b = configcomcu.ledON == 0 ? 255 : 0;
+    r = configcomcu.lON == 0 ? 255 : 0;
+    g = configcomcu.lON;
+    b = configcomcu.lON == 0 ? 255 : 0;
     break;
   //BLUE
   case 3:
-    r = configcomcu.ledON == 0 ? 255 : 0;
-    g = configcomcu.ledON == 0 ? 255 : 0;
-    b = configcomcu.ledON;
+    r = configcomcu.lON == 0 ? 255 : 0;
+    g = configcomcu.lON == 0 ? 255 : 0;
+    b = configcomcu.lON;
     break;
   default:
-    r = configcomcu.ledON;
-    g = configcomcu.ledON;
-    b = configcomcu.ledON;
+    r = configcomcu.lON;
+    g = configcomcu.lON;
+    b = configcomcu.lON;
   }
   StaticJsonDocument<DOCSIZE_MIN> doc;
   doc["method"] = "sLed";
@@ -370,155 +688,6 @@ char* getDeviceId()
   return decodedString;
 }
 
-void otaUpdateInit()
-{
-  ArduinoOTA.setHostname(config.name);
-  ArduinoOTA.setPasswordHash(config.upass);
-  ArduinoOTA.begin();
-
-  ArduinoOTA
-    .onStart([]()
-    {
-      String type;
-      if (ArduinoOTA.getCommand() == U_FLASH)
-          type = "sketch";
-      else // U_SPIFFS
-          type = "filesystem";
-          SPIFFS.end();
-      log_manager->warn(PSTR(__func__),PSTR("Starting OTA %s\n"), type.c_str());
-    })
-    .onEnd([]()
-    {
-      log_manager->warn(PSTR(__func__),PSTR("Device rebooting...\n"));
-      reboot();
-    })
-    .onProgress([](unsigned int progress, unsigned int total)
-    {
-      log_manager->warn(PSTR(__func__),PSTR("OTA progress: %d/%d\n"), progress, total);
-    })
-    .onError([](ota_error_t error)
-    {
-      log_manager->warn(PSTR(__func__),PSTR("OTA Failed: %d\n"), error);
-      reboot();
-    }
-  );
-}
-
-void iotInit()
-{
-  int freeHeap = ESP.getFreeHeap();
-  log_manager->info(PSTR(__func__),PSTR("Initializing IoT, available memory: %d\n"), freeHeap);
-  if(freeHeap < 92000)
-  {
-    log_manager->warn(PSTR(__func__),PSTR("Unable to init IoT, insufficient memory: %d\n"), freeHeap);
-    return;
-  }
-  if(!config.provSent)
-  {
-    ThingsBoardSized<DOCSIZE, 64> tbProvision(ssl);
-    if(!tbProvision.connected())
-    {
-      log_manager->info(PSTR(__func__),PSTR("Starting provision initiation to %s:%d\n"),  config.broker, config.port);
-      if(tbProvision.connect(config.broker, "provision", config.port))
-      {
-        log_manager->info(PSTR(__func__),PSTR("Connected to provisioning server: %s:%d\n"),  config.broker, config.port);
-
-        GenericCallback cb[2] = {
-          { "provisionResponse", processProvisionResponse },
-          { "provisionResponse", processProvisionResponse }
-        };
-        if(tbProvision.callbackSubscribe(cb, 2))
-        {
-          if(tbProvision.sendProvisionRequest(config.name, config.provisionDeviceKey, config.provisionDeviceSecret))
-          {
-            log_manager->info(PSTR(__func__),PSTR("Provision request was sent! Waiting for response.\n"));
-            unsigned long timer = millis();
-            while(true)
-            {
-              tbProvision.loop();
-              if(millis() - timer > 10000)
-              {
-                break;
-              }
-            }
-            tbProvision.disconnect();
-          }
-        }
-      }
-      else
-      {
-        log_manager->warn(PSTR(__func__),PSTR("Failed to connect to provisioning server: %s:%d\n"),  config.broker, config.port);
-        return;
-      }
-    }
-  }
-  else if(config.provSent)
-  {
-    if(!tb.connected())
-    {
-      log_manager->info(PSTR(__func__),PSTR("Connecting to broker %s:%d\n"), config.broker, config.port);
-      if(!tb.connect(config.broker, config.accessToken, config.port, config.name))
-      {
-        log_manager->warn(PSTR(__func__),PSTR("Failed to connect to IoT Broker %s [%d/3]\n"), config.broker, IOT_RECONNECT_ATTEMPT);
-        IOT_RECONNECT_ATTEMPT++;
-        if(IOT_RECONNECT_ATTEMPT >= 60){
-          config.provSent = 0;
-        }
-        return;
-      }
-      setAlarm(0, 0, 3, 100);
-      log_manager->info(PSTR(__func__),PSTR("IoT Connected!\n"));
-      IOT_RECONNECT_ATTEMPT = 0;
-      FLAG_IOT_SUBSCRIBE = true;
-    }
-  }
-}
-
-void cbWifiOnConnected(WiFiEvent_t event, WiFiEventInfo_t info)
-{
-  log_manager->info(PSTR(__func__),PSTR("WiFi Connected to %s\n"), WiFi.SSID().c_str());
-  WIFI_RECONNECT_ATTEMPT = 0;
-  setAlarm(0, 0, 3, 100);
-}
-
-void cbWiFiOnDisconnected(WiFiEvent_t event, WiFiEventInfo_t info)
-{
-  WIFI_RECONNECT_ATTEMPT += 1;
-  if(WIFI_RECONNECT_ATTEMPT >= WIFI_FALLBACK_COUNTER)
-  {
-    if(!WIFI_IS_DEFAULT)
-    {
-      log_manager->warn(PSTR(__func__),PSTR("WiFi (%s) Disconnected! Attempt: %d/%d\n"), config.dssid, WIFI_RECONNECT_ATTEMPT, WIFI_FALLBACK_COUNTER);
-      WiFi.begin(config.dssid, config.dpass);
-      WIFI_IS_DEFAULT = true;
-    }
-    else
-    {
-      log_manager->info(PSTR(__func__),PSTR("WiFi (%s) Disconnected! Attempt: %d/%d\n"), config.wssid, WIFI_RECONNECT_ATTEMPT, WIFI_FALLBACK_COUNTER);
-      WiFi.begin(config.wssid, config.wpass);
-      WIFI_IS_DEFAULT = false;
-    }
-    WIFI_RECONNECT_ATTEMPT = 0;
-  }
-  else
-  {
-    WiFi.reconnect();
-  }
-}
-
-void cbWiFiOnLostIp(WiFiEvent_t event, WiFiEventInfo_t info)
-{
-  log_manager->warn(PSTR(__func__),PSTR("WiFi (%s) IP Lost!\n"), WiFi.SSID().c_str());
-  WiFi.reconnect();
-}
-
-void cbWiFiOnGotIp(WiFiEvent_t event, WiFiEventInfo_t info)
-{
-  FLAG_OTA_UPDATE_INIT = 1;
-  FLAG_IOT_INIT = 1;
-  rtcUpdate(0);
-}
-
 void configReset()
 {
   /*bool formatted = SPIFFS.format();
@@ -552,13 +721,21 @@ void configReset()
   doc["dssid"] = dssid;
   doc["dpass"] = dpass;
   doc["upass"] = upass;
-  doc["accessToken"] = accessToken;
+  doc["accTkn"] = accTkn;
   doc["provSent"] = false;
-  doc["provisionDeviceKey"] = provisionDeviceKey;
-  doc["provisionDeviceSecret"] = provisionDeviceSecret;
+  doc["provDK"] = provDK;
+  doc["provDS"] = provDS;
   doc["logLev"] = 5;
-  doc["gmtOffset"] = 28880;
-  doc["useCloud"] = 1;
+  doc["gmtOff"] = 28880;
+
+  doc["fIoT"] = 1;
+  doc["fWOTA"] = 1;
+  doc["fIface"] = 1;
+
+  doc["hname"] = "UDAWA" + String(dv) + ".local";
+
+  doc["htU"] = "UDAWA";
+  doc["htP"] = "defaultkey";
 
   size_t size = serializeJson(doc, file);
   file.close();
@@ -606,13 +783,21 @@ void configLoadFailSafe()
   strlcpy(config.dssid, dssid, sizeof(config.dssid));
   strlcpy(config.dpass, dpass, sizeof(config.dpass));
   strlcpy(config.upass, upass, sizeof(config.upass));
-  strlcpy(config.accessToken, accessToken, sizeof(config.accessToken));
+  strlcpy(config.accTkn, accTkn, sizeof(config.accTkn));
   config.provSent = false;
   config.port = port;
-  strlcpy(config.provisionDeviceKey, provisionDeviceKey, sizeof(config.provisionDeviceKey));
-  strlcpy(config.provisionDeviceSecret, provisionDeviceSecret, sizeof(config.provisionDeviceSecret));
+  strlcpy(config.provDK, provDK, sizeof(config.provDK));
+  strlcpy(config.provDS, provDS, sizeof(config.provDS));
   config.logLev = 5;
-  config.gmtOffset = 28800;
+  config.gmtOff = 28800;
+
+  config.fIoT = 1;
+  config.fWOTA = 1;
+  config.fIface = 1;
+  String hname = "UDAWA" + String(dv) + ".local";
+  strlcpy(config.hname, hname.c_str(), sizeof(config.hname));
+  strlcpy(config.htU, "UDAWA", sizeof(config.htU));
+  strlcpy(config.htP, "defaultkey", sizeof(config.htP));
 }
 
 void configLoad()
@@ -661,14 +846,20 @@ void configLoad()
     strlcpy(config.dssid, doc["dssid"].as<const char*>(), sizeof(config.dssid));
     strlcpy(config.dpass, doc["dpass"].as<const char*>(), sizeof(config.dpass));
     strlcpy(config.upass, doc["upass"].as<const char*>(), sizeof(config.upass));
-    strlcpy(config.accessToken, doc["accessToken"].as<const char*>(), sizeof(config.accessToken));
+    strlcpy(config.accTkn, doc["accTkn"].as<const char*>(), sizeof(config.accTkn));
     config.provSent = doc["provSent"].as<int>();
     config.port = doc["port"].as<uint16_t>() ? doc["port"].as<uint16_t>() : port;
     config.logLev = doc["logLev"].as<uint8_t>();
-    config.gmtOffset = doc["gmtOffset"].as<int>();
-    config.useCloud = doc["useCloud"].as<int>();
-    strlcpy(config.provisionDeviceKey, doc["provisionDeviceKey"].as<const char*>(), sizeof(config.provisionDeviceKey));
-    strlcpy(config.provisionDeviceSecret, doc["provisionDeviceSecret"].as<const char*>(), sizeof(config.provisionDeviceSecret));
+    config.gmtOff = doc["gmtOff"].as<int>();
+    strlcpy(config.provDK, doc["provDK"].as<const char*>(), sizeof(config.provDK));
+    strlcpy(config.provDS, doc["provDS"].as<const char*>(), sizeof(config.provDS));
+
+    config.fIoT = doc["fIoT"].as<bool>();
+    config.fWOTA = doc["fWOTA"].as<bool>();
+    config.fIface = doc["fIface"].as<bool>();
+    strlcpy(config.hname, doc["hname"].as<const char*>(), sizeof(config.hname));
+    strlcpy(config.htU, doc["htU"].as<const char*>(), sizeof(config.htU));
+    strlcpy(config.htP, doc["htP"].as<const char*>(), sizeof(config.htP));
 
     log_manager->info(PSTR(__func__),PSTR("Config loaded successfuly.\n"));
   }
@@ -699,13 +890,19 @@ void configSave()
   doc["dssid"] = config.dssid;
   doc["dpass"] = config.dpass;
   doc["upass"] = config.upass;
-  doc["accessToken"] = config.accessToken;
+  doc["accTkn"] = config.accTkn;
   doc["provSent"] = config.provSent;
-  doc["provisionDeviceKey"] = config.provisionDeviceKey;
-  doc["provisionDeviceSecret"] = config.provisionDeviceSecret;
+  doc["provDK"] = config.provDK;
+  doc["provDS"] = config.provDS;
   doc["logLev"] = config.logLev;
-  doc["gmtOffset"] = config.gmtOffset;
-  doc["useCloud"] = config.useCloud;
+  doc["gmtOff"] = config.gmtOff;
+
+  doc["fIoT"] = config.fIoT;
+  doc["fWOTA"] = config.fWOTA;
+  doc["fIface"] = config.fIface;
+  doc["hname"] = config.hname;
+  doc["htU"] = config.htU;
+  doc["htP"] = config.htP;
 
   serializeJson(doc, file);
   file.close();
@@ -723,16 +920,16 @@ void configCoMCUReset()
 
   StaticJsonDocument<DOCSIZE> doc;
 
-  doc["fPanic"] = false;
+  doc["fP"] = false;
 
-  doc["bfreq"] = 1600;
-  doc["fBuzz"] = 1;
+  doc["bFr"] = 1600;
+  doc["fB"] = 1;
 
-  doc["pinBuzzer"] = 3;
-  doc["pinLedR"] = 9;
-  doc["pinLedG"] = 10;
-  doc["pinLedB"] = 11;
-  doc["ledON"] = 255;
+  doc["pBz"] = 3;
+  doc["pLR"] = 9;
+  doc["pLG"] = 10;
+  doc["pLB"] = 11;
+  doc["lON"] = 255;
 
   serializeJson(doc, file);
   file.close();
@@ -756,15 +953,15 @@ void configCoMCULoad()
   else
   {
 
-    configcomcu.fPanic = doc["fPanic"].as<bool>();
-    configcomcu.bfreq = doc["bfreq"].as<uint16_t>();
-    configcomcu.fBuzz = doc["fBuzz"].as<bool>();
+    configcomcu.fP = doc["fP"].as<bool>();
+    configcomcu.bFr = doc["bFr"].as<uint16_t>();
+    configcomcu.fB = doc["fB"].as<bool>();
 
-    configcomcu.pinBuzzer = doc["pinBuzzer"].as<uint8_t>();
-    configcomcu.pinLedR = doc["pinLedR"].as<uint8_t>();
-    configcomcu.pinLedG = doc["pinLedG"].as<uint8_t>();
-    configcomcu.pinLedB = doc["pinLedB"].as<uint8_t>();
-    configcomcu.ledON = doc["ledON"].as<uint8_t>();
+    configcomcu.pBz = doc["pBz"].as<uint8_t>();
+    configcomcu.pLR = doc["pLR"].as<uint8_t>();
+    configcomcu.pLG = doc["pLG"].as<uint8_t>();
+    configcomcu.pLB = doc["pLB"].as<uint8_t>();
+    configcomcu.lON = doc["lON"].as<uint8_t>();
 
     log_manager->info(PSTR(__func__),PSTR("ConfigCoMCU loaded successfuly.\n"));
   }
@@ -786,16 +983,16 @@ void configCoMCUSave()
 
   StaticJsonDocument<DOCSIZE> doc;
 
-  doc["fPanic"] = configcomcu.fPanic;
+  doc["fP"] = configcomcu.fP;
 
-  doc["bfreq"] = configcomcu.bfreq;
-  doc["fBuzz"] = configcomcu.fBuzz;
+  doc["bFr"] = configcomcu.bFr;
+  doc["fB"] = configcomcu.fB;
 
-  doc["pinBuzzer"] = configcomcu.pinBuzzer;
-  doc["pinLedR"] = configcomcu.pinLedR;
-  doc["pinLedG"] = configcomcu.pinLedG;
-  doc["pinLedB"] = configcomcu.pinLedB;
-  doc["ledON"] = configcomcu.ledON;
+  doc["pBz"] = configcomcu.pBz;
+  doc["pLR"] = configcomcu.pLR;
+  doc["pLG"] = configcomcu.pLG;
+  doc["pLB"] = configcomcu.pLB;
+  doc["lON"] = configcomcu.lON;
 
   serializeJson(doc, file);
   file.close();
@@ -806,17 +1003,17 @@ void syncConfigCoMCU()
   configCoMCULoad();
 
   StaticJsonDocument<DOCSIZE_MIN> doc;
-  doc["fPanic"] = configcomcu.fPanic;
-  doc["bfreq"] = configcomcu.bfreq;
-  doc["fBuzz"] = configcomcu.fBuzz;
-  doc["pinBuzzer"] = configcomcu.pinBuzzer;
+  doc["fP"] = configcomcu.fP;
+  doc["bFr"] = configcomcu.bFr;
+  doc["fB"] = configcomcu.fB;
+  doc["pBz"] = configcomcu.pBz;
   doc["method"] = "sCfg";
   serialWriteToCoMcu(doc, 0);
   doc.clear();
-  doc["pinLedR"] = configcomcu.pinLedR;
-  doc["pinLedG"] = configcomcu.pinLedG;
-  doc["pinLedB"] = configcomcu.pinLedB;
-  doc["ledON"] = configcomcu.ledON;
+  doc["pLR"] = configcomcu.pLR;
+  doc["pLG"] = configcomcu.pLG;
+  doc["pLB"] = configcomcu.pLB;
+  doc["lON"] = configcomcu.lON;
   doc["method"] = "sCfg";
   serialWriteToCoMcu(doc, 0);
   doc.clear();
@@ -841,6 +1038,7 @@ bool loadFile(const char* filePath, char *buffer)
 
 callbackResponse processProvisionResponse(const callbackData &data)
 {
+  tbKeeper.setCallback(tbKeeperCb);
   log_manager->info(PSTR(__func__),PSTR("Received device provision response\n"));
   int jsonSize = measureJson(data) + 1;
   char buffer[jsonSize];
@@ -849,7 +1047,6 @@ callbackResponse processProvisionResponse(const callbackData &data)
   if (strncmp(data["status"], "SUCCESS", strlen("SUCCESS")) != 0)
   {
     log_manager->warn(PSTR(__func__),PSTR("Provision response contains the error: %s\n"), data["errorMsg"].as<const char*>());
-    provisionResponseProcessed = true;
     return callbackResponse("provisionResponse", 1);
   }
   else
@@ -859,7 +1056,7 @@ callbackResponse processProvisionResponse(const callbackData &data)
   if (strncmp(data["credentialsType"], "ACCESS_TOKEN", strlen("ACCESS_TOKEN")) == 0)
   {
     log_manager->info(PSTR(__func__),PSTR("ACCESS TOKEN received: %s\n"), data["credentialsValue"].as<String>().c_str());
-    strlcpy(config.accessToken, data["credentialsValue"].as<String>().c_str(), sizeof(config.accessToken));
+    strlcpy(config.accTkn, data["credentialsValue"].as<String>().c_str(), sizeof(config.accTkn));
     config.provSent = true;
     configSave();
   }
@@ -871,9 +1068,8 @@ callbackResponse processProvisionResponse(const callbackData &data)
     credentials.password = credentials_value["password"].as<String>();
     */
   }
-  provisionResponseProcessed = true;
-  return callbackResponse("provisionResponse", 1);
   reboot();
+  return callbackResponse("provisionResponse", 1);
 }
 
 void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc)
@@ -947,6 +1143,26 @@ void setCoMCUPin(uint8_t pin, uint8_t op, uint8_t mode, uint16_t aval, uint8_t s
   params["state"] = state;
   params["aval"] = aval;
   serialWriteToCoMcu(doc, false);
+}
+
+double round2(double value) {
+   return (int)(value * 100 + 0.5) / 100.0;
+}
+
+const uint32_t MAX_INT = 0xFFFFFFFF;
+uint32_t micro2milli(uint32_t hi, uint32_t lo)
+{
+  if (hi >= 1000)
+  {
+    log_manager->warn(PSTR(__func__), PSTR("Cannot store milliseconds in uint32!\n"));
+  }
+
+  uint32_t r = (lo >> 16) + (hi << 16);
+  uint32_t ans = r / 1000;
+  r = ((r % 1000) << 16) + (lo & 0xFFFF);
+  ans = (ans << 16) + r / 1000;
+
+  return ans;
 }
 
 } // namespace libudawa
