@@ -925,11 +925,11 @@ void configCoMCUReset()
   doc["bFr"] = 1600;
   doc["fB"] = 1;
 
-  doc["pBz"] = 3;
-  doc["pLR"] = 9;
-  doc["pLG"] = 10;
-  doc["pLB"] = 11;
-  doc["lON"] = 255;
+  doc["pBz"] = 2;
+  doc["pLR"] = 3;
+  doc["pLG"] = 5;
+  doc["pLB"] = 6;
+  doc["lON"] = 0;
 
   serializeJson(doc, file);
   file.close();
