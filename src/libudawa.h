@@ -732,7 +732,7 @@ void configReset()
   doc["fWOTA"] = 1;
   doc["fIface"] = 1;
 
-  doc["hname"] = "UDAWA" + String(dv) + ".local";
+  doc["hname"] = "UDAWA" + String(dv);
 
   doc["htU"] = "UDAWA";
   doc["htP"] = "defaultkey";
@@ -794,7 +794,7 @@ void configLoadFailSafe()
   config.fIoT = 1;
   config.fWOTA = 1;
   config.fIface = 1;
-  String hname = "UDAWA" + String(dv) + ".local";
+  String hname = "UDAWA" + String(dv);
   strlcpy(config.hname, hname.c_str(), sizeof(config.hname));
   strlcpy(config.htU, "UDAWA", sizeof(config.htU));
   strlcpy(config.htP, "defaultkey", sizeof(config.htP));
@@ -838,28 +838,27 @@ void configLoad()
     String name = "UDAWA" + String(dv);
     strlcpy(config.name, name.c_str(), sizeof(config.name));
     //strlcpy(config.name, doc["name"].as<const char*>(), sizeof(config.name));
-    strlcpy(config.model, doc["model"].as<const char*>(), sizeof(config.model));
-    strlcpy(config.group, doc["group"].as<const char*>(), sizeof(config.group));
-    strlcpy(config.broker, doc["broker"].as<const char*>(), sizeof(config.broker));
-    strlcpy(config.wssid, doc["wssid"].as<const char*>(), sizeof(config.wssid));
-    strlcpy(config.wpass, doc["wpass"].as<const char*>(), sizeof(config.wpass));
-    strlcpy(config.dssid, doc["dssid"].as<const char*>(), sizeof(config.dssid));
-    strlcpy(config.dpass, doc["dpass"].as<const char*>(), sizeof(config.dpass));
-    strlcpy(config.upass, doc["upass"].as<const char*>(), sizeof(config.upass));
-    strlcpy(config.accTkn, doc["accTkn"].as<const char*>(), sizeof(config.accTkn));
-    config.provSent = doc["provSent"].as<int>();
-    config.port = doc["port"].as<uint16_t>() ? doc["port"].as<uint16_t>() : port;
-    config.logLev = doc["logLev"].as<uint8_t>();
-    config.gmtOff = doc["gmtOff"].as<int>();
-    strlcpy(config.provDK, doc["provDK"].as<const char*>(), sizeof(config.provDK));
-    strlcpy(config.provDS, doc["provDS"].as<const char*>(), sizeof(config.provDS));
-
-    config.fIoT = doc["fIoT"].as<bool>();
-    config.fWOTA = doc["fWOTA"].as<bool>();
-    config.fIface = doc["fIface"].as<bool>();
-    strlcpy(config.hname, doc["hname"].as<const char*>(), sizeof(config.hname));
-    strlcpy(config.htU, doc["htU"].as<const char*>(), sizeof(config.htU));
-    strlcpy(config.htP, doc["htP"].as<const char*>(), sizeof(config.htP));
+    if(doc["model"] != nullptr){strlcpy(config.model, doc["model"].as<const char*>(), sizeof(config.model));}
+    if(doc["group"] != nullptr){strlcpy(config.group, doc["group"].as<const char*>(), sizeof(config.group));}
+    if(doc["broker"] != nullptr){strlcpy(config.broker, doc["broker"].as<const char*>(), sizeof(config.broker));}
+    if(doc["port"] != nullptr){config.port = doc["port"].as<uint16_t>();}
+    if(doc["wssid"] != nullptr){strlcpy(config.wssid, doc["wssid"].as<const char*>(), sizeof(config.wssid));}
+    if(doc["wpass"] != nullptr){strlcpy(config.wpass, doc["wpass"].as<const char*>(), sizeof(config.wpass));}
+    if(doc["dssid"] != nullptr){strlcpy(config.dssid, doc["dssid"].as<const char*>(), sizeof(config.dssid));}
+    if(doc["dpass"] != nullptr){strlcpy(config.dpass, doc["dpass"].as<const char*>(), sizeof(config.dpass));}
+    if(doc["upass"] != nullptr){strlcpy(config.upass, doc["upass"].as<const char*>(), sizeof(config.upass));}
+    if(doc["accTkn"] != nullptr){strlcpy(config.accTkn, doc["accTkn"].as<const char*>(), sizeof(config.accTkn));}
+    if(doc["provDK"] != nullptr){strlcpy(config.provDK, doc["provDK"].as<const char*>(), sizeof(config.provDK));}
+    if(doc["provDS"] != nullptr){strlcpy(config.provDS, doc["provDS"].as<const char*>(), sizeof(config.provDS));}
+    if(doc["provSent"] != nullptr){config.provSent = doc["provSent"].as<bool>();}
+    if(doc["logLev"] != nullptr){config.logLev = doc["logLev"].as<uint8_t>(); log_manager->set_log_level(PSTR("*"), (LogLevel) config.logLev);;}
+    if(doc["gmtOff"] != nullptr){config.gmtOff = doc["gmtOff"].as<int>();}
+    if(doc["fIoT"] != nullptr){config.fIoT = doc["fIoT"].as<int>();}
+    if(doc["htU"] != nullptr){strlcpy(config.htU, doc["htU"].as<const char*>(), sizeof(config.htU));}
+    if(doc["htP"] != nullptr){strlcpy(config.htP, doc["htP"].as<const char*>(), sizeof(config.htP));}
+    if(doc["fWOTA"] != nullptr){config.fWOTA = doc["fWOTA"].as<bool>();}
+    if(doc["fIface"] != nullptr){config.fIface = doc["fIface"].as<bool>();}
+    if(doc["hname"] != nullptr){strlcpy(config.hname, doc["hname"].as<const char*>(), sizeof(config.hname));}
 
     log_manager->info(PSTR(__func__),PSTR("Config loaded successfuly.\n"));
   }
@@ -953,15 +952,14 @@ void configCoMCULoad()
   else
   {
 
-    configcomcu.fP = doc["fP"].as<bool>();
-    configcomcu.bFr = doc["bFr"].as<uint16_t>();
-    configcomcu.fB = doc["fB"].as<bool>();
-
-    configcomcu.pBz = doc["pBz"].as<uint8_t>();
-    configcomcu.pLR = doc["pLR"].as<uint8_t>();
-    configcomcu.pLG = doc["pLG"].as<uint8_t>();
-    configcomcu.pLB = doc["pLB"].as<uint8_t>();
-    configcomcu.lON = doc["lON"].as<uint8_t>();
+    if(doc["fP"] != nullptr){configcomcu.fP = doc["fP"].as<bool>();}
+    if(doc["bFr"] != nullptr){configcomcu.bFr = doc["bFr"].as<uint16_t>();}
+    if(doc["fB"] != nullptr){configcomcu.fB = doc["fB"].as<bool>();}
+    if(doc["pBz"] != nullptr){configcomcu.pBz = doc["pBz"].as<uint8_t>();}
+    if(doc["pLR"] != nullptr){configcomcu.pLR = doc["pLR"].as<uint8_t>();}
+    if(doc["pLG"] != nullptr){configcomcu.pLG = doc["pLG"].as<uint8_t>();}
+    if(doc["pLB"] != nullptr){configcomcu.pLB = doc["pLB"].as<uint8_t>();}
+    if(doc["lON"] != nullptr){configcomcu.lON = doc["lON"].as<uint8_t>();}
 
     log_manager->info(PSTR(__func__),PSTR("ConfigCoMCU loaded successfuly.\n"));
   }
