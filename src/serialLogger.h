@@ -12,6 +12,10 @@
 #include <stdarg.h>
 #include <logging.h>
 
+char get_error_char(const LogLevel level);
+int get_console_color_code(const LogLevel level);
+int map_log_level(const LogLevel level);
+
 class ESP32SerialLogger : public ILogHandler
 {
     public:

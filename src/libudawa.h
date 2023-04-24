@@ -31,6 +31,7 @@
 #include <ESPmDNS.h>
 #define DISABLE_ALL_LIBRARY_WARNINGS
 #include <esp32FOTA.hpp>
+#include <WiFiUdp.h>
 
 #define _TASK_TIMECRITICAL
 #define _TASK_STATUS_REQUEST
@@ -95,6 +96,9 @@ struct Config
   char htP[24];
 
   uint8_t tbDisco = 0;
+
+  char logIP[16] = "192.168.18.255";
+  uint16_t logPrt = 29514;
 };
 
 struct ConfigCoMCU
@@ -111,7 +115,7 @@ struct ConfigCoMCU
 
 class GCB {
   public:
-    using processFn = JsonObject (*)(const JsonObject &data);
+    using processFn = JsonObject (*)(JsonObject &data);
 
     inline GCB()
       : m_name(), m_cb(NULL)                {  }
@@ -121,6 +125,12 @@ class GCB {
 
     const char  *m_name;
     processFn   m_cb;
+};
+
+class ESP32UDPLogger : public ILogHandler
+{
+    public:
+        void log_message(const char *tag, const LogLevel level, const char *fmt, va_list args) override;
 };
 
 uint32_t micro2milli(uint32_t hi, uint32_t lo);
@@ -175,6 +185,7 @@ void tbKeeperProvCb();
 void updateSpiffsCb();
 
 ESP32SerialLogger serial_logger;
+ESP32UDPLogger udp_logger;
 LogManager *log_manager = LogManager::GetInstance(LogLevel::VERBOSE);
 WiFiClientSecure ssl = WiFiClientSecure();
 WiFiMulti wifiMulti;
@@ -200,6 +211,7 @@ void startup() {
 
   config.logLev = 1;
   log_manager->add_logger(&serial_logger);
+  log_manager->add_logger(&udp_logger);
   log_manager->set_log_level(PSTR("*"), (LogLevel) config.logLev);
   if(!SPIFFS.begin(true))
   {
@@ -535,7 +547,6 @@ void onWsEventCb(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEven
       doc["evType"] = (int)WS_EVT_DATA;
       JsonObject root = doc.template as<JsonObject>();
       log_manager->debug(PSTR(__func__), PSTR("WS message parsing %s\n"), err.c_str());
-      serializeJsonPretty(doc, Serial);
       runCb("wsEvent", root);
     }
     else
@@ -737,6 +748,9 @@ void configReset()
   doc["htU"] = "UDAWA";
   doc["htP"] = "defaultkey";
 
+  doc["logIP"] = "192.168.18.255";
+  doc["logPrt"] = 29514;
+
   size_t size = serializeJson(doc, file);
   file.close();
 
@@ -798,6 +812,8 @@ void configLoadFailSafe()
   strlcpy(config.hname, hname.c_str(), sizeof(config.hname));
   strlcpy(config.htU, "UDAWA", sizeof(config.htU));
   strlcpy(config.htP, "defaultkey", sizeof(config.htP));
+  strlcpy(config.logIP, "192.168.18.255", sizeof(config.logIP));
+  config.logPrt = 29514;
 }
 
 void configLoad()
@@ -859,6 +875,8 @@ void configLoad()
     if(doc["fWOTA"] != nullptr){config.fWOTA = doc["fWOTA"].as<bool>();}
     if(doc["fIface"] != nullptr){config.fIface = doc["fIface"].as<bool>();}
     if(doc["hname"] != nullptr){strlcpy(config.hname, doc["hname"].as<const char*>(), sizeof(config.hname));}
+    if(doc["logIP"] != nullptr){strlcpy(config.logIP, doc["logIP"].as<const char*>(), sizeof(config.logIP));}
+    if(doc["logPrt"] != nullptr){config.logPrt = doc["logPrt"].as<uint16_t>();}
 
     log_manager->info(PSTR(__func__),PSTR("Config loaded successfuly.\n"));
   }
@@ -903,6 +921,9 @@ void configSave()
   doc["htU"] = config.htU;
   doc["htP"] = config.htP;
 
+  doc["logIP"] = config.logIP;
+  doc["logPrt"] = config.logPrt;
+
   serializeJson(doc, file);
   file.close();
 }
@@ -933,8 +954,7 @@ void configCoMCUReset()
   serializeJson(doc, file);
   file.close();
 
-  log_manager->info(PSTR(__func__),PSTR("ConfigCoMCU hard reset:"));
-  serializeJsonPretty(doc, Serial);
+  log_manager->info(PSTR(__func__),PSTR("ConfigCoMCU hard reset!"));
 }
 
 void configCoMCULoad()
@@ -1074,9 +1094,9 @@ void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc)
 {
   serializeJson(doc, Serial2);
   StringPrint stream;
-  serializeJsonPretty(doc, stream);
+  serializeJson(doc, stream);
   String result = stream.str();
-  log_manager->debug(PSTR(__func__),PSTR("Sent to CoMCU:\n%s\n"), result.c_str());
+  log_manager->debug(PSTR(__func__),PSTR("Sent to CoMCU: %s\n"), result.c_str());
   if(isRpc)
   {
     delay(50);
@@ -1094,7 +1114,7 @@ void serialReadFromCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc)
   result = stream.str();
   if (err == DeserializationError::Ok)
   {
-    log_manager->debug(PSTR(__func__),PSTR("Received from CoMCU\n%s\n"), result.c_str());
+    log_manager->debug(PSTR(__func__),PSTR("Received from CoMCU: %s\n"), result.c_str());
   }
   else
   {
@@ -1161,6 +1181,37 @@ uint32_t micro2milli(uint32_t hi, uint32_t lo)
   ans = (ans << 16) + r / 1000;
 
   return ans;
+}
+
+
+static SemaphoreHandle_t udpSemaphore = NULL;
+void ESP32UDPLogger::log_message(const char *tag, LogLevel level, const char *fmt, va_list args)
+{
+    if((int)level > config.logLev || !WiFi.isConnected()){
+      return;
+    }
+    if(udpSemaphore == NULL)
+    {
+        udpSemaphore = xSemaphoreCreateMutex();
+    }
+
+    if(udpSemaphore != NULL && xSemaphoreTake(udpSemaphore, (TickType_t) 20))
+    {
+        int size = 512;
+        WiFiUDP udp;
+        char data[size];
+        vsnprintf(data, size, fmt, args);
+        String msg = String(get_error_char(level)) + "~[" + config.name + "] " + String(tag) + "~" + String(data);
+        
+        udp.beginPacket(config.logIP, config.logPrt);
+        udp.write((uint8_t*)msg.c_str(), msg.length());
+        udp.endPacket();
+
+        xSemaphoreGive(udpSemaphore);
+    }
+    else{
+        printf("Could not get UDP semaphore.\n");
+    }
 }
 
 } // namespace libudawa
