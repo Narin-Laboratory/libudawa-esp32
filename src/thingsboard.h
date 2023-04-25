@@ -166,10 +166,19 @@ class ThingsBoardSized
       return keepAlive;
     }
 
+    uint16_t getKeepAlive(){
+      return m_client.getKeepAlive();
+    }
+
     uint16_t setSocketTimeout(uint16_t socketTimeout){
       m_client.setSocketTimeout(socketTimeout);
       return socketTimeout;
     }
+
+    uint16_t getSocketTimeout(){
+      return m_client.getSocketTimeout();
+    }
+
 
     // Connects to the specified ThingsBoard server and port.
     // Access token is used to authenticate a client.
@@ -247,6 +256,14 @@ class ThingsBoardSized
     inline bool sendTelemetryDoc(StaticJsonDocument<PayloadSize> &doc) {
       char jsonBuffer[PayloadSize];
       serializeJson(doc, jsonBuffer);
+      log_manager->debug(PSTR(__func__), PSTR("%s\n"), jsonBuffer);
+      return m_client.publish("v1/devices/me/telemetry", jsonBuffer);
+    }
+
+    inline bool sendTelemetryObj(JsonObject &doc) {
+      char jsonBuffer[PayloadSize];
+      serializeJson(doc, jsonBuffer);
+      log_manager->debug(PSTR(__func__), PSTR("%s\n"), jsonBuffer);
       return m_client.publish("v1/devices/me/telemetry", jsonBuffer);
     }
 
@@ -327,7 +344,7 @@ class ThingsBoardSized
       }
 
       // Wait receive m_fwVersion and m_fwTitle
-      unsigned long timeout = millis() + 3000;
+      unsigned long timeout = millis() + 1000;
       do {
         delay(5);
         loop();
@@ -382,7 +399,7 @@ class ThingsBoardSized
       do {
         m_client.publish(String("v2/fw/request/0/chunk/" + String(currChunk)).c_str(), String(chunkSize).c_str());
 
-        timeout = millis() + 3000;
+        timeout = millis() + 1000;
         do {
           delay(5);
           loop();

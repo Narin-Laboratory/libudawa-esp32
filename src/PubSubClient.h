@@ -28,12 +28,12 @@
 
 // MQTT_KEEPALIVE : keepAlive interval in Seconds. Override with setKeepAlive()
 #ifndef MQTT_KEEPALIVE
-#define MQTT_KEEPALIVE 15
+#define MQTT_KEEPALIVE 10
 #endif
 
 // MQTT_SOCKET_TIMEOUT: socket timeout interval in Seconds. Override with setSocketTimeout()
 #ifndef MQTT_SOCKET_TIMEOUT
-#define MQTT_SOCKET_TIMEOUT 15
+#define MQTT_SOCKET_TIMEOUT 3
 #endif
 
 // MQTT_MAX_TRANSFER_SIZE : limit how much data is passed to the network client
@@ -136,11 +136,13 @@ public:
    PubSubClient& setCallback(MQTT_CALLBACK_SIGNATURE);
    PubSubClient& setClient(Client& client);
    PubSubClient& setStream(Stream& stream);
-   PubSubClient& setKeepAlive(uint16_t keepAlive);
-   PubSubClient& setSocketTimeout(uint16_t timeout);
+   void setKeepAlive(uint16_t keepAlive);
+   void setSocketTimeout(uint16_t timeout);
 
    boolean setBufferSize(uint16_t size);
    uint16_t getBufferSize();
+   uint16_t getKeepAlive();
+   uint16_t getSocketTimeout();
 
    boolean connect(const char* id);
    boolean connect(const char* id, const char* user, const char* pass);

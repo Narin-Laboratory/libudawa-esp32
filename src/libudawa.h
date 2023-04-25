@@ -53,6 +53,12 @@
 #ifndef DOCSIZE_MIN
   #define DOCSIZE_MIN 384
 #endif
+#define TASK_EXPIRED 120
+#define INTV_wifiKeeperLoop 60 * TASK_SECOND
+#define INTV_tbKeeperLoop 60 * TASK_SECOND
+#define INTV_ifaceLoop 10 * TASK_MILLISECOND
+#define INTV_tbLoop 10 * TASK_MILLISECOND
+#define INTV_wifiOtaLoop 10 * TASK_MILLISECOND
 
 
 namespace libudawa
@@ -153,6 +159,7 @@ bool loadFile(const char* filePath, char* buffer);
 callbackResponse processProvisionResponse(const callbackData &data);
 void startup();
 bool wifiKeeperEnable();
+void wifiKeeperDisable();
 void wifiKeeperCb();
 void udawa();
 void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc);
@@ -198,11 +205,11 @@ AsyncWebServer web(80);
 AsyncWebSocket ws("/ws");
 Scheduler r;
 
-Task wifiKeeperLoop(30 * TASK_SECOND, TASK_FOREVER, &wifiKeeperCb, &r, 0, &wifiKeeperEnable, NULL, 0);
-Task tbKeeper(30 * TASK_SECOND, TASK_FOREVER, &tbKeeperCb, &r, 0, &tbKeeperEnable, &tbKeeperDisable, 0);
-Task ifaceLoop(10 * TASK_MILLISECOND, TASK_FOREVER, &ifaceLoopCb, &r, 0, &ifaceLoopEnable, &ifaceLoopDisable, 0);
-Task tbLoop(10 * TASK_MILLISECOND, TASK_FOREVER, &tbLoopCb, &r, 0, NULL, &tbLoopDisable, 0);
-Task wifiOtaLoop(10 * TASK_MILLISECOND, TASK_FOREVER, &wifiOtaLoopCb, &r, 0, &wifiOtaEnable, &wifiOtaDisable, 0);
+Task wifiKeeperLoop(INTV_wifiKeeperLoop, TASK_FOREVER, &wifiKeeperCb, &r, 0, &wifiKeeperEnable, &wifiKeeperDisable, 0);
+Task tbKeeperLoop(INTV_tbKeeperLoop, TASK_FOREVER, &tbKeeperCb, &r, 0, &tbKeeperEnable, &tbKeeperDisable, 0);
+Task ifaceLoop(INTV_ifaceLoop, TASK_FOREVER, &ifaceLoopCb, &r, 0, &ifaceLoopEnable, &ifaceLoopDisable, 0);
+Task tbLoop(INTV_tbLoop, TASK_FOREVER, &tbLoopCb, &r, 0, NULL, &tbLoopDisable, 0);
+Task wifiOtaLoop(INTV_wifiOtaLoop, TASK_FOREVER, &wifiOtaLoopCb, &r, 0, &wifiOtaEnable, &wifiOtaDisable, 0);
 Task updateSpiffs(TASK_IMMEDIATE, TASK_ONCE, &updateSpiffsCb, &r, 0, NULL, NULL, 0);
 
 void startup() {
@@ -217,7 +224,7 @@ void startup() {
   {
     //configReset();
     configLoadFailSafe();
-    log_manager->warn(PSTR(__func__), PSTR("Problem with file system. Failsafe config was loaded.\n"));
+    log_manager->error(PSTR(__func__), PSTR("Problem with SPIFFS file system. Failsafe config was loaded.\n"));
   }
   else
   {
@@ -262,6 +269,10 @@ bool ifaceLoopEnable(){
     ws.setAuthentication(config.htU, config.htP);
     ws.enable(true);
     web.addHandler(&ws);
+    log_manager->verbose(PSTR(__func__),PSTR("Enabled.\n"));
+
+
+    ifaceLoop.setTimeout(TASK_EXPIRED * TASK_SECOND, false);
     return true;
   }
   return false;
@@ -269,12 +280,20 @@ bool ifaceLoopEnable(){
 
 void ifaceLoopCb(){
   ws.cleanupClients();
+  ifaceLoop.resetTimeout();
 }
 
 void ifaceLoopDisable(){
+  if(ifaceLoop.timedOut()){
+    log_manager->verbose(PSTR(__func__),PSTR("ifaceLoop has timed out. Restarting...\n"));
+    ifaceLoop.setInterval(INTV_ifaceLoop);
+    ifaceLoop.setIterations(TASK_FOREVER);
+    ifaceLoop.enable();
+  }
   web.end();
   ws.closeAll();
   ws.enable(false);
+  log_manager->verbose(PSTR(__func__),PSTR("Disabled.\n"));
 }
 
 bool wifiOtaEnable(){
@@ -309,6 +328,8 @@ bool wifiOtaEnable(){
         reboot();
       }
     );
+    log_manager->verbose(PSTR(__func__),PSTR("Enabled.\n"));
+    wifiOtaLoop.setTimeout(TASK_EXPIRED * TASK_SECOND, false);
     return true;
   }
   return false;
@@ -316,10 +337,18 @@ bool wifiOtaEnable(){
 
 void wifiOtaLoopCb(){
   ArduinoOTA.handle();
+  wifiOtaLoop.resetTimeout();
 }
 
 void wifiOtaDisable(){
+  if(wifiOtaLoop.timedOut()){
+    log_manager->verbose(PSTR(__func__),PSTR("wifiOtaLoop has timed out. Restarting...\n"));
+    wifiOtaLoop.setInterval(INTV_wifiOtaLoop);
+    wifiOtaLoop.setIterations(TASK_FOREVER);
+    wifiOtaLoop.enable();
+  }
   ArduinoOTA.end();
+  log_manager->verbose(PSTR(__func__),PSTR("Disabled.\n"));
 }
 
 void tbLoopCb(){
@@ -327,6 +356,7 @@ void tbLoopCb(){
 }
 void tbLoopDisable(){
   tb.disconnect();
+  log_manager->verbose(PSTR(__func__),PSTR("Disabled.\n"));
 }
 
 bool tbKeeperEnable(){
@@ -347,18 +377,26 @@ bool tbKeeperEnable(){
     return false;
   }
 
-  tb.setBufferSize(DOCSIZE_MIN);
+  log_manager->verbose(PSTR(__func__),PSTR("tbBuffSize: %d, tbSocketTimeout: %d, tbKeepAlive: %d.\n"), tb.getBufferSize(), tb.getSocketTimeout(), tb.getKeepAlive());
 
-  tbLoop.setInterval(25 * TASK_MILLISECOND);
+  tbKeeperLoop.setTimeout(TASK_EXPIRED * TASK_SECOND, false);
+  tb.setBufferSize(DOCSIZE_MIN);
+  tb.setSocketTimeout(3);
+  tb.setKeepAlive(10);
+  tbLoop.setInterval(INTV_tbLoop);
   tbLoop.setIterations(TASK_FOREVER);
   tbLoop.enable();
+
+  log_manager->verbose(PSTR(__func__),PSTR("Enabled.\n"));
   return true;
 }
 void tbKeeperCb(){
+  log_manager->verbose(PSTR(__func__), PSTR("Overrun: %d, start delayed by: %d\n"), wifiKeeperLoop.getOverrun(), wifiKeeperLoop.getStartDelay());
   if(!config.provSent)
   {
-    tbKeeper.setCallback(tbKeeperProvCb);
-    tbKeeper.forceNextIteration();
+    tbKeeperLoop.resetTimeout();
+    tbKeeperLoop.setCallback(tbKeeperProvCb);
+    tbKeeperLoop.forceNextIteration();
   }
   else{
     if(!tb.connected())
@@ -375,6 +413,7 @@ void tbKeeperCb(){
           config.provSent = 0;
           config.tbDisco = 0;
         }
+        tbKeeperLoop.resetTimeout();
         return;
       }
       StaticJsonDocument<1> doc;
@@ -384,6 +423,7 @@ void tbKeeperCb(){
       log_manager->info(PSTR(__func__),PSTR("IoT Connected!\n"));
     }
   }
+  tbKeeperLoop.resetTimeout();
 }
 
 void tbKeeperProvCb(){
@@ -412,7 +452,14 @@ void tbKeeperProvCb(){
 }
 
 void tbKeeperDisable(){
+  if(tbKeeperLoop.timedOut()){
+    log_manager->verbose(PSTR(__func__),PSTR("tbKeeperLoop has timed out. Restarting...\n"));
+    tbKeeperLoop.setInterval(INTV_tbKeeperLoop);
+    tbKeeperLoop.setIterations(TASK_FOREVER);
+    tbKeeperLoop.enable();
+  }
   tbLoop.disable();
+  log_manager->verbose(PSTR(__func__),PSTR("Disabled.\n"));
 }
 
 void emitAlarm(int code){
@@ -447,7 +494,7 @@ void cbWiFiOnDisconnected(WiFiEvent_t event, WiFiEventInfo_t info)
 {
   log_manager->warn(PSTR(__func__),PSTR("WiFi (%s and %s) Disconnected!\n"), config.wssid, config.dssid);
   if(config.fIoT){
-    tbKeeper.disable();
+    tbKeeperLoop.disable();
   }
   if(config.fIface){
     ifaceLoop.disable();
@@ -485,7 +532,7 @@ void cbWiFiOnGotIp(WiFiEvent_t event, WiFiEventInfo_t info)
   }
 
   if(config.fIoT){
-    tbKeeper.enable();
+    tbKeeperLoop.enable();
   }
 
   setAlarm(0, 0, 3, 100);
@@ -510,11 +557,24 @@ bool wifiKeeperEnable()
   WiFi.onEvent(cbWiFiOnLostIp, ARDUINO_EVENT_WIFI_STA_LOST_IP);
   WiFi.onEvent(cbWiFiOnGotIp, ARDUINO_EVENT_WIFI_STA_GOT_IP);
 
+  log_manager->verbose(PSTR(__func__),PSTR("Enabled.\n"));
+  wifiKeeperLoop.setTimeout(TASK_EXPIRED * TASK_SECOND, false);
   return true;
 }
 
 void wifiKeeperCb(){
+  log_manager->verbose(PSTR(__func__), PSTR("Overrun: %d, start delayed by: %d\n"), wifiKeeperLoop.getOverrun(), wifiKeeperLoop.getStartDelay());
   wifiMulti.run();
+  wifiKeeperLoop.resetTimeout();
+}
+
+void wifiKeeperDisable(){
+  if(wifiKeeperLoop.timedOut()){
+    log_manager->verbose(PSTR(__func__),PSTR("wifiKeeperLoop has timed out. Restarting...\n"));
+    wifiKeeperLoop.setInterval(INTV_wifiKeeperLoop);
+    wifiKeeperLoop.setIterations(TASK_FOREVER);
+    wifiKeeperLoop.enable();
+  }
 }
 
 void onWsEventCb(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len){
@@ -1056,7 +1116,7 @@ bool loadFile(const char* filePath, char *buffer)
 
 callbackResponse processProvisionResponse(const callbackData &data)
 {
-  tbKeeper.setCallback(tbKeeperCb);
+  tbKeeperLoop.setCallback(tbKeeperCb);
   log_manager->info(PSTR(__func__),PSTR("Received device provision response\n"));
   int jsonSize = measureJson(data) + 1;
   char buffer[jsonSize];

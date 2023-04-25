@@ -253,10 +253,11 @@ boolean PubSubClient::connect(const char *id, const char *user, const char *pass
             write(MQTTCONNECT,this->buffer,length-MQTT_MAX_HEADER_SIZE);
 
             lastInActivity = lastOutActivity = millis();
-
+            unsigned long timeout = millis() + 3000;
             while (!_client->available()) {
-                unsigned long t = millis();
-                if (t-lastInActivity >= ((int32_t) this->socketTimeout*1000UL)) {
+                //unsigned long t = millis();
+                //if (t-lastInActivity >= ((int32_t) this->socketTimeout*1000UL)) {
+                if(millis() >= timeout){
                     _state = MQTT_CONNECTION_TIMEOUT;
                     _client->stop();
                     return false;
@@ -759,11 +760,15 @@ boolean PubSubClient::setBufferSize(uint16_t size) {
 uint16_t PubSubClient::getBufferSize() {
     return this->bufferSize;
 }
-PubSubClient& PubSubClient::setKeepAlive(uint16_t keepAlive) {
+void PubSubClient::setKeepAlive(uint16_t keepAlive) {
     this->keepAlive = keepAlive;
-    return *this;
 }
-PubSubClient& PubSubClient::setSocketTimeout(uint16_t timeout) {
+uint16_t PubSubClient::getKeepAlive() {
+    return this->keepAlive;
+}
+void PubSubClient::setSocketTimeout(uint16_t timeout) {
     this->socketTimeout = timeout;
-    return *this;
+}
+uint16_t PubSubClient::getSocketTimeout() {
+    return this->socketTimeout;
 }
