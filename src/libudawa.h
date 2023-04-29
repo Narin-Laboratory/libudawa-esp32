@@ -1295,7 +1295,7 @@ void ESP32UDPLogger::log_message(const char *tag, LogLevel level, const char *fm
 
     if(udpSemaphore != NULL && xSemaphoreTake(udpSemaphore, (TickType_t) 20))
     {
-        int size = 512;
+        int size = 1024;
         WiFiUDP udp;
         char data[size];
         vsnprintf(data, size, fmt, args);
