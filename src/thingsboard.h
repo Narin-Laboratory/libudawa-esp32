@@ -256,14 +256,12 @@ class ThingsBoardSized
     inline bool sendTelemetryDoc(StaticJsonDocument<PayloadSize> &doc) {
       char jsonBuffer[PayloadSize];
       serializeJson(doc, jsonBuffer);
-      log_manager->debug(PSTR(__func__), PSTR("%s\n"), jsonBuffer);
       return m_client.publish("v1/devices/me/telemetry", jsonBuffer);
     }
 
     inline bool sendTelemetryObj(JsonObject &doc) {
       char jsonBuffer[PayloadSize];
       serializeJson(doc, jsonBuffer);
-      log_manager->debug(PSTR(__func__), PSTR("%s\n"), jsonBuffer);
       return m_client.publish("v1/devices/me/telemetry", jsonBuffer);
     }
 
@@ -280,14 +278,12 @@ class ThingsBoardSized
     inline bool sendAttributeDoc(StaticJsonDocument<PayloadSize> &doc) {
       char jsonBuffer[PayloadSize];
       serializeJson(doc, jsonBuffer);
-      log_manager->debug(PSTR(__func__), PSTR("%s\n"), jsonBuffer);
       return m_client.publish("v1/devices/me/attributes", jsonBuffer);
     }
 
     inline bool sendAttributeObj(JsonObject &doc) {
       char jsonBuffer[PayloadSize];
       serializeJson(doc, jsonBuffer);
-      log_manager->debug(PSTR(__func__), PSTR("%s\n"), jsonBuffer);
       return m_client.publish("v1/devices/me/attributes", jsonBuffer);
     }
 

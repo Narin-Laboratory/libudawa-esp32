@@ -26,12 +26,14 @@
 #include "logging.h"
 #include "serialLogger.h"
 #include <ESP32Time.h>
-#include <AsyncTCP.h>
-#include <ESPAsyncWebServer.h>
 #include <ESPmDNS.h>
 #define DISABLE_ALL_LIBRARY_WARNINGS
 #include <esp32FOTA.hpp>
 #include <WiFiUdp.h>
+#ifdef USE_WEB_IFACE
+#include <WebServer.h>
+#include <WebSocketsServer.h>
+#endif
 
 #define _TASK_TIMECRITICAL
 #define _TASK_STATUS_REQUEST
@@ -105,6 +107,10 @@ struct Config
 
   char logIP[16] = "192.168.18.255";
   uint16_t logPrt = 29514;
+
+  #ifdef USE_WEB_IFACE
+  uint8_t wsCount = 0;
+  #endif
 };
 
 struct ConfigCoMCU
@@ -176,7 +182,9 @@ void setAlarm(uint16_t code, uint8_t color, int32_t blinkCount, uint16_t blinkDe
 void emitAlarm(int code);
 void cbSubscribe(const GenericCallback *callbacks, size_t callbacksSize);
 void runCb(const char *methodName, JsonObject &params);
-void onWsEventCb(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len);
+#ifdef USE_WEB_IFACE
+void onWsEventCb(uint8_t num, WStype_t type, uint8_t * payload, size_t length);
+#endif
 bool ifaceLoopEnable();
 void ifaceLoopCb();
 void ifaceLoopDisable();
@@ -190,6 +198,7 @@ void tbKeeperCb();
 void tbKeeperDisable();
 void tbKeeperProvCb();
 void updateSpiffsCb();
+void webSendFile(String path, String type);
 
 ESP32SerialLogger serial_logger;
 ESP32UDPLogger udp_logger;
@@ -201,9 +210,11 @@ ConfigCoMCU configcomcu;
 ThingsBoardSized<DOCSIZE_MIN, 64, LogManager> tb(ssl);
 ESP32Time rtc(0);
 GCB m_gcb[10];
-AsyncWebServer web(80);
-AsyncWebSocket ws("/ws");
 Scheduler r;
+#ifdef USE_WEB_IFACE
+WebServer web(80);
+WebSocketsServer ws = WebSocketsServer(81);
+#endif
 
 Task wifiKeeperLoop(INTV_wifiKeeperLoop, TASK_FOREVER, &wifiKeeperCb, &r, 0, &wifiKeeperEnable, &wifiKeeperDisable, 0);
 Task tbKeeperLoop(INTV_tbKeeperLoop, TASK_FOREVER, &tbKeeperCb, &r, 0, &tbKeeperEnable, &tbKeeperDisable, 0);
@@ -263,14 +274,20 @@ void runCb(const char *methodName, JsonObject &params){
 
 bool ifaceLoopEnable(){
   if(WiFi.isConnected() && config.fIface){
-    web.begin();
-    web.serveStatic("/", SPIFFS, "/www/").setDefaultFile("index.html").setAuthentication(config.htU,config.htP);
-    ws.onEvent(onWsEventCb);
-    ws.setAuthentication(config.htU, config.htP);
-    ws.enable(true);
-    web.addHandler(&ws);
-    log_manager->verbose(PSTR(__func__),PSTR("Enabled.\n"));
+    #ifdef USE_WEB_IFACE
+      web.on(PSTR("/"), []() { webSendFile("/www/index.html", "text/html"); });
+      web.on(PSTR("/runtime.js"), []() { webSendFile("/www/runtime.js", "application/javascript"); });
+      web.on(PSTR("/polyfills.js"), []() { webSendFile("/www/polyfills.js", "application/javascript"); });
+      web.on(PSTR("/main.js"), []() { webSendFile("/www/main.js", "application/javascript"); });
+      web.on(PSTR("/styles.css"), []() { webSendFile("/www/styles.css", "text/css"); });
+      web.on(PSTR("/assets/img/udawa.svg"), []() { webSendFile("/www/assets/img/udawa.svg", "image/svg+xml"); });
+      web.on(PSTR("/favicon"), []() { webSendFile("/www/favicon.ico", "image/x-icon"); });
 
+      web.begin();
+
+      ws.begin();
+      ws.onEvent(onWsEventCb);
+    #endif
 
     ifaceLoop.setTimeout(TASK_EXPIRED * TASK_SECOND, false);
     return true;
@@ -279,7 +296,10 @@ bool ifaceLoopEnable(){
 }
 
 void ifaceLoopCb(){
-  ws.cleanupClients();
+  #ifdef USE_WEB_IFACE
+    ws.loop();
+    web.handleClient();
+  #endif
   ifaceLoop.resetTimeout();
 }
 
@@ -290,10 +310,6 @@ void ifaceLoopDisable(){
     ifaceLoop.setIterations(TASK_FOREVER);
     ifaceLoop.enable();
   }
-  web.end();
-  ws.closeAll();
-  ws.enable(false);
-  log_manager->verbose(PSTR(__func__),PSTR("Disabled.\n"));
 }
 
 bool wifiOtaEnable(){
@@ -577,44 +593,66 @@ void wifiKeeperDisable(){
   }
 }
 
-void onWsEventCb(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len){
+#ifdef USE_WEB_IFACE
+void onWsEventCb(uint8_t num, WStype_t type, uint8_t * payload, size_t length){
   StaticJsonDocument<DOCSIZE_MIN> doc;
-  DeserializationError err = deserializeJson(doc, data);
+  DeserializationError err = deserializeJson(doc, payload);
 
-  if(type == WS_EVT_CONNECT){
-    log_manager->debug(PSTR(__func__), PSTR("ws[%s][%u] connect\n"), server->url(), client->id());
-    doc["evType"] = (int)WS_EVT_CONNECT;
-    JsonObject root = doc.template as<JsonObject>();
-    runCb("wsEvent", root);
-  } else if(type == WS_EVT_DISCONNECT){
-    log_manager->debug(PSTR(__func__), PSTR("ws[%s][%u] disconnect\n"), server->url(), client->id());
-    doc["evType"] = (int)WS_EVT_DISCONNECT;
-    JsonObject root = doc.template as<JsonObject>();
-    runCb("wsEvent", root);
-  } else if(type == WS_EVT_ERROR){
-    log_manager->warn(PSTR(__func__), PSTR("ws[%s][%u] error(%u): %s\n"), server->url(), client->id(), *((uint16_t*)arg), (char*)data);
-    doc["evType"] = (int)WS_EVT_ERROR;
-    JsonObject root = doc.template as<JsonObject>();
-    runCb("wsEvent", root);
-  } else if(type == WS_EVT_PONG){
-    doc["evType"] = (int)WS_EVT_PONG;
-    JsonObject root = doc.template as<JsonObject>();
-    log_manager->debug(PSTR(__func__), PSTR("ws[%s][%u] pong[%u]: %s\n"), server->url(), client->id(), len, (len)?(char*)data:"");
-    runCb("wsEvent", root);
-  } else if(type == (int)WS_EVT_DATA){
-    if (err == DeserializationError::Ok)
-    {
-      doc["evType"] = (int)WS_EVT_DATA;
-      JsonObject root = doc.template as<JsonObject>();
-      log_manager->debug(PSTR(__func__), PSTR("WS message parsing %s\n"), err.c_str());
-      runCb("wsEvent", root);
-    }
-    else
-    {
-      log_manager->warn(PSTR(__func__), PSTR("WS message parsing error: %s\n"), err.c_str());
-    }
+  switch(type) {
+    case WStype_DISCONNECTED:
+      {
+        config.wsCount--;
+        log_manager->debug(PSTR(__func__), PSTR("ws [%u] disconnect\n"), num);
+        doc["evType"] = (int)WStype_DISCONNECTED;
+        JsonObject root = doc.template as<JsonObject>();
+        runCb("wsEvent", root);
+      }
+      break;
+    case WStype_CONNECTED:
+      {
+        config.wsCount++;
+        log_manager->debug(PSTR(__func__), PSTR("ws [%u] connect\n"), num);
+        doc["evType"] = (int)WStype_CONNECTED;
+        JsonObject root = doc.template as<JsonObject>();
+        runCb("wsEvent", root);
+      }
+      break;
+    case WStype_TEXT:
+      {
+        if (err == DeserializationError::Ok)
+        {
+          doc["evType"] = (int)WStype_TEXT;
+          JsonObject root = doc.template as<JsonObject>();
+          log_manager->debug(PSTR(__func__), PSTR("WS message parsing %s\n"), err.c_str());
+          runCb("wsEvent", root);
+        }
+        else
+        {
+          log_manager->warn(PSTR(__func__), PSTR("WS message parsing error: %s\n"), err.c_str());
+        }
+      }
+      break;
+    case WStype_BIN:
+      {
+
+      }
+      break;
+    case WStype_ERROR:
+      {
+        log_manager->warn(PSTR(__func__), PSTR("ws [%u] error\n"), num);
+        doc["evType"] = (int)WStype_ERROR;
+        JsonObject root = doc.template as<JsonObject>();
+        runCb("wsEvent", root);
+      }
+      break;			
+    case WStype_FRAGMENT_TEXT_START:
+    case WStype_FRAGMENT_BIN_START:
+    case WStype_FRAGMENT:
+    case WStype_FRAGMENT_FIN:
+      break;
   }
 }
+#endif
 
 void udawa() {
   r.execute();
@@ -1272,6 +1310,16 @@ void ESP32UDPLogger::log_message(const char *tag, LogLevel level, const char *fm
     else{
         printf("Could not get UDP semaphore.\n");
     }
+}
+
+void webSendFile(String path, String type){
+  File file = SPIFFS.open(path.c_str(), FILE_READ);
+  if(file){
+    web.streamFile(file, type.c_str(), 200);
+  }else{
+    web.send(503, PSTR("text/plain"), PSTR("Server error."));
+  }
+  file.close();
 }
 
 } // namespace libudawa
