@@ -22,14 +22,19 @@
 #include <ArduinoJson.h>
 #include <StreamUtils.h>
 #include <ArduinoOTA.h>
-#include <thingsboard.h>
 #include "logging.h"
 #include "serialLogger.h"
 #include <ESP32Time.h>
 #include <ESPmDNS.h>
+#include <WiFiUdp.h>
+
+#define ENCRYPTED true
+#define USE_MAC_FALLBACK true
+#include <ThingsBoard.h>
+
+
 #define DISABLE_ALL_LIBRARY_WARNINGS
 #include <esp32FOTA.hpp>
-#include <WiFiUdp.h>
 #ifdef USE_WEB_IFACE
 #include <WebServer.h>
 #include <WebSocketsServer.h>
@@ -111,6 +116,9 @@ struct Config
   #ifdef USE_WEB_IFACE
   uint8_t wsCount = 0;
   #endif
+
+  bool currentFWSent = false;
+  bool updateRequestSent = false;
 };
 
 struct ConfigCoMCU
@@ -123,20 +131,6 @@ struct ConfigCoMCU
   uint8_t pLG;
   uint8_t pLB;
   uint8_t lON;
-};
-
-class GCB {
-  public:
-    using processFn = JsonObject (*)(JsonObject &data);
-
-    inline GCB()
-      : m_name(), m_cb(NULL)                {  }
-
-    inline GCB(const char *methodName, processFn cb)
-      : m_name(methodName), m_cb(cb)        {  }
-
-    const char  *m_name;
-    processFn   m_cb;
 };
 
 class ESP32UDPLogger : public ILogHandler
@@ -162,7 +156,11 @@ void configCoMCULoad();
 void configCoMCUSave();
 void configCoMCUReset();
 bool loadFile(const char* filePath, char* buffer);
-callbackResponse processProvisionResponse(const callbackData &data);
+void processProvisionResponse(const Provision_Data &data);
+void processSharedAttributeRequest(const Shared_Attribute_Data &data);
+void processClientAttributeRequest(const Shared_Attribute_Data &data);
+void processSharedAttributeUpdate(const Shared_Attribute_Data &data);
+void (*processSharedAttributeUpdateCb)(const Shared_Attribute_Data &data);
 void startup();
 bool wifiKeeperEnable();
 void wifiKeeperDisable();
@@ -180,10 +178,10 @@ void setLed(uint8_t r, uint8_t g, uint8_t b, uint8_t isBlink, int32_t blinkCount
 void setLed(uint8_t color, uint8_t isBlink, int32_t blinkCount, uint16_t blinkDelay);
 void setAlarm(uint16_t code, uint8_t color, int32_t blinkCount, uint16_t blinkDelay);
 void emitAlarm(int code);
-void cbSubscribe(const GenericCallback *callbacks, size_t callbacksSize);
-void runCb(const char *methodName, JsonObject &params);
+void (*emitAlarmCb)(const int code);
 #ifdef USE_WEB_IFACE
 void onWsEventCb(uint8_t num, WStype_t type, uint8_t * payload, size_t length);
+void (*wsEventCb)(const JsonObject &payload);
 #endif
 bool ifaceLoopEnable();
 void ifaceLoopCb();
@@ -197,7 +195,10 @@ bool tbKeeperEnable();
 void tbKeeperCb();
 void tbKeeperDisable();
 void tbKeeperProvCb();
+void tbOtaFinishedCb(const bool& success);
+void tbOtaProgressCb(const uint32_t& currentChunk, const uint32_t& totalChuncks);
 void updateSpiffsCb();
+void (*httpOtaOnUpdateFinishedCb)(const int partition);
 void webSendFile(String path, String type);
 
 ESP32SerialLogger serial_logger;
@@ -207,14 +208,34 @@ WiFiClientSecure ssl = WiFiClientSecure();
 WiFiMulti wifiMulti;
 Config config;
 ConfigCoMCU configcomcu;
-ThingsBoardSized<DOCSIZE_MIN, 64, LogManager> tb(ssl);
+ThingsBoard tb(ssl, DOCSIZE_MIN);
 ESP32Time rtc(0);
-GCB m_gcb[10];
 Scheduler r;
 #ifdef USE_WEB_IFACE
 WebServer web(80);
 WebSocketsServer ws = WebSocketsServer(81);
 #endif
+
+// Shared attributes we want to request from the server
+constexpr const char FW_TAG_KEY[] PROGMEM = "fw_tag";
+constexpr std::array<const char*, 6U> REQUESTED_SHARED_ATTRIBUTES = {
+  FW_CHKS_KEY,
+  FW_CHKS_ALGO_KEY,
+  FW_SIZE_KEY,
+  FW_TAG_KEY,
+  FW_TITLE_KEY,
+  FW_VER_KEY
+};
+
+// Client-side attributes we want to request from the server
+constexpr const char fIface_KEY[] PROGMEM = "fIface_KEY";
+constexpr std::array<const char*, 1U> REQUESTED_CLIENT_ATTRIBUTES = {
+  fIface_KEY
+};
+const Attribute_Request_Callback tbSharedCb(REQUESTED_SHARED_ATTRIBUTES.cbegin(), REQUESTED_SHARED_ATTRIBUTES.cend(), &processSharedAttributeRequest);
+const Attribute_Request_Callback tbClientCb(REQUESTED_CLIENT_ATTRIBUTES.cbegin(), REQUESTED_CLIENT_ATTRIBUTES.cend(), &processClientAttributeRequest);
+const OTA_Update_Callback tbOtaCb(&tbOtaProgressCb, &tbOtaFinishedCb, CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION, 5, 1024);
+const Shared_Attribute_Callback tbSharedAttrUpdateCb(&processSharedAttributeUpdate);
 
 Task wifiKeeperLoop(INTV_wifiKeeperLoop, TASK_FOREVER, &wifiKeeperCb, &r, 0, &wifiKeeperEnable, &wifiKeeperDisable, 0);
 Task tbKeeperLoop(INTV_tbKeeperLoop, TASK_FOREVER, &tbKeeperCb, &r, 0, &tbKeeperEnable, &tbKeeperDisable, 0);
@@ -255,21 +276,66 @@ void startup() {
 }
 
 
-void cbSubscribe(const GCB *callbacks, size_t callbacksSize)
-{
-  for (size_t i = 0; i < callbacksSize; ++i) {
-    m_gcb[i] = callbacks[i];
+/// @brief Update callback that will be called as soon as the requested shared attributes, have been received.
+/// The callback will then not be called anymore unless it is reused for another request
+/// @param data Data containing the shared attributes that were requested and their current value
+void processSharedAttributeRequest(const Shared_Attribute_Data &data) {
+  for (auto it = data.begin(); it != data.end(); ++it) {
+    log_manager->verbose(PSTR(__func__), PSTR("Received shared attribute: %s : %s\n"), it->key().c_str(), it->value().as<const char*>());
   }
 }
 
-void runCb(const char *methodName, JsonObject &params){
-  for (size_t i = 0; i < sizeof(m_gcb) / sizeof(*m_gcb); ++i) {
-    if (m_gcb[i].m_cb && !strcmp(m_gcb[i].m_name, methodName)) {
-      log_manager->debug(PSTR(__func__), PSTR("calling generic RPC: %s\n"), m_gcb[i].m_name);
-      m_gcb[i].m_cb(params);
-      break;
-    }
+/// @brief Update callback that will be called as soon as the requested client-side attributes, have been received.
+/// The callback will then not be called anymore unless it is reused for another request
+/// @param data Data containing the client-side attributes that were requested and their current value
+void processClientAttributeRequest(const Shared_Attribute_Data &data) {
+  for (auto it = data.begin(); it != data.end(); ++it) {
+    log_manager->verbose(PSTR(__func__), PSTR("Received client attribute: %s : %s\n"), it->key().c_str(), it->value().as<const char*>());
   }
+}
+
+void processSharedAttributeUpdate(const Shared_Attribute_Data &data){
+  if(data["model"] != nullptr){strlcpy(config.model, data["model"].as<const char*>(), sizeof(config.model));}
+  if(data["group"] != nullptr){strlcpy(config.group, data["group"].as<const char*>(), sizeof(config.group));}
+  if(data["broker"] != nullptr){strlcpy(config.broker, data["broker"].as<const char*>(), sizeof(config.broker));}
+  if(data["port"] != nullptr){config.port = data["port"].as<uint16_t>();}
+  if(data["wssid"] != nullptr){strlcpy(config.wssid, data["wssid"].as<const char*>(), sizeof(config.wssid));}
+  if(data["wpass"] != nullptr){strlcpy(config.wpass, data["wpass"].as<const char*>(), sizeof(config.wpass));}
+  if(data["dssid"] != nullptr){strlcpy(config.dssid, data["dssid"].as<const char*>(), sizeof(config.dssid));}
+  if(data["dpass"] != nullptr){strlcpy(config.dpass, data["dpass"].as<const char*>(), sizeof(config.dpass));}
+  if(data["upass"] != nullptr){strlcpy(config.upass, data["upass"].as<const char*>(), sizeof(config.upass));}
+  if(data["accTkn"] != nullptr){strlcpy(config.accTkn, data["accTkn"].as<const char*>(), sizeof(config.accTkn));}
+  if(data["provDK"] != nullptr){strlcpy(config.provDK, data["provDK"].as<const char*>(), sizeof(config.provDK));}
+  if(data["provDS"] != nullptr){strlcpy(config.provDS, data["provDS"].as<const char*>(), sizeof(config.provDS));}
+  if(data["logLev"] != nullptr){config.logLev = data["logLev"].as<uint8_t>(); log_manager->set_log_level(PSTR("*"), (LogLevel) config.logLev);;}
+  if(data["gmtOff"] != nullptr){config.gmtOff = data["gmtOff"].as<int>();}
+  if(data["fIoT"] != nullptr){config.fIoT = data["fIoT"].as<int>();}
+  if(data["htU"] != nullptr){strlcpy(config.htU, data["htU"].as<const char*>(), sizeof(config.htU));}
+  if(data["htP"] != nullptr){strlcpy(config.htP, data["htP"].as<const char*>(), sizeof(config.htP));}
+  if(data["fWOTA"] != nullptr){config.fWOTA = data["fWOTA"].as<bool>();}
+  if(data["fIface"] != nullptr){config.fIface = data["fIface"].as<bool>();}
+  if(data["hname"] != nullptr){strlcpy(config.hname, data["hname"].as<const char*>(), sizeof(config.hname));}
+  if(data["logIP"] != nullptr){strlcpy(config.logIP, data["logIP"].as<const char*>(), sizeof(config.logIP));}
+  if(data["logPrt"] != nullptr){config.logPrt = data["logPrt"].as<uint16_t>();}
+
+  int jsonSize = JSON_STRING_SIZE(measureJson(data));
+  char buffer[jsonSize];
+  serializeJson(data, buffer, jsonSize);
+  log_manager->verbose(PSTR(__func__), PSTR("Received shared attribute(s) update: %s.\n"), buffer);
+
+  processSharedAttributeUpdateCb(data);
+}
+
+void tbOtaFinishedCb(const bool& success){
+  if(success){
+    log_manager->info(PSTR(__func__), PSTR("IoT OTA update success!\n"));
+  }else{
+    log_manager->warn(PSTR(__func__), PSTR("IoT OTA update failed!\n"));
+  }
+}
+
+void tbOtaProgressCb(const uint32_t& currentChunk, const uint32_t& totalChuncks){
+  log_manager->verbose(PSTR(__func__), PSTR("IoT OTA Progress %.2f%%\n"), static_cast<float>(currentChunk * 100U) / totalChuncks);
 }
 
 bool ifaceLoopEnable(){
@@ -393,12 +459,7 @@ bool tbKeeperEnable(){
     return false;
   }
 
-  log_manager->verbose(PSTR(__func__),PSTR("tbBuffSize: %d, tbSocketTimeout: %d, tbKeepAlive: %d.\n"), tb.getBufferSize(), tb.getSocketTimeout(), tb.getKeepAlive());
-
   tbKeeperLoop.setTimeout(TASK_EXPIRED * TASK_SECOND, false);
-  tb.setBufferSize(DOCSIZE_MIN);
-  tb.setSocketTimeout(3);
-  tb.setKeepAlive(10);
   tbLoop.setInterval(INTV_tbLoop);
   tbLoop.setIterations(TASK_FOREVER);
   tbLoop.enable();
@@ -422,9 +483,6 @@ void tbKeeperCb(){
       {
         config.tbDisco++;
         log_manager->warn(PSTR(__func__),PSTR("Failed to connect to IoT Broker %s (%d)\n"), config.broker, config.tbDisco);
-        StaticJsonDocument<1> doc;
-        JsonObject params = doc.template as<JsonObject>();
-        runCb("onTbDisconnected", params);
         if(config.tbDisco >= 10){
           config.provSent = 0;
           config.tbDisco = 0;
@@ -432,9 +490,18 @@ void tbKeeperCb(){
         tbKeeperLoop.resetTimeout();
         return;
       }
-      StaticJsonDocument<1> doc;
-      JsonObject params = doc.template as<JsonObject>();
-      runCb("onTbConnected", params);
+
+      tb.Shared_Attributes_Request(tbSharedCb);
+      tb.Client_Attributes_Request(tbClientCb);
+
+      if (!config.currentFWSent) {
+        constexpr char FW_STATE_UPDATED[] PROGMEM = "UPDATED";
+        config.currentFWSent = tb.Firmware_Send_Info(CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION) && tb.Firmware_Send_State(FW_STATE_UPDATED);
+      }
+      if (!config.updateRequestSent) {
+        config.updateRequestSent = tb.Subscribe_Firmware_Update(tbOtaCb);
+      }
+
       setAlarm(0, 0, 3, 100);
       log_manager->info(PSTR(__func__),PSTR("IoT Connected!\n"));
     }
@@ -444,21 +511,10 @@ void tbKeeperCb(){
 
 void tbKeeperProvCb(){
   log_manager->info(PSTR(__func__),PSTR("Starting provision initiation to %s:%d\n"),  config.broker, config.port);
-  if(tb.connect(config.broker, "provision", config.port))
+  const Provision_Callback provisionCallback(Access_Token(), &processProvisionResponse, config.provDK, config.provDS, config.name);
+  if(tb.Provision_Request(provisionCallback))
   {
     log_manager->info(PSTR(__func__),PSTR("Connected to provisioning server: %s:%d\n"),  config.broker, config.port);
-
-    GenericCallback cb[2] = {
-      { "provisionResponse", processProvisionResponse },
-      { "provisionResponse", processProvisionResponse }
-    };
-    if(tb.callbackSubscribe(cb, 2))
-    {
-      if(tb.sendProvisionRequest(config.name, config.provDK, config.provDS))
-      {
-        log_manager->info(PSTR(__func__),PSTR("Provision request was sent! Waiting for response.\n"));
-      }
-    }
   }
   else
   {
@@ -481,10 +537,10 @@ void tbKeeperDisable(){
 void emitAlarm(int code){
   StaticJsonDocument<DOCSIZE_MIN> doc;
   doc["alarm"] = code;
-  tb.sendTelemetryDoc(doc);
+  JsonObject payload = doc.as<JsonObject>();
+  tb.sendTelemetryJson(payload, measureJson(payload));
+  emitAlarmCb(code);
   log_manager->error(PSTR(__func__), PSTR("%i\n"), code);
-  JsonObject params = doc.template as<JsonObject>();
-  runCb("emitAlarmWs", params);
 }
 
 void rtcUpdate(long ts){
@@ -594,9 +650,9 @@ void wifiKeeperDisable(){
 }
 
 #ifdef USE_WEB_IFACE
-void onWsEventCb(uint8_t num, WStype_t type, uint8_t * payload, size_t length){
+void onWsEventCb(uint8_t num, WStype_t type, uint8_t * data, size_t length){
   StaticJsonDocument<DOCSIZE_MIN> doc;
-  DeserializationError err = deserializeJson(doc, payload);
+  DeserializationError err = deserializeJson(doc, data);
 
   switch(type) {
     case WStype_DISCONNECTED:
@@ -604,27 +660,31 @@ void onWsEventCb(uint8_t num, WStype_t type, uint8_t * payload, size_t length){
         config.wsCount--;
         log_manager->debug(PSTR(__func__), PSTR("ws [%u] disconnect\n"), num);
         doc["evType"] = (int)WStype_DISCONNECTED;
-        JsonObject root = doc.template as<JsonObject>();
-        runCb("wsEvent", root);
+        doc["num"] = num;
+        JsonObject payload = doc.as<JsonObject>();
+        wsEventCb(payload);
       }
       break;
     case WStype_CONNECTED:
       {
         config.wsCount++;
         log_manager->debug(PSTR(__func__), PSTR("ws [%u] connect\n"), num);
-        doc["evType"] = (int)WStype_CONNECTED;
-        JsonObject root = doc.template as<JsonObject>();
-        runCb("wsEvent", root);
+        doc["evType"] = (int)WStype_DISCONNECTED;
+        doc["num"] = num;
+        JsonObject payload = doc.as<JsonObject>();
+        wsEventCb(payload);
       }
       break;
     case WStype_TEXT:
       {
         if (err == DeserializationError::Ok)
         {
-          doc["evType"] = (int)WStype_TEXT;
-          JsonObject root = doc.template as<JsonObject>();
           log_manager->debug(PSTR(__func__), PSTR("WS message parsing %s\n"), err.c_str());
-          runCb("wsEvent", root);
+          doc["evType"] = (int)WStype_DISCONNECTED;
+          doc["num"] = num;
+          doc["data"] = data;
+          JsonObject payload = doc.as<JsonObject>();
+          wsEventCb(payload);
         }
         else
         {
@@ -640,9 +700,10 @@ void onWsEventCb(uint8_t num, WStype_t type, uint8_t * payload, size_t length){
     case WStype_ERROR:
       {
         log_manager->warn(PSTR(__func__), PSTR("ws [%u] error\n"), num);
-        doc["evType"] = (int)WStype_ERROR;
-        JsonObject root = doc.template as<JsonObject>();
-        runCb("wsEvent", root);
+        doc["evType"] = (int)WStype_DISCONNECTED;
+        doc["num"] = num;
+        JsonObject payload = doc.as<JsonObject>();
+        wsEventCb(payload);
       }
       break;			
     case WStype_FRAGMENT_TEXT_START:
@@ -683,12 +744,9 @@ void updateSpiffsCb(){
 
   });
   esp32FOTA.setUpdateFinishedCb( [](int partition, bool restart_after) {
-    StaticJsonDocument<1> doc;
-    doc["partition"] = partition;
-    JsonObject root = doc.template as<JsonObject>();
     configSave();
     configCoMCUSave();
-    runCb("onUpdateFinished", root);
+    httpOtaOnUpdateFinishedCb(partition);
   });
 
   esp32FOTA.execHTTPcheck();
@@ -1152,40 +1210,43 @@ bool loadFile(const char* filePath, char *buffer)
   return true;
 }
 
-callbackResponse processProvisionResponse(const callbackData &data)
+void processProvisionResponse(const Provision_Data &data)
 {
   tbKeeperLoop.setCallback(tbKeeperCb);
-  log_manager->info(PSTR(__func__),PSTR("Received device provision response\n"));
-  int jsonSize = measureJson(data) + 1;
+
+  constexpr char CREDENTIALS_TYPE[] PROGMEM = "credentialsType";
+  constexpr char CREDENTIALS_VALUE[] PROGMEM = "credentialsValue";
+  int jsonSize = JSON_STRING_SIZE(measureJson(data));
   char buffer[jsonSize];
   serializeJson(data, buffer, jsonSize);
+  log_manager->verbose(PSTR(__func__),PSTR("Received device provision response: %s\n"), buffer);
 
-  if (strncmp(data["status"], "SUCCESS", strlen("SUCCESS")) != 0)
-  {
-    log_manager->warn(PSTR(__func__),PSTR("Provision response contains the error: %s\n"), data["errorMsg"].as<const char*>());
-    return callbackResponse("provisionResponse", 1);
+  if (strncmp(data["status"], "SUCCESS", strlen("SUCCESS")) != 0) {
+    log_manager->warn(PSTR(__func__),PSTR("Provision response contains the error: (%s)\n"), data["errorMsg"].as<const char*>());
+    return;
   }
-  else
-  {
-    log_manager->info(PSTR(__func__),PSTR("Provision response credential type: %s\n"), data["credentialsType"].as<const char*>());
-  }
-  if (strncmp(data["credentialsType"], "ACCESS_TOKEN", strlen("ACCESS_TOKEN")) == 0)
-  {
-    log_manager->info(PSTR(__func__),PSTR("ACCESS TOKEN received: %s\n"), data["credentialsValue"].as<String>().c_str());
-    strlcpy(config.accTkn, data["credentialsValue"].as<String>().c_str(), sizeof(config.accTkn));
+
+  if (strncmp(data[CREDENTIALS_TYPE], ACCESS_TOKEN_CRED_TYPE, strlen(ACCESS_TOKEN_CRED_TYPE)) == 0) {
+    strlcpy(config.accTkn, data[CREDENTIALS_VALUE].as<std::string>().c_str(), sizeof(config.accTkn));
     config.provSent = true;
     configSave();
   }
-  if (strncmp(data["credentialsType"], "MQTT_BASIC", strlen("MQTT_BASIC")) == 0)
-  {
-    /*JsonObject credentials_value = data["credentialsValue"].as<JsonObject>();
-    credentials.client_id = credentials_value["clientId"].as<String>();
-    credentials.username = credentials_value["userName"].as<String>();
-    credentials.password = credentials_value["password"].as<String>();
-    */
+  else if (strncmp(data[CREDENTIALS_TYPE], MQTT_BASIC_CRED_TYPE, strlen(MQTT_BASIC_CRED_TYPE)) == 0) {
+    /*auto credentials_value = data[CREDENTIALS_VALUE].as<JsonObjectConst>();
+    credentials.client_id = credentials_value[CLIENT_ID].as<std::string>();
+    credentials.username = credentials_value[CLIENT_USERNAME].as<std::string>();
+    credentials.password = credentials_value[CLIENT_PASSWORD].as<std::string>();*/
   }
-  reboot();
-  return callbackResponse("provisionResponse", 1);
+  else {
+    log_manager->warn(PSTR(__func__),PSTR("Unexpected provision credentialsType: (%s)\n"), data[CREDENTIALS_TYPE].as<const char*>());
+    return;
+  }
+
+  // Disconnect from the cloud client connected to the provision account, because it is no longer needed the device has been provisioned
+  // and we can reconnect to the cloud with the newly generated credentials.
+  if (tb.connected()) {
+    tb.disconnect();
+  }
 }
 
 void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc)
