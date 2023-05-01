@@ -10,9 +10,6 @@
 #define libudawa_h
 
 #include <secret.h>
-#include <esp32-hal-log.h>
-#include <esp_int_wdt.h>
-#include <esp_task_wdt.h>
 #include <FS.h>
 #include <SPIFFS.h>
 #include <Arduino.h>
@@ -27,14 +24,9 @@
 #include <ESP32Time.h>
 #include <ESPmDNS.h>
 #include <WiFiUdp.h>
-
-#define ENCRYPTED true
-#define USE_MAC_FALLBACK true
 #include <ThingsBoard.h>
-
-
-#define DISABLE_ALL_LIBRARY_WARNINGS
-#include <esp32FOTA.hpp>
+#include <Update.h>
+#include <HTTPClient.h>
 #ifdef USE_WEB_IFACE
 #include <WebServer.h>
 #include <WebSocketsServer.h>
@@ -60,13 +52,6 @@
 #ifndef DOCSIZE_MIN
   #define DOCSIZE_MIN 384
 #endif
-#define TASK_EXPIRED 120
-#define INTV_wifiKeeperLoop 60 * TASK_SECOND
-#define INTV_tbKeeperLoop 60 * TASK_SECOND
-#define INTV_ifaceLoop 10 * TASK_MILLISECOND
-#define INTV_tbLoop 10 * TASK_MILLISECOND
-#define INTV_wifiOtaLoop 10 * TASK_MILLISECOND
-
 
 namespace libudawa
 {
@@ -182,6 +167,7 @@ void (*emitAlarmCb)(const int code);
 #ifdef USE_WEB_IFACE
 void onWsEventCb(uint8_t num, WStype_t type, uint8_t * payload, size_t length);
 void (*wsEventCb)(const JsonObject &payload);
+void webSendFile(String path, String type);
 #endif
 bool ifaceLoopEnable();
 void ifaceLoopCb();
@@ -197,9 +183,9 @@ void tbKeeperDisable();
 void tbKeeperProvCb();
 void tbOtaFinishedCb(const bool& success);
 void tbOtaProgressCb(const uint32_t& currentChunk, const uint32_t& totalChuncks);
-void updateSpiffsCb();
 void (*httpOtaOnUpdateFinishedCb)(const int partition);
-void webSendFile(String path, String type);
+void updateSpiffs();
+
 
 ESP32SerialLogger serial_logger;
 ESP32UDPLogger udp_logger;
@@ -237,12 +223,11 @@ const Attribute_Request_Callback tbClientCb(REQUESTED_CLIENT_ATTRIBUTES.cbegin()
 const OTA_Update_Callback tbOtaCb(&tbOtaProgressCb, &tbOtaFinishedCb, CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION, 5, 1024);
 const Shared_Attribute_Callback tbSharedAttrUpdateCb(&processSharedAttributeUpdate);
 
-Task wifiKeeperLoop(INTV_wifiKeeperLoop, TASK_FOREVER, &wifiKeeperCb, &r, 0, &wifiKeeperEnable, &wifiKeeperDisable, 0);
-Task tbKeeperLoop(INTV_tbKeeperLoop, TASK_FOREVER, &tbKeeperCb, &r, 0, &tbKeeperEnable, &tbKeeperDisable, 0);
-Task ifaceLoop(INTV_ifaceLoop, TASK_FOREVER, &ifaceLoopCb, &r, 0, &ifaceLoopEnable, &ifaceLoopDisable, 0);
-Task tbLoop(INTV_tbLoop, TASK_FOREVER, &tbLoopCb, &r, 0, NULL, &tbLoopDisable, 0);
-Task wifiOtaLoop(INTV_wifiOtaLoop, TASK_FOREVER, &wifiOtaLoopCb, &r, 0, &wifiOtaEnable, &wifiOtaDisable, 0);
-Task updateSpiffs(TASK_IMMEDIATE, TASK_ONCE, &updateSpiffsCb, &r, 0, NULL, NULL, 0);
+Task wifiKeeperLoop(30 * TASK_SECOND, TASK_FOREVER, &wifiKeeperCb, &r, 0, &wifiKeeperEnable, &wifiKeeperDisable, 0);
+Task tbKeeperLoop(30 * TASK_SECOND, TASK_FOREVER, &tbKeeperCb, &r, 0, &tbKeeperEnable, &tbKeeperDisable, 0);
+Task ifaceLoop(10, TASK_FOREVER, &ifaceLoopCb, &r, 0, &ifaceLoopEnable, &ifaceLoopDisable, 0);
+Task tbLoop(10, TASK_FOREVER, &tbLoopCb, &r, 0, NULL, &tbLoopDisable, 0);
+Task wifiOtaLoop(10, TASK_FOREVER, &wifiOtaLoopCb, &r, 0, &wifiOtaEnable, &wifiOtaDisable, 0);
 
 void startup() {
   // put your setup code here, to run once:
@@ -355,7 +340,7 @@ bool ifaceLoopEnable(){
       ws.onEvent(onWsEventCb);
     #endif
 
-    ifaceLoop.setTimeout(TASK_EXPIRED * TASK_SECOND, false);
+    ifaceLoop.setTimeout(120 * TASK_SECOND, false);
     return true;
   }
   return false;
@@ -372,7 +357,7 @@ void ifaceLoopCb(){
 void ifaceLoopDisable(){
   if(ifaceLoop.timedOut()){
     log_manager->verbose(PSTR(__func__),PSTR("ifaceLoop has timed out. Restarting...\n"));
-    ifaceLoop.setInterval(INTV_ifaceLoop);
+    ifaceLoop.setInterval(10);
     ifaceLoop.setIterations(TASK_FOREVER);
     ifaceLoop.enable();
   }
@@ -411,7 +396,7 @@ bool wifiOtaEnable(){
       }
     );
     log_manager->verbose(PSTR(__func__),PSTR("Enabled.\n"));
-    wifiOtaLoop.setTimeout(TASK_EXPIRED * TASK_SECOND, false);
+    wifiOtaLoop.setTimeout(120 * TASK_SECOND, false);
     return true;
   }
   return false;
@@ -425,7 +410,7 @@ void wifiOtaLoopCb(){
 void wifiOtaDisable(){
   if(wifiOtaLoop.timedOut()){
     log_manager->verbose(PSTR(__func__),PSTR("wifiOtaLoop has timed out. Restarting...\n"));
-    wifiOtaLoop.setInterval(INTV_wifiOtaLoop);
+    wifiOtaLoop.setInterval(10);
     wifiOtaLoop.setIterations(TASK_FOREVER);
     wifiOtaLoop.enable();
   }
@@ -459,8 +444,8 @@ bool tbKeeperEnable(){
     return false;
   }
 
-  tbKeeperLoop.setTimeout(TASK_EXPIRED * TASK_SECOND, false);
-  tbLoop.setInterval(INTV_tbLoop);
+  tbKeeperLoop.setTimeout(120 * TASK_SECOND, false);
+  tbLoop.setInterval(10);
   tbLoop.setIterations(TASK_FOREVER);
   tbLoop.enable();
 
@@ -526,7 +511,7 @@ void tbKeeperProvCb(){
 void tbKeeperDisable(){
   if(tbKeeperLoop.timedOut()){
     log_manager->verbose(PSTR(__func__),PSTR("tbKeeperLoop has timed out. Restarting...\n"));
-    tbKeeperLoop.setInterval(INTV_tbKeeperLoop);
+    tbKeeperLoop.setInterval(30 * TASK_SECOND);
     tbKeeperLoop.setIterations(TASK_FOREVER);
     tbKeeperLoop.enable();
   }
@@ -607,6 +592,7 @@ void cbWiFiOnGotIp(WiFiEvent_t event, WiFiEventInfo_t info)
     tbKeeperLoop.enable();
   }
 
+  updateSpiffs();
   setAlarm(0, 0, 3, 100);
 }
 
@@ -630,7 +616,7 @@ bool wifiKeeperEnable()
   WiFi.onEvent(cbWiFiOnGotIp, ARDUINO_EVENT_WIFI_STA_GOT_IP);
 
   log_manager->verbose(PSTR(__func__),PSTR("Enabled.\n"));
-  wifiKeeperLoop.setTimeout(TASK_EXPIRED * TASK_SECOND, false);
+  wifiKeeperLoop.setTimeout(120 * TASK_SECOND, false);
   return true;
 }
 
@@ -643,7 +629,7 @@ void wifiKeeperCb(){
 void wifiKeeperDisable(){
   if(wifiKeeperLoop.timedOut()){
     log_manager->verbose(PSTR(__func__),PSTR("wifiKeeperLoop has timed out. Restarting...\n"));
-    wifiKeeperLoop.setInterval(INTV_wifiKeeperLoop);
+    wifiKeeperLoop.setInterval(30 * TASK_SECOND);
     wifiKeeperLoop.setIterations(TASK_FOREVER);
     wifiKeeperLoop.enable();
   }
@@ -717,40 +703,6 @@ void onWsEventCb(uint8_t num, WStype_t type, uint8_t * data, size_t length){
 
 void udawa() {
   r.execute();
-}
-
-void updateSpiffsCb(){
-  esp32FOTA esp32FOTA(CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION);
-
-  CryptoMemAsset  *MyRootCA = new CryptoMemAsset("Root CA", CA_CERT, strlen(CA_CERT)+1 );
-
-  esp32FOTA.setManifestURL(mnfstUrl);
-  esp32FOTA.setRootCA(MyRootCA);
-  esp32FOTA.setCertFileSystem(nullptr);
-  esp32FOTA.setProgressCb( [](size_t progress, size_t size) {
-      if( progress == size || progress == 0 ) Serial.println();
-      Serial.print(".");
-  });
-  esp32FOTA.setUpdateCheckFailCb( [](int partition, int error_code) {
-    Serial.printf("Update could validate %s partition (error %d)\n", partition==U_SPIFFS ? "spiffs" : "firmware", error_code );
-    // error codes:
-    //  -1 : partition not found
-    //  -2 : validation (signature check) failed
-  });
-  esp32FOTA.setUpdateBeginFailCb( [](int partition) {
-
-  });
-  esp32FOTA.setUpdateEndCb( [](int partition) {
-
-  });
-  esp32FOTA.setUpdateFinishedCb( [](int partition, bool restart_after) {
-    configSave();
-    configCoMCUSave();
-    httpOtaOnUpdateFinishedCb(partition);
-  });
-
-  esp32FOTA.execHTTPcheck();
-  esp32FOTA.execOTASPIFFS();
 }
 
 void setBuzzer(int32_t beepCount, uint16_t beepDelay){
@@ -835,16 +787,14 @@ void setAlarm(uint16_t code, uint8_t color, int32_t blinkCount, uint16_t blinkDe
   setLed(color, 1, blinkCount, blinkDelay);
   setBuzzer(blinkCount, blinkDelay);
   if(code > 0){
-    emitAlarm(code);
+    //emitAlarm(code);
   }
 }
 
 void reboot()
 {
   log_manager->info(PSTR(__func__),PSTR("Device rebooting...\n"));
-  esp_task_wdt_init(1,true);
-  esp_task_wdt_add(NULL);
-  while(true);
+  ESP.restart();
 }
 
 char* getDeviceId()
@@ -1255,7 +1205,7 @@ void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc)
   StringPrint stream;
   serializeJson(doc, stream);
   String result = stream.str();
-  log_manager->debug(PSTR(__func__),PSTR("Sent to CoMCU: %s\n"), result.c_str());
+  log_manager->verbose(PSTR(__func__),PSTR("Sent to CoMCU: %s\n"), result.c_str());
   if(isRpc)
   {
     delay(50);
@@ -1273,11 +1223,11 @@ void serialReadFromCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc)
   result = stream.str();
   if (err == DeserializationError::Ok)
   {
-    log_manager->debug(PSTR(__func__),PSTR("Received from CoMCU: %s\n"), result.c_str());
+    log_manager->verbose(PSTR(__func__),PSTR("Received from CoMCU: %s\n"), result.c_str());
   }
   else
   {
-    log_manager->debug(PSTR(__func__),PSTR("Serial2CoMCU DeserializeJson() returned: %s, content: %s\n"), err.c_str(), result.c_str());
+    log_manager->verbose(PSTR(__func__),PSTR("Serial2CoMCU DeserializeJson() returned: %s, content: %s\n"), err.c_str(), result.c_str());
     return;
   }
 }
@@ -1373,6 +1323,7 @@ void ESP32UDPLogger::log_message(const char *tag, LogLevel level, const char *fm
     }
 }
 
+#ifdef USE_WEB_IFACE
 void webSendFile(String path, String type){
   File file = SPIFFS.open(path.c_str(), FILE_READ);
   if(file){
@@ -1382,6 +1333,109 @@ void webSendFile(String path, String type){
   }
   file.close();
 }
+#endif
+
+void updateSpiffs()
+{
+    HTTPClient _http;
+    Serial.printf("Opening item %s\n", spiffsBinUrl );
+    log_manager->info(PSTR(__func__), PSTR("Downloading SPIFFS: %s.\n"), spiffsBinUrl);
+
+    _http.begin( spiffsBinUrl );
+
+    const char* get_headers[] = { "Content-Length", "Content-type", "Accept-Ranges" };
+    _http.collectHeaders( get_headers, sizeof(get_headers)/sizeof(const char*) );
+
+    int64_t updateSize = 0;
+    int httpCode = _http.GET();
+    String contentType;
+
+    if( httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY ) {
+        updateSize = _http.getSize();
+        contentType = _http.header( "Content-type" );
+        String acceptRange = _http.header( "Accept-Ranges" );
+        if( acceptRange == "bytes" ) {
+            log_manager->info(PSTR(__func__), PSTR("This server supports resume!\n"));
+        } else {
+            log_manager->info(PSTR(__func__), PSTR("This server dose not supports resume!\n"));
+        }
+    } else {
+        log_manager->info(PSTR(__func__), PSTR("Server responded with HTTP Status %s.\n"), httpCode);
+        return;
+    }
+
+    // TODO: Not all streams respond with a content length.
+    // TODO: Set updateSize to UPDATE_SIZE_UNKNOWN when content type is valid.
+
+    // check updateSize and content type
+    if( updateSize<=0 ) {
+        log_manager->info(PSTR(__func__), PSTR("Response is empty! updateSize: %d, contentType: %s\n"), (int)updateSize, contentType.c_str());
+        return;
+    }
+
+    log_manager->info(PSTR(__func__), PSTR("updateSize: %d, contentType: %s\n"), (int)updateSize, contentType.c_str());
+
+    Stream* stream = _http.getStreamPtr();
+    if( updateSize<=0 || stream == nullptr ) {
+        log_manager->warn(PSTR(__func__), PSTR("HTTP Error.\n"));
+        return;
+    }
+
+    // some network streams (e.g. Ethernet) can be laggy and need to 'breathe'
+    if( !stream->available() ) {
+        uint32_t timeout = millis() + 3000;
+        while( stream->available() ) {
+            if( millis()>timeout ) {
+                log_manager->warn(PSTR(__func__), PSTR("Stream timed out!\n"));
+                return;
+            }
+            vTaskDelay(1);
+        }
+    }
+
+    // If using compression, the size is implicitely unknown
+    size_t fwsize = updateSize;       // fw_size is unknown if we have a compressed image
+
+    bool canBegin = Update.begin(updateSize, U_SPIFFS);
+
+    if( !canBegin ) {
+        log_manager->warn(PSTR(__func__), PSTR("Not enough space to begin OTA, partition size mismatch?\n"));
+        Update.abort();
+        return;
+    }
+
+    Update.onProgress( [](size_t progress, size_t size) {
+        log_manager->verbose(PSTR(__func__), PSTR("SPIFFS Updater: %d%%\n"), (int) ((int)progress/(int)size*100U));
+    });
+
+    Serial.printf("Begin SPIFFS OTA. This may take 2 - 5 mins to complete. Things might be quiet for a while.. Patience!\n");
+    // Some activity may appear in the Serial monitor during the update (depends on Update.onProgress)
+    size_t written = Update.writeStream(*stream);
+
+    if ( written == fwsize ) {
+        log_manager->info(PSTR(__func__), PSTR("Written : %d successfully. \n"), (int)written);
+        updateSize = written; // flatten value to prevent overflow when checking signature
+    } else {
+        log_manager->warn(PSTR(__func__), PSTR("Written only : %d / %d. Premature end of stream?\n"), (int)written, (int)updateSize);
+        Update.abort();
+        return;
+    }
+
+    if (!Update.end()) {
+        log_manager->warn(PSTR(__func__), PSTR("An Update Error Occurred: %d\n"), Update.getError());
+        configSave();
+        configCoMCUSave();
+        return;
+    }
+    if (Update.isFinished()) {
+        log_manager->info(PSTR(__func__), PSTR("Update successfully completed.\n"));
+        configSave();
+        configCoMCUSave();
+    } else {
+        log_manager->warn(PSTR(__func__), PSTR("Update not finished! Something went wrong!\n"));
+    }    
+}
+
 
 } // namespace libudawa
 #endif
