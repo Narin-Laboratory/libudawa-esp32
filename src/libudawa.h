@@ -654,6 +654,7 @@ bool wifiKeeperEnable()
 }
 
 void wifiKeeperCb(){
+  setLed(0, 1, 3, 250);
   wifiMulti.run();
   wifiKeeperLoop.resetTimeout();
 }
