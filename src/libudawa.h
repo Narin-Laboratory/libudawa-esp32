@@ -10,6 +10,9 @@
 #define libudawa_h
 
 #include <secret.h>
+#include <esp32-hal-log.h>
+#include <esp_int_wdt.h>
+#include <esp_task_wdt.h>
 #include <FS.h>
 #include <SPIFFS.h>
 #include <Arduino.h>
@@ -32,12 +35,7 @@
 #include <WebSocketsServer.h>
 #endif
 
-#define _TASK_TIMECRITICAL
-#define _TASK_STATUS_REQUEST
-#define _TASK_LTS_POINTER
 #define _TASK_TIMEOUT
-#define _TASK_EXPOSE_CHAIN
-#define _TASK_SELF_DESTRUCT
 #include <TaskScheduler.h>
 
 #define countof(a) (sizeof(a) / sizeof(a[0]))
@@ -127,10 +125,9 @@ class ESP32UDPLogger : public ILogHandler
 uint32_t micro2milli(uint32_t hi, uint32_t lo);
 double round2(double value);
 void reboot();
+void plannedReboot(int countdown);
 char* getDeviceId();
-void cbWifiOnConnected(WiFiEvent_t event, WiFiEventInfo_t info);
 void cbWiFiOnDisconnected(WiFiEvent_t event, WiFiEventInfo_t info);
-void cbWiFiOnLostIp(WiFiEvent_t event, WiFiEventInfo_t info);
 void cbWiFiOnGotIp(WiFiEvent_t event, WiFiEventInfo_t info);
 void configLoadFailSafe();
 void configLoad();
@@ -185,6 +182,21 @@ void tbOtaFinishedCb(const bool& success);
 void tbOtaProgressCb(const uint32_t& currentChunk, const uint32_t& totalChuncks);
 void (*httpOtaOnUpdateFinishedCb)(const int partition);
 void updateSpiffs();
+void (*onTbDisconnectedCb)();
+void (*onTbConnectedCb)();
+bool plannedRebootOnEnable();
+void (*plannedRebootOnEnableCb)();
+RPC_Response processConfigSave(const RPC_Data &data);
+RPC_Response processConfigCoMCUSave(const RPC_Data &data);
+RPC_Response processSaveSettings(const RPC_Data &data);
+void (*processSaveSettingsCb)();
+RPC_Response processSetPanic(const RPC_Data &data);
+void (*processSetPanicCb)(const RPC_Data &data);
+RPC_Response processReboot(const RPC_Data &data);
+RPC_Response processGenericClientRPC(const RPC_Data &data);
+RPC_Response (*processGenericClientRPCCb)(const RPC_Data &data);
+void syncClientAttrCb();
+void (*onSyncClientAttrCb)();
 
 
 ESP32SerialLogger serial_logger;
@@ -214,20 +226,33 @@ constexpr std::array<const char*, 6U> REQUESTED_SHARED_ATTRIBUTES = {
 };
 
 // Client-side attributes we want to request from the server
-constexpr const char fIface_KEY[] PROGMEM = "fIface_KEY";
 constexpr std::array<const char*, 1U> REQUESTED_CLIENT_ATTRIBUTES = {
-  fIface_KEY
+  PSTR("fIface")
 };
+
+// Client-side RPC that can be executed from cloud
+const std::array<RPC_Callback, 6U> clientRPCCallbacks = {
+  RPC_Callback{ PSTR("configSave"),    processConfigSave },
+  RPC_Callback{ PSTR("configCoMCUSave"), processConfigCoMCUSave },
+  RPC_Callback{ PSTR("saveSettings"), processSaveSettings },
+  RPC_Callback{ PSTR("setPanic"), processSetPanic }, 
+  RPC_Callback{ PSTR("reboot"),  processReboot},
+  RPC_Callback{ PSTR("generic"), processGenericClientRPC }
+};
+
 const Attribute_Request_Callback tbSharedCb(REQUESTED_SHARED_ATTRIBUTES.cbegin(), REQUESTED_SHARED_ATTRIBUTES.cend(), &processSharedAttributeRequest);
 const Attribute_Request_Callback tbClientCb(REQUESTED_CLIENT_ATTRIBUTES.cbegin(), REQUESTED_CLIENT_ATTRIBUTES.cend(), &processClientAttributeRequest);
 const OTA_Update_Callback tbOtaCb(&tbOtaProgressCb, &tbOtaFinishedCb, CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION, 5, 1024);
 const Shared_Attribute_Callback tbSharedAttrUpdateCb(&processSharedAttributeUpdate);
 
-Task wifiKeeperLoop(30 * TASK_SECOND, TASK_FOREVER, &wifiKeeperCb, &r, 0, &wifiKeeperEnable, &wifiKeeperDisable, 0);
-Task tbKeeperLoop(30 * TASK_SECOND, TASK_FOREVER, &tbKeeperCb, &r, 0, &tbKeeperEnable, &tbKeeperDisable, 0);
-Task ifaceLoop(10, TASK_FOREVER, &ifaceLoopCb, &r, 0, &ifaceLoopEnable, &ifaceLoopDisable, 0);
-Task tbLoop(10, TASK_FOREVER, &tbLoopCb, &r, 0, NULL, &tbLoopDisable, 0);
-Task wifiOtaLoop(10, TASK_FOREVER, &wifiOtaLoopCb, &r, 0, &wifiOtaEnable, &wifiOtaDisable, 0);
+
+Task wifiKeeperLoop(30 * TASK_SECOND, TASK_FOREVER, &wifiKeeperCb, &r, 0, &wifiKeeperEnable, &wifiKeeperDisable);
+Task tbKeeperLoop(120 * TASK_SECOND, TASK_FOREVER, &tbKeeperCb, &r, 0, &tbKeeperEnable, &tbKeeperDisable);
+Task ifaceLoop(10, TASK_FOREVER, &ifaceLoopCb, &r, 0, &ifaceLoopEnable, &ifaceLoopDisable);
+Task tbLoop(10, TASK_FOREVER, &tbLoopCb, &r, 0, NULL, &tbLoopDisable);
+Task wifiOtaLoop(10, TASK_FOREVER, &wifiOtaLoopCb, &r, 0, &wifiOtaEnable, &wifiOtaDisable);
+Task taskPlannedReboot(TASK_IMMEDIATE, TASK_ONCE, &reboot, &r, 0, &plannedRebootOnEnable, NULL);
+Task taskSyncClientAttr(TASK_IMMEDIATE, TASK_ONCE, &syncClientAttrCb, &r, 0, NULL, NULL);
 
 void startup() {
   // put your setup code here, to run once:
@@ -256,6 +281,10 @@ void startup() {
 
   log_manager->debug(PSTR(__func__), PSTR("Startup time: %s\n"), rtc.getDateTime().c_str());
 
+  int tBytes = SPIFFS.totalBytes(); 
+  int uBytes = SPIFFS.usedBytes();
+  log_manager->verbose(PSTR(__func__), PSTR("SPIFFS total bytes: %d, used bytes: %d, free space: %d.\n"), tBytes, uBytes, tBytes-uBytes);
+
   wifiKeeperLoop.enable();
   setAlarm(0, 0, 3, 100);
 }
@@ -265,18 +294,20 @@ void startup() {
 /// The callback will then not be called anymore unless it is reused for another request
 /// @param data Data containing the shared attributes that were requested and their current value
 void processSharedAttributeRequest(const Shared_Attribute_Data &data) {
-  for (auto it = data.begin(); it != data.end(); ++it) {
-    log_manager->verbose(PSTR(__func__), PSTR("Received shared attribute: %s : %s\n"), it->key().c_str(), it->value().as<const char*>());
-  }
+  int jsonSize = JSON_STRING_SIZE(measureJson(data));
+  char buffer[jsonSize];
+  serializeJson(data, buffer, jsonSize);
+  log_manager->verbose(PSTR(__func__), PSTR("Received shared attribute(s): %s.\n"), buffer);
 }
 
 /// @brief Update callback that will be called as soon as the requested client-side attributes, have been received.
 /// The callback will then not be called anymore unless it is reused for another request
 /// @param data Data containing the client-side attributes that were requested and their current value
 void processClientAttributeRequest(const Shared_Attribute_Data &data) {
-  for (auto it = data.begin(); it != data.end(); ++it) {
-    log_manager->verbose(PSTR(__func__), PSTR("Received client attribute: %s : %s\n"), it->key().c_str(), it->value().as<const char*>());
-  }
+  int jsonSize = JSON_STRING_SIZE(measureJson(data));
+  char buffer[jsonSize];
+  serializeJson(data, buffer, jsonSize);
+  log_manager->verbose(PSTR(__func__), PSTR("Received client attribute(s): %s.\n"), buffer);
 }
 
 void processSharedAttributeUpdate(const Shared_Attribute_Data &data){
@@ -453,7 +484,7 @@ bool tbKeeperEnable(){
   return true;
 }
 void tbKeeperCb(){
-  log_manager->verbose(PSTR(__func__), PSTR("Overrun: %d, start delayed by: %d\n"), wifiKeeperLoop.getOverrun(), wifiKeeperLoop.getStartDelay());
+  long startMillis = millis();
   if(!config.provSent)
   {
     tbKeeperLoop.resetTimeout();
@@ -463,6 +494,7 @@ void tbKeeperCb(){
   else{
     if(!tb.connected())
     {
+      onTbDisconnectedCb();
       log_manager->info(PSTR(__func__),PSTR("Connecting to broker %s:%d\n"), config.broker, config.port);
       if(!tb.connect(config.broker, config.accTkn, config.port, config.name))
       {
@@ -476,8 +508,13 @@ void tbKeeperCb(){
         return;
       }
 
-      tb.Shared_Attributes_Request(tbSharedCb);
-      tb.Client_Attributes_Request(tbClientCb);
+      bool tbShared_status = tb.Shared_Attributes_Request(tbSharedCb);
+      bool tbClient_status = tb.Client_Attributes_Request(tbClientCb);
+      bool tbSharedUpdate_status = tb.Shared_Attributes_Subscribe(tbSharedAttrUpdateCb);
+      bool tbClientRPC_status = tb.RPC_Subscribe(clientRPCCallbacks.cbegin(), clientRPCCallbacks.cend());
+      log_manager->verbose(PSTR(__func__), PSTR("TB Subscribe status: SharedAttr(%d) - ClientAttr(%d) - SharedUpdate(%d) - clientRPC(%d)\n"), tbShared_status, 
+        tbClient_status, tbSharedUpdate_status, tbClientRPC_status);
+      onTbConnectedCb();
 
       if (!config.currentFWSent) {
         constexpr char FW_STATE_UPDATED[] PROGMEM = "UPDATED";
@@ -487,25 +524,33 @@ void tbKeeperCb(){
         config.updateRequestSent = tb.Subscribe_Firmware_Update(tbOtaCb);
       }
 
+      taskSyncClientAttr.setInterval(TASK_IMMEDIATE);
+      taskSyncClientAttr.setIterations(TASK_ONCE);
+      taskSyncClientAttr.enableDelayed(10 * TASK_SECOND);
       setAlarm(0, 0, 3, 100);
       log_manager->info(PSTR(__func__),PSTR("IoT Connected!\n"));
     }
   }
   tbKeeperLoop.resetTimeout();
+
+  log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
 }
 
 void tbKeeperProvCb(){
   log_manager->info(PSTR(__func__),PSTR("Starting provision initiation to %s:%d\n"),  config.broker, config.port);
-  const Provision_Callback provisionCallback(Access_Token(), &processProvisionResponse, config.provDK, config.provDS, config.name);
-  if(tb.Provision_Request(provisionCallback))
-  {
-    log_manager->info(PSTR(__func__),PSTR("Connected to provisioning server: %s:%d\n"),  config.broker, config.port);
+  if (tb.connect(config.broker, "provision", config.port)) {
+    const Provision_Callback provisionCallback(Access_Token(), &processProvisionResponse, config.provDK, config.provDS, config.name);
+    if(tb.Provision_Request(provisionCallback))
+    {
+      log_manager->info(PSTR(__func__),PSTR("Connected to provisioning server: %s:%d\n"),  config.broker, config.port);
+    }
   }
   else
   {
     log_manager->warn(PSTR(__func__),PSTR("Failed to connect to provisioning server: %s:%d\n"),  config.broker, config.port);
     return;
   }
+  
 }
 
 void tbKeeperDisable(){
@@ -520,15 +565,13 @@ void tbKeeperDisable(){
 }
 
 void emitAlarm(int code){
-  StaticJsonDocument<DOCSIZE_MIN> doc;
-  doc["alarm"] = code;
-  JsonObject payload = doc.as<JsonObject>();
-  tb.sendTelemetryJson(payload, measureJson(payload));
+  tb.sendTelemetryInt(PSTR("alarm"), code);
   emitAlarmCb(code);
   log_manager->error(PSTR(__func__), PSTR("%i\n"), code);
 }
 
 void rtcUpdate(long ts){
+  long startMillis = millis();
   if(ts == 0){
     configTime(config.gmtOff, 0, "pool.ntp.org");
     struct tm timeinfo;
@@ -540,11 +583,7 @@ void rtcUpdate(long ts){
       rtc.setTime(ts);
       log_manager->debug(PSTR(__func__), PSTR("Updated time via timestamp: %s\n"), rtc.getDateTime().c_str());
   }
-}
-
-void cbWifiOnConnected(WiFiEvent_t event, WiFiEventInfo_t info)
-{
-  log_manager->info(PSTR(__func__),PSTR("WiFi Connected to %s\n"), WiFi.SSID().c_str());
+  log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
 }
 
 void cbWiFiOnDisconnected(WiFiEvent_t event, WiFiEventInfo_t info)
@@ -561,13 +600,9 @@ void cbWiFiOnDisconnected(WiFiEvent_t event, WiFiEventInfo_t info)
   }
 }
 
-void cbWiFiOnLostIp(WiFiEvent_t event, WiFiEventInfo_t info)
-{
-  log_manager->warn(PSTR(__func__),PSTR("WiFi (%s) IP Lost!\n"), WiFi.SSID().c_str());
-}
-
 void cbWiFiOnGotIp(WiFiEvent_t event, WiFiEventInfo_t info)
 {
+  long startMillis = millis();
   IPAddress ip = WiFi.localIP();
   char ipa[25];
   sprintf(ipa, "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
@@ -592,8 +627,8 @@ void cbWiFiOnGotIp(WiFiEvent_t event, WiFiEventInfo_t info)
     tbKeeperLoop.enable();
   }
 
-  updateSpiffs();
   setAlarm(0, 0, 3, 100);
+  log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
 }
 
 bool wifiKeeperEnable()
@@ -610,9 +645,7 @@ bool wifiKeeperEnable()
   wifiMulti.addAP(config.wssid, config.wpass);
   wifiMulti.addAP(config.dssid, config.dpass);
 
-  WiFi.onEvent(cbWifiOnConnected, ARDUINO_EVENT_WIFI_STA_CONNECTED);
   WiFi.onEvent(cbWiFiOnDisconnected, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
-  WiFi.onEvent(cbWiFiOnLostIp, ARDUINO_EVENT_WIFI_STA_LOST_IP);
   WiFi.onEvent(cbWiFiOnGotIp, ARDUINO_EVENT_WIFI_STA_GOT_IP);
 
   log_manager->verbose(PSTR(__func__),PSTR("Enabled.\n"));
@@ -621,7 +654,6 @@ bool wifiKeeperEnable()
 }
 
 void wifiKeeperCb(){
-  log_manager->verbose(PSTR(__func__), PSTR("Overrun: %d, start delayed by: %d\n"), wifiKeeperLoop.getOverrun(), wifiKeeperLoop.getStartDelay());
   wifiMulti.run();
   wifiKeeperLoop.resetTimeout();
 }
@@ -637,8 +669,9 @@ void wifiKeeperDisable(){
 
 #ifdef USE_WEB_IFACE
 void onWsEventCb(uint8_t num, WStype_t type, uint8_t * data, size_t length){
-  StaticJsonDocument<DOCSIZE_MIN> doc;
-  DeserializationError err = deserializeJson(doc, data);
+  StaticJsonDocument<DOCSIZE_MIN> root;
+  DeserializationError err = deserializeJson(root, data);
+  JsonObject doc = root.to<JsonObject>();
 
   switch(type) {
     case WStype_DISCONNECTED:
@@ -647,8 +680,7 @@ void onWsEventCb(uint8_t num, WStype_t type, uint8_t * data, size_t length){
         log_manager->debug(PSTR(__func__), PSTR("ws [%u] disconnect\n"), num);
         doc["evType"] = (int)WStype_DISCONNECTED;
         doc["num"] = num;
-        JsonObject payload = doc.as<JsonObject>();
-        wsEventCb(payload);
+        wsEventCb(doc);
       }
       break;
     case WStype_CONNECTED:
@@ -657,8 +689,7 @@ void onWsEventCb(uint8_t num, WStype_t type, uint8_t * data, size_t length){
         log_manager->debug(PSTR(__func__), PSTR("ws [%u] connect\n"), num);
         doc["evType"] = (int)WStype_DISCONNECTED;
         doc["num"] = num;
-        JsonObject payload = doc.as<JsonObject>();
-        wsEventCb(payload);
+        wsEventCb(doc);
       }
       break;
     case WStype_TEXT:
@@ -669,8 +700,7 @@ void onWsEventCb(uint8_t num, WStype_t type, uint8_t * data, size_t length){
           doc["evType"] = (int)WStype_DISCONNECTED;
           doc["num"] = num;
           doc["data"] = data;
-          JsonObject payload = doc.as<JsonObject>();
-          wsEventCb(payload);
+          wsEventCb(doc);
         }
         else
         {
@@ -688,8 +718,7 @@ void onWsEventCb(uint8_t num, WStype_t type, uint8_t * data, size_t length){
         log_manager->warn(PSTR(__func__), PSTR("ws [%u] error\n"), num);
         doc["evType"] = (int)WStype_DISCONNECTED;
         doc["num"] = num;
-        JsonObject payload = doc.as<JsonObject>();
-        wsEventCb(payload);
+        wsEventCb(doc);
       }
       break;			
     case WStype_FRAGMENT_TEXT_START:
@@ -787,14 +816,29 @@ void setAlarm(uint16_t code, uint8_t color, int32_t blinkCount, uint16_t blinkDe
   setLed(color, 1, blinkCount, blinkDelay);
   setBuzzer(blinkCount, blinkDelay);
   if(code > 0){
-    //emitAlarm(code);
+    emitAlarm(code);
   }
+}
+
+bool plannedRebootOnEnable(){
+  return true;
+}
+
+void plannedReboot(int countdown){
+  plannedRebootOnEnableCb();
+  taskPlannedReboot.setInterval(TASK_IMMEDIATE);
+  taskPlannedReboot.setIterations(TASK_ONCE);
+  taskPlannedReboot.enableDelayed(countdown * TASK_SECOND);
+  log_manager->warn(PSTR(__func__), PSTR("Device reboot in: %d second(s)\n"), countdown);
+  setAlarm(999, 0, countdown * 2, 500);
 }
 
 void reboot()
 {
   log_manager->info(PSTR(__func__),PSTR("Device rebooting...\n"));
-  ESP.restart();
+  esp_task_wdt_init(1,true);
+  esp_task_wdt_add(NULL);
+  while(true);
 }
 
 char* getDeviceId()
@@ -807,15 +851,6 @@ char* getDeviceId()
 
 void configReset()
 {
-  /*bool formatted = SPIFFS.format();
-  if(formatted)
-  {
-    log_manager->info(PSTR(__func__),PSTR("SPIFFS formatting success.\n"));
-  }
-  else
-  {
-    log_manager->warn(PSTR(__func__),PSTR("SPIFFS formatting failed.\n"));
-  }*/
   File file;
   file = SPIFFS.open(configFile, FILE_WRITE);
   if (!file) {
@@ -984,7 +1019,10 @@ void configLoad()
     if(doc["logIP"] != nullptr){strlcpy(config.logIP, doc["logIP"].as<const char*>(), sizeof(config.logIP));}
     if(doc["logPrt"] != nullptr){config.logPrt = doc["logPrt"].as<uint16_t>();}
 
-    log_manager->info(PSTR(__func__),PSTR("Config loaded successfuly.\n"));
+    int jsonSize = JSON_STRING_SIZE(measureJson(doc));
+    char buffer[jsonSize];
+    serializeJson(doc, buffer, jsonSize);
+    log_manager->verbose(PSTR(__func__),PSTR("Received device provision response: %s.\n"), buffer);
   }
   file.close();
 }
@@ -1032,6 +1070,7 @@ void configSave()
 
   serializeJson(doc, file);
   file.close();
+  log_manager->verbose(PSTR(__func__), PSTR("Config saved successfully.\n."));
 }
 
 
@@ -1060,7 +1099,7 @@ void configCoMCUReset()
   serializeJson(doc, file);
   file.close();
 
-  log_manager->info(PSTR(__func__),PSTR("ConfigCoMCU hard reset!"));
+  log_manager->info(PSTR(__func__),PSTR("ConfigCoMCU hard reset!\n"));
 }
 
 void configCoMCULoad()
@@ -1120,6 +1159,7 @@ void configCoMCUSave()
 
   serializeJson(doc, file);
   file.close();
+  log_manager->verbose(PSTR(__func__), PSTR("ConfigCoMCU saved successfully.\n."));
 }
 
 void syncConfigCoMCU()
@@ -1201,35 +1241,39 @@ void processProvisionResponse(const Provision_Data &data)
 
 void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc)
 {
+  long startMillis = millis();
   serializeJson(doc, Serial2);
   StringPrint stream;
   serializeJson(doc, stream);
-  String result = stream.str();
-  log_manager->verbose(PSTR(__func__),PSTR("Sent to CoMCU: %s\n"), result.c_str());
+  //String result = stream.str();
+  //log_manager->verbose(PSTR(__func__),PSTR("Sent to CoMCU: %s\n"), result.c_str());
   if(isRpc)
   {
     delay(50);
     doc.clear();
     serialReadFromCoMcu(doc);
   }
+  log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
 }
 
 void serialReadFromCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc)
 {
+  long startMillis = millis();
   StringPrint stream;
   String result;
   ReadLoggingStream loggingStream(Serial2, stream);
   DeserializationError err = deserializeJson(doc, loggingStream);
-  result = stream.str();
+  //result = stream.str();
   if (err == DeserializationError::Ok)
   {
-    log_manager->verbose(PSTR(__func__),PSTR("Received from CoMCU: %s\n"), result.c_str());
+    //log_manager->verbose(PSTR(__func__),PSTR("Received from CoMCU: %s\n"), result.c_str());
   }
   else
   {
-    log_manager->verbose(PSTR(__func__),PSTR("Serial2CoMCU DeserializeJson() returned: %s, content: %s\n"), err.c_str(), result.c_str());
+    //log_manager->verbose(PSTR(__func__),PSTR("Serial2CoMCU DeserializeJson() returned: %s, content: %s\n"), err.c_str(), result.c_str());
     return;
   }
+  log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
 }
 
 
@@ -1337,6 +1381,8 @@ void webSendFile(String path, String type){
 
 void updateSpiffs()
 {
+    long startMillis = millis();
+
     HTTPClient _http;
     Serial.printf("Opening item %s\n", spiffsBinUrl );
     log_manager->info(PSTR(__func__), PSTR("Downloading SPIFFS: %s.\n"), spiffsBinUrl);
@@ -1433,7 +1479,133 @@ void updateSpiffs()
         configCoMCUSave();
     } else {
         log_manager->warn(PSTR(__func__), PSTR("Update not finished! Something went wrong!\n"));
-    }    
+    }
+
+    log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);    
+}
+
+RPC_Response processConfigSave(const RPC_Data &data){
+  configSave();
+  StaticJsonDocument<JSON_OBJECT_SIZE(1)> doc;
+  doc[PSTR("configSave")] = 1;
+  return RPC_Response(doc);
+}
+
+RPC_Response processConfigCoMCUSave(const RPC_Data &data){
+  configCoMCUSave();
+  StaticJsonDocument<JSON_OBJECT_SIZE(1)> doc;
+  doc[PSTR("configCoMCUSave")] = 1;
+  return RPC_Response(doc);
+}
+
+RPC_Response processSaveSettings(const RPC_Data &data){
+  processSaveSettingsCb();
+  StaticJsonDocument<JSON_OBJECT_SIZE(1)> doc;
+  doc[PSTR("saveSettings")] = 1;
+  return RPC_Response(doc);
+}
+
+RPC_Response processSetPanic(const RPC_Data &data){
+  processSetPanicCb(data);
+  taskSyncClientAttr.setInterval(TASK_IMMEDIATE);
+  taskSyncClientAttr.setIterations(TASK_ONCE);
+  taskSyncClientAttr.enableDelayed(3 * TASK_SECOND);
+  return RPC_Response(PSTR("setPanic"), configcomcu.fP);
+}
+
+RPC_Response processReboot(const RPC_Data &data){
+  plannedReboot(20);
+  StaticJsonDocument<JSON_OBJECT_SIZE(1)> doc;
+  doc[PSTR("cdown")] = 20;
+  return RPC_Response(doc);
+}
+
+RPC_Response processGenericClientRPC(const RPC_Data &data){
+  return processGenericClientRPCCb(data);
+}
+
+void syncClientAttrCb(){
+  long startMillis = millis();
+
+  String ip = WiFi.localIP().toString();
+  
+  StaticJsonDocument<DOCSIZE_MIN> doc;
+  char buffer[DOCSIZE_MIN];
+
+  doc[PSTR("ipad")] = ip.c_str();
+  doc[PSTR("compdate")] = COMPILED;
+  doc[PSTR("fmTitle")] = CURRENT_FIRMWARE_TITLE;
+  doc[PSTR("fmVersion")] = CURRENT_FIRMWARE_VERSION;
+  doc[PSTR("stamac")] = WiFi.macAddress().c_str();
+  doc[PSTR("apmac")] = WiFi.softAPmacAddress().c_str();
+  serializeJson(doc, buffer);
+  tb.sendAttributeJSON(buffer);
+  doc.clear();
+  doc[PSTR("flFree")] = ESP.getFreeSketchSpace();
+  doc[PSTR("fwSize")] = ESP.getSketchSize();
+  doc[PSTR("flSize")] = ESP.getFlashChipSize();
+  doc[PSTR("dSize")] = (int)SPIFFS.totalBytes(); 
+  doc[PSTR("dUsed")] = (int)SPIFFS.usedBytes();
+  serializeJson(doc, buffer);
+  tb.sendAttributeJSON(buffer);
+  doc.clear();
+  doc[PSTR("sdkVer")] = ESP.getSdkVersion();
+  doc[PSTR("model")] = config.model;
+  doc[PSTR("group")] = config.group;
+  doc[PSTR("broker")] = config.broker;
+  doc[PSTR("port")] = config.port;
+  serializeJson(doc, buffer);
+  tb.sendAttributeJSON(buffer);
+  doc.clear();
+  doc[PSTR("wssid")] = config.wssid;
+  doc[PSTR("ap")] = WiFi.SSID();
+  doc[PSTR("wpass")] = config.wpass;
+  doc[PSTR("dssid")] = config.dssid;
+  doc[PSTR("dpass")] = config.dpass;
+  serializeJson(doc, buffer);
+  tb.sendAttributeJSON(buffer);
+  doc.clear();
+  doc[PSTR("upass")] = config.upass;
+  doc[PSTR("accTkn")] = config.accTkn;
+  doc[PSTR("provDK")] = config.provDK;
+  doc[PSTR("provDS")] = config.provDS;
+  doc[PSTR("logLev")] = config.logLev;
+  serializeJson(doc, buffer);
+  tb.sendAttributeJSON(buffer);
+  doc.clear();
+  doc[PSTR("gmtOff")] = config.gmtOff;
+  doc[PSTR("bFr")] = configcomcu.bFr;
+  doc[PSTR("fP")] = (int)configcomcu.fP;
+  doc[PSTR("fB")] = (int)configcomcu.fB;
+  doc[PSTR("fIoT")] = (int)config.fIoT;
+  serializeJson(doc, buffer);
+  tb.sendAttributeJSON(buffer);
+  doc.clear();
+  doc[PSTR("fWOTA")] = (int)config.fWOTA;
+  doc[PSTR("fIface")] = (int)config.fIface;
+  doc[PSTR("hname")] = config.hname;
+  doc[PSTR("logIP")] = config.logIP;
+  doc[PSTR("logPrt")] = config.logPrt;
+  serializeJson(doc, buffer);
+  tb.sendAttributeJSON(buffer);
+  doc.clear();
+  doc[PSTR("pBz")] = configcomcu.pBz;
+  doc[PSTR("pLR")] = configcomcu.pLR;
+  doc[PSTR("pLG")] = configcomcu.pLG;
+  doc[PSTR("pLB")] = configcomcu.pLB;
+  doc[PSTR("htU")] = config.htU;
+  serializeJson(doc, buffer);
+  tb.sendAttributeJSON(buffer);
+  doc.clear();
+  doc[PSTR("htP")] = config.htP;
+  doc[PSTR("lON")] = configcomcu.lON;
+  serializeJson(doc, buffer);
+  tb.sendAttributeJSON(buffer);
+  doc.clear();
+  
+  log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
+
+  onSyncClientAttrCb();
 }
 
 
