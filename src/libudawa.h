@@ -56,10 +56,6 @@ namespace libudawa
 
 const char* configFile = "/cfg.json";
 const char* configFileCoMCU = "/comcu.json";
-bool FLAG_IOT_SUBSCRIBE = false;
-bool FLAG_IOT_INIT = false;
-bool FLAG_OTA_UPDATE_INIT = false;
-bool WIFI_IS_DEFAULT = false;
 
 struct Config
 {
@@ -90,8 +86,6 @@ struct Config
   char hname[40];
   char htU[24];
   char htP[24];
-
-  uint8_t tbDisco = 0;
 
   char logIP[16] = "192.168.18.255";
   uint16_t logPrt = 29514;
@@ -144,9 +138,7 @@ void processClientAttributeRequest(const Shared_Attribute_Data &data);
 void processSharedAttributeUpdate(const Shared_Attribute_Data &data);
 void (*processSharedAttributeUpdateCb)(const Shared_Attribute_Data &data);
 void startup();
-bool wifiKeeperEnable();
-void wifiKeeperDisable();
-void wifiKeeperCb();
+void wifiKeeperTR(void *arg);
 void udawa();
 void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc);
 void serialReadFromCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc);
@@ -159,25 +151,17 @@ void setBuzzer(int32_t beepCount, uint16_t beepDelay);
 void setLed(uint8_t r, uint8_t g, uint8_t b, uint8_t isBlink, int32_t blinkCount, uint16_t blinkDelay);
 void setLed(uint8_t color, uint8_t isBlink, int32_t blinkCount, uint16_t blinkDelay);
 void setAlarm(uint16_t code, uint8_t color, int32_t blinkCount, uint16_t blinkDelay);
+void setAlarmTR(void *arg);
 void emitAlarm(int code);
 void (*emitAlarmCb)(const int code);
 #ifdef USE_WEB_IFACE
 void onWsEventCb(uint8_t num, WStype_t type, uint8_t * payload, size_t length);
 void (*wsEventCb)(const JsonObject &payload);
 void webSendFile(String path, String type);
+void ifaceTR(void *arg);
 #endif
-bool ifaceLoopEnable();
-void ifaceLoopCb();
-void ifaceLoopDisable();
-bool wifiOtaEnable();
-void wifiOtaLoopCb();
-void wifiOtaDisable();
-void tbLoopCb();
-void tbLoopDisable();
-bool tbKeeperEnable();
-void tbKeeperCb();
-void tbKeeperDisable();
-void tbKeeperProvCb();
+void wifiOtaTR(void *arg);
+void TBTR(void *arg);
 void tbOtaFinishedCb(const bool& success);
 void tbOtaProgressCb(const uint32_t& currentChunk, const uint32_t& totalChuncks);
 void (*httpOtaOnUpdateFinishedCb)(const int partition);
@@ -196,8 +180,10 @@ RPC_Response processUpdateSpiffs(const RPC_Data &data);
 RPC_Response processReboot(const RPC_Data &data);
 RPC_Response processGenericClientRPC(const RPC_Data &data);
 RPC_Response (*processGenericClientRPCCb)(const RPC_Data &data);
-void syncClientAttrCb();
-void (*onSyncClientAttrCb)();
+void syncClientAttr(uint8_t direction);
+void (*onSyncClientAttrCb)(uint8_t);
+bool tbSendAttribute(StaticJsonDocument<DOCSIZE_MIN> &doc);
+bool tbSendTelemetry(StaticJsonDocument<DOCSIZE_MIN> &doc);
 
 
 ESP32SerialLogger serial_logger;
@@ -247,21 +233,51 @@ const Attribute_Request_Callback tbClientCb(REQUESTED_CLIENT_ATTRIBUTES.cbegin()
 const OTA_Update_Callback tbOtaCb(&tbOtaProgressCb, &tbOtaFinishedCb, CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION, 5, 1024);
 const Shared_Attribute_Callback tbSharedAttrUpdateCb(&processSharedAttributeUpdate);
 
+BaseType_t xReturnedWifiKeeper;
+BaseType_t xReturnedAlarm;
+BaseType_t xReturnedWifiOta;
+BaseType_t xReturnedTB;
+BaseType_t xReturnedIface;
 
-Task wifiKeeperLoop(30 * TASK_SECOND, TASK_FOREVER, &wifiKeeperCb, &r, 0, &wifiKeeperEnable, &wifiKeeperDisable);
-Task tbKeeperLoop(120 * TASK_SECOND, TASK_FOREVER, &tbKeeperCb, &r, 0, &tbKeeperEnable, &tbKeeperDisable);
-Task ifaceLoop(10, TASK_FOREVER, &ifaceLoopCb, &r, 0, &ifaceLoopEnable, &ifaceLoopDisable);
-Task tbLoop(10, TASK_FOREVER, &tbLoopCb, &r, 0, NULL, &tbLoopDisable);
-Task wifiOtaLoop(10, TASK_FOREVER, &wifiOtaLoopCb, &r, 0, &wifiOtaEnable, &wifiOtaDisable);
-Task taskPlannedReboot(TASK_IMMEDIATE, TASK_ONCE, &reboot, &r, 0, &plannedRebootOnEnable, NULL);
-Task taskSyncClientAttr(TASK_IMMEDIATE, TASK_ONCE, &syncClientAttrCb, &r, 0, NULL, NULL);
-Task taskUpdateSpiffs(TASK_IMMEDIATE, TASK_ONCE, &updateSpiffs, &r, 0, NULL, NULL);
+TaskHandle_t xHandleWifiKeeper = NULL;
+TaskHandle_t xHandleAlarm = NULL;
+TaskHandle_t xHandleWifiOta;
+TaskHandle_t xHandleTB;
+#ifdef USE_WEB_IFACE
+TaskHandle_t xHandleIface;
+#endif
+
+SemaphoreHandle_t xSemaphoreSerialCoMCU = NULL;
+SemaphoreHandle_t xSemaphoreUDPLogger = NULL;
+SemaphoreHandle_t xSemaphoreSettings = NULL;
+SemaphoreHandle_t xSemaphoreConfig = NULL;
+SemaphoreHandle_t xSemaphoreConfigCoMCU = NULL;
+SemaphoreHandle_t xSemaphoreTBSend = NULL;
+
+struct AlarmMessage
+{
+    uint16_t code;
+    uint8_t color; 
+    int32_t blinkCount; 
+    uint16_t blinkDelay;
+};
+QueueHandle_t xQueueAlarm;
+
 
 void startup() {
+  xQueueAlarm = xQueueCreate( 10, sizeof( struct AlarmMessage * ) );
+
+  if(xSemaphoreSerialCoMCU == NULL){xSemaphoreSerialCoMCU = xSemaphoreCreateMutex();}
+  if(xSemaphoreUDPLogger == NULL){xSemaphoreUDPLogger = xSemaphoreCreateMutex();}
+  if(xSemaphoreSettings == NULL){xSemaphoreSettings = xSemaphoreCreateMutex();}
+  if(xSemaphoreConfig == NULL){xSemaphoreConfig = xSemaphoreCreateMutex();}
+  if(xSemaphoreConfigCoMCU == NULL){xSemaphoreConfigCoMCU = xSemaphoreCreateMutex();}
+  if(xSemaphoreTBSend == NULL){xSemaphoreTBSend = xSemaphoreCreateMutex();}
+
   // put your setup code here, to run once:
   Serial.begin(115200);
 
-  config.logLev = 1;
+  config.logLev = 5;
   log_manager->add_logger(&serial_logger);
   log_manager->add_logger(&udp_logger);
   log_manager->set_log_level(PSTR("*"), (LogLevel) config.logLev);
@@ -277,6 +293,8 @@ void startup() {
     configLoad();
     log_manager->set_log_level(PSTR("*"), (LogLevel) config.logLev);
   }
+
+  
   #ifdef USE_SERIAL2
     log_manager->debug(PSTR(__func__), PSTR("Serial 2 - CoMCU Activated!\n"));
     Serial2.begin(115200, SERIAL_8N1, S2_RX, S2_TX);
@@ -288,7 +306,9 @@ void startup() {
   int uBytes = SPIFFS.usedBytes();
   log_manager->verbose(PSTR(__func__), PSTR("SPIFFS total bytes: %d, used bytes: %d, free space: %d.\n"), tBytes, uBytes, tBytes-uBytes);
 
-  wifiKeeperLoop.enable();
+  xReturnedWifiKeeper = xTaskCreatePinnedToCore(wifiKeeperTR, "wifiKeeper", 4096, NULL, 1, &xHandleWifiKeeper, 1);
+  xReturnedAlarm = xTaskCreatePinnedToCore(setAlarmTR, "setAlarm", 1024, NULL, 1, &xHandleAlarm, 1);
+
 }
 
 
@@ -313,28 +333,58 @@ void processClientAttributeRequest(const Shared_Attribute_Data &data) {
 }
 
 void processSharedAttributeUpdate(const Shared_Attribute_Data &data){
-  if(data["model"] != nullptr){strlcpy(config.model, data["model"].as<const char*>(), sizeof(config.model));}
-  if(data["group"] != nullptr){strlcpy(config.group, data["group"].as<const char*>(), sizeof(config.group));}
-  if(data["broker"] != nullptr){strlcpy(config.broker, data["broker"].as<const char*>(), sizeof(config.broker));}
-  if(data["port"] != nullptr){config.port = data["port"].as<uint16_t>();}
-  if(data["wssid"] != nullptr){strlcpy(config.wssid, data["wssid"].as<const char*>(), sizeof(config.wssid));}
-  if(data["wpass"] != nullptr){strlcpy(config.wpass, data["wpass"].as<const char*>(), sizeof(config.wpass));}
-  if(data["dssid"] != nullptr){strlcpy(config.dssid, data["dssid"].as<const char*>(), sizeof(config.dssid));}
-  if(data["dpass"] != nullptr){strlcpy(config.dpass, data["dpass"].as<const char*>(), sizeof(config.dpass));}
-  if(data["upass"] != nullptr){strlcpy(config.upass, data["upass"].as<const char*>(), sizeof(config.upass));}
-  if(data["accTkn"] != nullptr){strlcpy(config.accTkn, data["accTkn"].as<const char*>(), sizeof(config.accTkn));}
-  if(data["provDK"] != nullptr){strlcpy(config.provDK, data["provDK"].as<const char*>(), sizeof(config.provDK));}
-  if(data["provDS"] != nullptr){strlcpy(config.provDS, data["provDS"].as<const char*>(), sizeof(config.provDS));}
-  if(data["logLev"] != nullptr){config.logLev = data["logLev"].as<uint8_t>(); log_manager->set_log_level(PSTR("*"), (LogLevel) config.logLev);;}
-  if(data["gmtOff"] != nullptr){config.gmtOff = data["gmtOff"].as<int>();}
-  if(data["fIoT"] != nullptr){config.fIoT = data["fIoT"].as<int>();}
-  if(data["htU"] != nullptr){strlcpy(config.htU, data["htU"].as<const char*>(), sizeof(config.htU));}
-  if(data["htP"] != nullptr){strlcpy(config.htP, data["htP"].as<const char*>(), sizeof(config.htP));}
-  if(data["fWOTA"] != nullptr){config.fWOTA = data["fWOTA"].as<bool>();}
-  if(data["fIface"] != nullptr){config.fIface = data["fIface"].as<bool>();}
-  if(data["hname"] != nullptr){strlcpy(config.hname, data["hname"].as<const char*>(), sizeof(config.hname));}
-  if(data["logIP"] != nullptr){strlcpy(config.logIP, data["logIP"].as<const char*>(), sizeof(config.logIP));}
-  if(data["logPrt"] != nullptr){config.logPrt = data["logPrt"].as<uint16_t>();}
+  if( xSemaphoreConfig != NULL ){
+    if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 1000 ) == pdTRUE )
+    {
+      if(data["model"] != nullptr){strlcpy(config.model, data["model"].as<const char*>(), sizeof(config.model));}
+      if(data["group"] != nullptr){strlcpy(config.group, data["group"].as<const char*>(), sizeof(config.group));}
+      if(data["broker"] != nullptr){strlcpy(config.broker, data["broker"].as<const char*>(), sizeof(config.broker));}
+      if(data["port"] != nullptr){config.port = data["port"].as<uint16_t>();}
+      if(data["wssid"] != nullptr){strlcpy(config.wssid, data["wssid"].as<const char*>(), sizeof(config.wssid));}
+      if(data["wpass"] != nullptr){strlcpy(config.wpass, data["wpass"].as<const char*>(), sizeof(config.wpass));}
+      if(data["dssid"] != nullptr){strlcpy(config.dssid, data["dssid"].as<const char*>(), sizeof(config.dssid));}
+      if(data["dpass"] != nullptr){strlcpy(config.dpass, data["dpass"].as<const char*>(), sizeof(config.dpass));}
+      if(data["upass"] != nullptr){strlcpy(config.upass, data["upass"].as<const char*>(), sizeof(config.upass));}
+      if(data["accTkn"] != nullptr){strlcpy(config.accTkn, data["accTkn"].as<const char*>(), sizeof(config.accTkn));}
+      if(data["provDK"] != nullptr){strlcpy(config.provDK, data["provDK"].as<const char*>(), sizeof(config.provDK));}
+      if(data["provDS"] != nullptr){strlcpy(config.provDS, data["provDS"].as<const char*>(), sizeof(config.provDS));}
+      if(data["logLev"] != nullptr){config.logLev = data["logLev"].as<uint8_t>(); log_manager->set_log_level(PSTR("*"), (LogLevel) config.logLev);;}
+      if(data["gmtOff"] != nullptr){config.gmtOff = data["gmtOff"].as<int>();}
+      if(data["fIoT"] != nullptr){config.fIoT = data["fIoT"].as<int>();}
+      if(data["htU"] != nullptr){strlcpy(config.htU, data["htU"].as<const char*>(), sizeof(config.htU));}
+      if(data["htP"] != nullptr){strlcpy(config.htP, data["htP"].as<const char*>(), sizeof(config.htP));}
+      if(data["fWOTA"] != nullptr){config.fWOTA = data["fWOTA"].as<bool>();}
+      if(data["fIface"] != nullptr){config.fIface = data["fIface"].as<bool>();}
+      if(data["hname"] != nullptr){strlcpy(config.hname, data["hname"].as<const char*>(), sizeof(config.hname));}
+      if(data["logIP"] != nullptr){strlcpy(config.logIP, data["logIP"].as<const char*>(), sizeof(config.logIP));}
+      if(data["logPrt"] != nullptr){config.logPrt = data["logPrt"].as<uint16_t>();}
+      xSemaphoreGive( xSemaphoreConfig );
+    }
+    else
+    {
+      log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+    }
+  }
+
+  if( xSemaphoreConfigCoMCU != NULL ){
+    if( xSemaphoreTake( xSemaphoreConfigCoMCU, ( TickType_t ) 1000 ) == pdTRUE )
+    {
+      if(data["fP"] != nullptr){configcomcu.fP = data["fP"].as<bool>();}
+      if(data["bFr"] != nullptr){configcomcu.bFr = data["bFr"].as<uint16_t>();}
+      if(data["fB"] != nullptr){configcomcu.fB = data["fB"].as<bool>();}
+      if(data["pBz"] != nullptr){configcomcu.pBz = data["pBz"].as<uint8_t>();}
+      if(data["pLR"] != nullptr){configcomcu.pLR = data["pLR"].as<uint8_t>();}
+      if(data["pLG"] != nullptr){configcomcu.pLG = data["pLG"].as<uint8_t>();}
+      if(data["pLB"] != nullptr){configcomcu.pLB = data["pLB"].as<uint8_t>();}
+      if(data["lON"] != nullptr){configcomcu.lON = data["lON"].as<uint8_t>();}
+      xSemaphoreGive( xSemaphoreConfigCoMCU );
+    }
+    else
+    {
+      log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+    }
+  }
+
 
   int jsonSize = JSON_STRING_SIZE(measureJson(data));
   char buffer[jsonSize];
@@ -356,214 +406,190 @@ void tbOtaProgressCb(const uint32_t& currentChunk, const uint32_t& totalChuncks)
   log_manager->verbose(PSTR(__func__), PSTR("IoT OTA Progress %.2f%%\n"), static_cast<float>(currentChunk * 100U) / totalChuncks);
 }
 
-bool ifaceLoopEnable(){
-  if(WiFi.isConnected() && config.fIface){
-    #ifdef USE_WEB_IFACE
-      web.on(PSTR("/"), []() { webSendFile("/www/index.html", "text/html"); });
-      web.on(PSTR("/runtime.js"), []() { webSendFile("/www/runtime.js", "application/javascript"); });
-      web.on(PSTR("/polyfills.js"), []() { webSendFile("/www/polyfills.js", "application/javascript"); });
-      web.on(PSTR("/main.js"), []() { webSendFile("/www/main.js", "application/javascript"); });
-      web.on(PSTR("/styles.css"), []() { webSendFile("/www/styles.css", "text/css"); });
-      web.on(PSTR("/assets/img/udawa.svg"), []() { webSendFile("/www/assets/img/udawa.svg", "image/svg+xml"); });
-      web.on(PSTR("/favicon"), []() { webSendFile("/www/favicon.ico", "image/x-icon"); });
+#ifdef USE_WEB_IFACE
+void ifaceTR(void *arg){
+  web.on(PSTR("/"), []() { webSendFile("/www/index.html", "text/html"); });
+  web.on(PSTR("/runtime.js"), []() { webSendFile("/www/runtime.js", "application/javascript"); });
+  web.on(PSTR("/polyfills.js"), []() { webSendFile("/www/polyfills.js", "application/javascript"); });
+  web.on(PSTR("/main.js"), []() { webSendFile("/www/main.js", "application/javascript"); });
+  web.on(PSTR("/styles.css"), []() { webSendFile("/www/styles.css", "text/css"); });
+  web.on(PSTR("/assets/img/udawa.svg"), []() { webSendFile("/www/assets/img/udawa.svg", "image/svg+xml"); });
+  web.on(PSTR("/favicon"), []() { webSendFile("/www/favicon.ico", "image/x-icon"); });
 
-      web.begin();
+  web.begin();
 
-      ws.begin();
-      ws.onEvent(onWsEventCb);
-    #endif
+  ws.begin();
+  ws.onEvent(onWsEventCb);
 
-    ifaceLoop.setTimeout(120 * TASK_SECOND, false);
-    return true;
-  }
-  return false;
-}
-
-void ifaceLoopCb(){
-  #ifdef USE_WEB_IFACE
+  while(true){
     ws.loop();
     web.handleClient();
-  #endif
-  ifaceLoop.resetTimeout();
-}
-
-void ifaceLoopDisable(){
-  if(ifaceLoop.timedOut()){
-    log_manager->verbose(PSTR(__func__),PSTR("ifaceLoop has timed out. Restarting...\n"));
-    ifaceLoop.setInterval(10);
-    ifaceLoop.setIterations(TASK_FOREVER);
-    ifaceLoop.enable();
+    vTaskDelay((const TickType_t) 10 / portTICK_PERIOD_MS);
   }
 }
+#endif
 
-bool wifiOtaEnable(){
-  if(config.fWOTA){
-    ArduinoOTA.setHostname(config.hname);
-    ArduinoOTA.setPasswordHash(config.upass);
-    ArduinoOTA.begin();
 
-    ArduinoOTA
-      .onStart([]()
-      {
-        String type;
-        if (ArduinoOTA.getCommand() == U_FLASH)
-            type = "sketch";
-        else // U_SPIFFS
-            type = "filesystem";
-            SPIFFS.end();
-        log_manager->warn(PSTR(__func__),PSTR("Starting OTA %s\n"), type.c_str());
-      })
-      .onEnd([]()
-      {
-        log_manager->warn(PSTR(__func__),PSTR("Device rebooting...\n"));
-        reboot();
-      })
-      .onProgress([](unsigned int progress, unsigned int total)
-      {
-        log_manager->warn(PSTR(__func__),PSTR("OTA progress: %d/%d\n"), progress, total);
-      })
-      .onError([](ota_error_t error)
-      {
-        log_manager->warn(PSTR(__func__),PSTR("OTA Failed: %d\n"), error);
-        reboot();
-      }
-    );
-    log_manager->verbose(PSTR(__func__),PSTR("Enabled.\n"));
-    wifiOtaLoop.setTimeout(120 * TASK_SECOND, false);
-    return true;
-  }
-  return false;
-}
+void wifiOtaTR(void *arg){
+  ArduinoOTA.setHostname(config.hname);
+  ArduinoOTA.setPasswordHash(config.upass);
+  ArduinoOTA.begin();
 
-void wifiOtaLoopCb(){
-  ArduinoOTA.handle();
-  wifiOtaLoop.resetTimeout();
-}
-
-void wifiOtaDisable(){
-  if(wifiOtaLoop.timedOut()){
-    log_manager->verbose(PSTR(__func__),PSTR("wifiOtaLoop has timed out. Restarting...\n"));
-    wifiOtaLoop.setInterval(10);
-    wifiOtaLoop.setIterations(TASK_FOREVER);
-    wifiOtaLoop.enable();
-  }
-  ArduinoOTA.end();
-  log_manager->verbose(PSTR(__func__),PSTR("Disabled.\n"));
-}
-
-void tbLoopCb(){
-  tb.loop();
-}
-void tbLoopDisable(){
-  tb.disconnect();
-  log_manager->verbose(PSTR(__func__),PSTR("Disabled.\n"));
-}
-
-bool tbKeeperEnable(){
-  if(!config.fIoT){
-    return false;
-  }
-
-  int freeHeap = ESP.getFreeHeap();
-  log_manager->info(PSTR(__func__),PSTR("Initializing IoT, available memory: %d\n"), freeHeap);
-  if(freeHeap < 92000)
-  {
-    log_manager->warn(PSTR(__func__),PSTR("Unable to init IoT, insufficient memory: %d\n"), freeHeap);
-    return false;
-  }
-
-  if(!WiFi.isConnected()){
-    log_manager->warn(PSTR(__func__),PSTR("Unable to init IoT, WiFi is not connected!\n"));
-    return false;
-  }
-
-  tbKeeperLoop.setTimeout(120 * TASK_SECOND, false);
-  tbLoop.setInterval(10);
-  tbLoop.setIterations(TASK_FOREVER);
-  tbLoop.enable();
-
-  log_manager->verbose(PSTR(__func__),PSTR("Enabled.\n"));
-  return true;
-}
-void tbKeeperCb(){
-  long startMillis = millis();
-  if(!config.provSent)
-  {
-    tbKeeperLoop.resetTimeout();
-    tbKeeperLoop.setCallback(tbKeeperProvCb);
-    tbKeeperLoop.forceNextIteration();
-  }
-  else{
-    if(!tb.connected())
+  ArduinoOTA
+    .onStart([]()
     {
-      onTbDisconnectedCb();
-      log_manager->info(PSTR(__func__),PSTR("Connecting to broker %s:%d\n"), config.broker, config.port);
-      if(!tb.connect(config.broker, config.accTkn, config.port, config.name))
-      {
-        config.tbDisco++;
-        log_manager->warn(PSTR(__func__),PSTR("Failed to connect to IoT Broker %s (%d)\n"), config.broker, config.tbDisco);
-        if(config.tbDisco >= 10){
-          config.provSent = 0;
-          config.tbDisco = 0;
-        }
-        tbKeeperLoop.resetTimeout();
-        return;
-      }
-
-      bool tbShared_status = tb.Shared_Attributes_Request(tbSharedCb);
-      bool tbClient_status = tb.Client_Attributes_Request(tbClientCb);
-      bool tbSharedUpdate_status = tb.Shared_Attributes_Subscribe(tbSharedAttrUpdateCb);
-      bool tbClientRPC_status = tb.RPC_Subscribe(clientRPCCallbacks.cbegin(), clientRPCCallbacks.cend());
-      log_manager->verbose(PSTR(__func__), PSTR("TB Subscribe status: SharedAttr(%d) - ClientAttr(%d) - SharedUpdate(%d) - clientRPC(%d)\n"), tbShared_status, 
-        tbClient_status, tbSharedUpdate_status, tbClientRPC_status);
-      onTbConnectedCb();
-
-      if (!config.currentFWSent) {
-        constexpr char FW_STATE_UPDATED[] PROGMEM = "UPDATED";
-        config.currentFWSent = tb.Firmware_Send_Info(CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION) && tb.Firmware_Send_State(FW_STATE_UPDATED);
-      }
-      if (!config.updateRequestSent) {
-        config.updateRequestSent = tb.Subscribe_Firmware_Update(tbOtaCb);
-      }
-
-      taskSyncClientAttr.setInterval(TASK_IMMEDIATE);
-      taskSyncClientAttr.setIterations(TASK_ONCE);
-      taskSyncClientAttr.enableDelayed(10 * TASK_SECOND);
-      log_manager->info(PSTR(__func__),PSTR("IoT Connected!\n"));
+      String type;
+      if (ArduinoOTA.getCommand() == U_FLASH)
+          type = "sketch";
+      else // U_SPIFFS
+          type = "filesystem";
+          SPIFFS.end();
+      log_manager->warn(PSTR(__func__),PSTR("Starting OTA %s\n"), type.c_str());
+    })
+    .onEnd([]()
+    {
+      log_manager->warn(PSTR(__func__),PSTR("Device rebooting...\n"));
+      reboot();
+    })
+    .onProgress([](unsigned int progress, unsigned int total)
+    {
+      log_manager->warn(PSTR(__func__),PSTR("OTA progress: %d/%d\n"), progress, total);
+    })
+    .onError([](ota_error_t error)
+    {
+      log_manager->warn(PSTR(__func__),PSTR("OTA Failed: %d\n"), error);
+      reboot();
     }
-  }
-  tbKeeperLoop.resetTimeout();
+  );
 
-  log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
+  while(true){
+    ArduinoOTA.handle();
+    vTaskDelay((const TickType_t) 10 / portTICK_PERIOD_MS);
+  }
 }
 
-void tbKeeperProvCb(){
-  log_manager->info(PSTR(__func__),PSTR("Starting provision initiation to %s:%d\n"),  config.broker, config.port);
-  if (tb.connect(config.broker, "provision", config.port)) {
-    const Provision_Callback provisionCallback(Access_Token(), &processProvisionResponse, config.provDK, config.provDS, config.name);
-    if(tb.Provision_Request(provisionCallback))
-    {
-      log_manager->info(PSTR(__func__),PSTR("Connected to provisioning server: %s:%d\n"),  config.broker, config.port);
-    }
-  }
-  else
-  {
-    log_manager->warn(PSTR(__func__),PSTR("Failed to connect to provisioning server: %s:%d\n"),  config.broker, config.port);
+void processProvisionResponse(const Provision_Data &data)
+{
+  constexpr char CREDENTIALS_TYPE[] PROGMEM = "credentialsType";
+  constexpr char CREDENTIALS_VALUE[] PROGMEM = "credentialsValue";
+  int jsonSize = JSON_STRING_SIZE(measureJson(data));
+  char buffer[jsonSize];
+  serializeJson(data, buffer, jsonSize);
+  log_manager->verbose(PSTR(__func__),PSTR("Received device provision response: %s\n"), buffer);
+
+  if (strncmp(data["status"], "SUCCESS", strlen("SUCCESS")) != 0) {
+    log_manager->warn(PSTR(__func__),PSTR("Provision response contains the error: (%s)\n"), data["errorMsg"].as<const char*>());
     return;
   }
-  
+
+  if (strncmp(data[CREDENTIALS_TYPE], ACCESS_TOKEN_CRED_TYPE, strlen(ACCESS_TOKEN_CRED_TYPE)) == 0) {
+    strlcpy(config.accTkn, data[CREDENTIALS_VALUE].as<std::string>().c_str(), sizeof(config.accTkn));
+    config.provSent = true;  
+    configSave();
+
+  }
+  else if (strncmp(data[CREDENTIALS_TYPE], MQTT_BASIC_CRED_TYPE, strlen(MQTT_BASIC_CRED_TYPE)) == 0) {
+    /*auto credentials_value = data[CREDENTIALS_VALUE].as<JsonObjectConst>();
+    credentials.client_id = credentials_value[CLIENT_ID].as<std::string>();
+    credentials.username = credentials_value[CLIENT_USERNAME].as<std::string>();
+    credentials.password = credentials_value[CLIENT_PASSWORD].as<std::string>();*/
+  }
+  else {
+    log_manager->warn(PSTR(__func__),PSTR("Unexpected provision credentialsType: (%s)\n"), data[CREDENTIALS_TYPE].as<const char*>());
+    return;
+  }
+
+  // Disconnect from the cloud client connected to the provision account, because it is no longer needed the device has been provisioned
+  // and we can reconnect to the cloud with the newly generated credentials.
+  if (tb.connected()) {
+    tb.disconnect();
+  }
 }
 
-void tbKeeperDisable(){
-  if(tbKeeperLoop.timedOut()){
-    log_manager->verbose(PSTR(__func__),PSTR("tbKeeperLoop has timed out. Restarting...\n"));
-    tbKeeperLoop.setInterval(30 * TASK_SECOND);
-    tbKeeperLoop.setIterations(TASK_FOREVER);
-    tbKeeperLoop.enable();
+
+void TBTR(void *arg){
+  uint8_t tbDisco = 0;
+  while(true){
+    if(!config.provSent)
+    {
+      if (tb.connect(config.broker, "provision", config.port)) {
+        const Provision_Callback provisionCallback(Access_Token(), &processProvisionResponse, config.provDK, config.provDS, config.name);
+        if(tb.Provision_Request(provisionCallback))
+        {
+          log_manager->info(PSTR(__func__),PSTR("Connected to provisioning server: %s:%d\n"),  config.broker, config.port);
+        }
+      }
+      else
+      {
+        log_manager->warn(PSTR(__func__),PSTR("Failed to connect to provisioning server: %s:%d\n"),  config.broker, config.port);
+      }
+      while(true){
+        tb.loop();
+        if(config.provSent){break;}
+        vTaskDelay((const TickType_t)10 / portTICK_PERIOD_MS);
+      }
+    }
+    else{
+      if(!tb.connected())
+      {
+        log_manager->warn(PSTR(__func__),PSTR("IoT disconnected!\n"));
+        onTbDisconnectedCb();
+        log_manager->info(PSTR(__func__),PSTR("Connecting to broker %s:%d\n"), config.broker, config.port);
+        while(!tb.connect(config.broker, config.accTkn, config.port, config.name)){  
+          tbDisco++;
+          log_manager->warn(PSTR(__func__),PSTR("Failed to connect to IoT Broker %s (%d)\n"), config.broker, tbDisco);
+          if(tbDisco >= 10){
+            if( xSemaphoreConfig != NULL ){
+              if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 1000 ) == pdTRUE )
+              {
+                config.provSent = 0;
+                xSemaphoreGive( xSemaphoreConfig );
+              }
+              else
+              {
+                log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+              }
+            }
+            tbDisco = 0;
+            break;
+          }
+          vTaskDelay((const TickType_t)1000 / portTICK_PERIOD_MS);
+        }
+
+        //bool tbShared_status = tb.Shared_Attributes_Request(tbSharedCb);
+        //bool tbClient_status = tb.Client_Attributes_Request(tbClientCb);
+        bool tbSharedUpdate_status = tb.Shared_Attributes_Subscribe(tbSharedAttrUpdateCb);
+        bool tbClientRPC_status = tb.RPC_Subscribe(clientRPCCallbacks.cbegin(), clientRPCCallbacks.cend());
+        
+
+        if( xSemaphoreConfig != NULL ){
+          if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 1000 ) == pdTRUE )
+          {
+            if (!config.currentFWSent) {
+              constexpr char FW_STATE_UPDATED[] PROGMEM = "UPDATED";
+              config.currentFWSent = tb.Firmware_Send_Info(CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION) && tb.Firmware_Send_State(FW_STATE_UPDATED);
+            }
+            if (!config.updateRequestSent) {
+              config.updateRequestSent = tb.Subscribe_Firmware_Update(tbOtaCb);
+            }
+            xSemaphoreGive( xSemaphoreConfig );
+          }
+          else
+          {
+            log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+          }
+        }
+
+        onTbConnectedCb();
+        log_manager->info(PSTR(__func__),PSTR("IoT Connected!\n"));
+      }
+    }
+
+    tb.loop();
+    vTaskDelay((const TickType_t) 10 / portTICK_PERIOD_MS);
   }
-  tbLoop.disable();
-  log_manager->verbose(PSTR(__func__),PSTR("Disabled.\n"));
 }
+
 
 void emitAlarm(int code){
   tb.sendTelemetryInt(PSTR("alarm"), code);
@@ -590,15 +616,22 @@ void rtcUpdate(long ts){
 void cbWiFiOnDisconnected(WiFiEvent_t event, WiFiEventInfo_t info)
 {
   log_manager->warn(PSTR(__func__),PSTR("WiFi (%s and %s) Disconnected!\n"), config.wssid, config.dssid);
-  if(config.fIoT){
-    tbKeeperLoop.disable();
+  if(config.fIoT && xHandleTB != NULL){
+    vTaskDelete(xHandleTB);
+    log_manager->warn(PSTR(__func__), PSTR("Task TB has been deleted.\n"));
   }
-  if(config.fIface){
-    ifaceLoop.disable();
+
+  if(config.fWOTA && xHandleWifiOta != NULL){
+    vTaskDelete(xHandleWifiOta);
+    log_manager->warn(PSTR(__func__), PSTR("Task WifiOta has been deleted.\n"));
   }
-  if(config.fWOTA){
-    wifiOtaLoop.disable();
+
+  #ifdef USE_WEB_IFACE
+  if(config.fIface && xHandleIface != NULL){
+    vTaskDelete(xHandleIface);
+    log_manager->warn(PSTR(__func__), PSTR("Task iface has been deleted.\n"));
   }
+  #endif
 }
 
 void cbWiFiOnGotIp(WiFiEvent_t event, WiFiEventInfo_t info)
@@ -616,23 +649,34 @@ void cbWiFiOnGotIp(WiFiEvent_t event, WiFiEventInfo_t info)
   log_manager->info(PSTR(__func__),PSTR("Started MDNS on %s\n"), config.hname);
 
   rtcUpdate(0);
-  if(config.fWOTA){
-    wifiOtaLoop.enable();
+  if(config.fWOTA && xHandleWifiOta == NULL){
+    xReturnedWifiOta = xTaskCreatePinnedToCore(wifiOtaTR, "wifiOta", 1536, NULL, 1, &xHandleWifiOta, 1);
+    if(xReturnedWifiOta == pdPASS){
+      log_manager->warn(PSTR(__func__), PSTR("Task wifiOta has been created.\n"));
+    }
   }
 
-  if(config.fIface){
-    ifaceLoop.enable();
+  if(config.fIoT && xHandleTB == NULL){
+    xReturnedTB = xTaskCreatePinnedToCore(TBTR, "TB", 10240, NULL, 1, &xHandleTB, 1);
+    if(xReturnedTB == pdPASS){
+      log_manager->warn(PSTR(__func__), PSTR("Task TB has been created.\n"));
+    }
   }
 
-  if(config.fIoT){
-    tbKeeperLoop.enable();
+  #ifdef USE_WEB_IFACE
+  if(config.fIface && xHandleIface == NULL){
+    xReturnedIface = xTaskCreatePinnedToCore(ifaceTR, "iface", 10240, NULL, 1, &xHandleIface, 1);
+    if(xReturnedIface == pdPASS){
+      log_manager->warn(PSTR(__func__), PSTR("Task iface has been created.\n"));
+    }
   }
+  #endif
 
   log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
 }
 
-bool wifiKeeperEnable()
-{
+
+void wifiKeeperTR(void *arg){
   log_manager->debug(PSTR(__func__),PSTR("Initializing wifi network...\n"));
   WiFi.mode(WIFI_STA);
   WiFi.setHostname(config.hname);
@@ -647,24 +691,12 @@ bool wifiKeeperEnable()
 
   WiFi.onEvent(cbWiFiOnDisconnected, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
   WiFi.onEvent(cbWiFiOnGotIp, ARDUINO_EVENT_WIFI_STA_GOT_IP);
-
-  log_manager->verbose(PSTR(__func__),PSTR("Enabled.\n"));
-  wifiKeeperLoop.setTimeout(120 * TASK_SECOND, false);
-  return true;
-}
-
-void wifiKeeperCb(){
-  setLed(0, 1, 3, 250);
-  wifiMulti.run();
-  wifiKeeperLoop.resetTimeout();
-}
-
-void wifiKeeperDisable(){
-  if(wifiKeeperLoop.timedOut()){
-    log_manager->verbose(PSTR(__func__),PSTR("wifiKeeperLoop has timed out. Restarting...\n"));
-    wifiKeeperLoop.setInterval(30 * TASK_SECOND);
-    wifiKeeperLoop.setIterations(TASK_FOREVER);
-    wifiKeeperLoop.enable();
+  
+  while (true)
+  {
+    wifiMulti.run();
+    setLed(0, 1, 3, 250);
+    vTaskDelay((const TickType_t) 30000 / portTICK_PERIOD_MS);
   }
 }
 
@@ -675,8 +707,19 @@ void onWsEventCb(uint8_t num, WStype_t type, uint8_t * data, size_t length){
   switch(type) {
     case WStype_DISCONNECTED:
       {
-        config.wsCount--;
-        log_manager->debug(PSTR(__func__), PSTR("ws [%u] disconnect\n"), num);
+        if( xSemaphoreConfig != NULL ){
+          if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 1000 ) == pdTRUE )
+          {
+            config.wsCount--;
+            xSemaphoreGive( xSemaphoreConfig );
+          }
+          else
+          {
+              log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+          }
+        }
+        
+        log_manager->debug(PSTR(__func__), PSTR("ws [%u] disconnect. WsCount: %d\n"), num, config.wsCount);
         doc["evType"] = (int)WStype_DISCONNECTED;
         doc["num"] = num;
         wsEventCb(doc);
@@ -684,8 +727,18 @@ void onWsEventCb(uint8_t num, WStype_t type, uint8_t * data, size_t length){
       break;
     case WStype_CONNECTED:
       {
-        config.wsCount++;
-        log_manager->debug(PSTR(__func__), PSTR("ws [%u] connect\n"), num);
+        if( xSemaphoreConfig != NULL ){
+          if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 1000 ) == pdTRUE )
+          {
+            config.wsCount++;
+            xSemaphoreGive( xSemaphoreConfig );
+          }
+          else
+          {
+              log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+          }
+        }
+        log_manager->debug(PSTR(__func__), PSTR("ws [%u] connect. WsCount: %d\n"), num, config.wsCount);
         doc["evType"] = (int)WStype_CONNECTED;
         doc["num"] = num;
         wsEventCb(doc);
@@ -812,10 +865,36 @@ uint8_t r, g, b;
 }
 
 void setAlarm(uint16_t code, uint8_t color, int32_t blinkCount, uint16_t blinkDelay){
-  setLed(color, 1, blinkCount, blinkDelay);
-  setBuzzer(blinkCount, blinkDelay);
-  if(code > 0){
-    emitAlarm(code);
+  if( xQueueAlarm != NULL ){
+    AlarmMessage alarmMsg;
+    alarmMsg.code = code; alarmMsg.color = color; alarmMsg.blinkCount = blinkCount; alarmMsg.blinkDelay = blinkDelay;
+    if( xQueueSend( xQueueAlarm, ( void * ) &alarmMsg, ( TickType_t ) 1000 ) != pdPASS )
+    {
+        log_manager->debug(PSTR(__func__), PSTR("Failed to set alarm. Queue is full. \n"));
+    }
+  }
+}
+
+void setAlarmTR(void *arg){
+  while(true){
+    if( xQueueAlarm != NULL ){
+      /* Receive a message from the created queue to hold complex struct AMessage
+      structure.  Block for 10 ticks if a message is not immediately available.
+      The value is read into a struct AMessage variable, so after calling
+      xQueueReceive() xRxedStructure will hold a copy of xMessage. */
+      AlarmMessage alarmMsg;
+      if( xQueueReceive( xQueueAlarm,  &( alarmMsg ), ( TickType_t ) 1000 ) == pdPASS )
+      {
+        /* xRxedStructure now contains a copy of xMessage. */
+        setLed(alarmMsg.color, 1, alarmMsg.blinkCount, alarmMsg.blinkDelay);
+        setBuzzer(alarmMsg.blinkCount, alarmMsg.blinkDelay);
+        if(alarmMsg.code > 0){
+          emitAlarm(alarmMsg.code);
+        }
+        vTaskDelay((const TickType_t) (alarmMsg.blinkCount * alarmMsg.blinkDelay) / portTICK_PERIOD_MS);
+      }
+    }
+    vTaskDelay((const TickType_t) 100 / portTICK_PERIOD_MS);
   }
 }
 
@@ -825,11 +904,8 @@ bool plannedRebootOnEnable(){
 
 void plannedReboot(int countdown){
   plannedRebootOnEnableCb();
-  taskPlannedReboot.setInterval(TASK_IMMEDIATE);
-  taskPlannedReboot.setIterations(TASK_ONCE);
-  taskPlannedReboot.enableDelayed(countdown * TASK_SECOND);
   log_manager->warn(PSTR(__func__), PSTR("Device reboot in: %d second(s)\n"), countdown);
-  setAlarm(999, 0, countdown * 2, 500);
+  reboot();
 }
 
 void reboot()
@@ -850,336 +926,422 @@ char* getDeviceId()
 
 void configReset()
 {
-  File file;
-  file = SPIFFS.open(configFile, FILE_WRITE);
-  if (!file) {
-    log_manager->warn(PSTR(__func__),PSTR("Failed to create config file. Config reset is cancelled.\n"));
-    file.close();
-    return;
-  }
-
-  StaticJsonDocument<DOCSIZE> doc;
-
-  char dv[16];
-  sprintf(dv, "%s", getDeviceId());
-  doc["name"] = "UDAWA" + String(dv);
-  doc["model"] = "Generic";
-  doc["group"] = "UDAWA";
-  doc["broker"] = broker;
-  doc["port"] = port;
-  doc["wssid"] = wssid;
-  doc["wpass"] = wpass;
-  doc["dssid"] = dssid;
-  doc["dpass"] = dpass;
-  doc["upass"] = upass;
-  doc["accTkn"] = accTkn;
-  doc["provSent"] = false;
-  doc["provDK"] = provDK;
-  doc["provDS"] = provDS;
-  doc["logLev"] = 5;
-  doc["gmtOff"] = 28880;
-
-  doc["fIoT"] = 1;
-  doc["fWOTA"] = 1;
-  doc["fIface"] = 1;
-
-  doc["hname"] = "UDAWA" + String(dv);
-
-  doc["htU"] = "UDAWA";
-  doc["htP"] = "defaultkey";
-
-  doc["logIP"] = "192.168.18.255";
-  doc["logPrt"] = 29514;
-
-  size_t size = serializeJson(doc, file);
-  file.close();
-
-  log_manager->info(PSTR(__func__),PSTR("Resetted config file (size: %d) is written successfully...\n"), size);
-  file = SPIFFS.open(configFile, FILE_READ);
-  if (!file)
-  {
-    log_manager->warn(PSTR(__func__),PSTR("Failed to open the config file!"));
-  }
-  else
-  {
-    log_manager->info(PSTR(__func__),PSTR("New config file opened, size: %d\n"), file.size());
-
-    if(file.size() < 1)
+  if( xSemaphoreConfig != NULL ){
+    if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 1000 ) == pdTRUE )
     {
-      log_manager->warn(PSTR(__func__),PSTR("Config file size is abnormal: %d, trying to rewrite...\n"), file.size());
+      File file;
+      file = SPIFFS.open(configFile, FILE_WRITE);
+      if (!file) {
+        log_manager->warn(PSTR(__func__),PSTR("Failed to create config file. Config reset is cancelled.\n"));
+        file.close();
+        xSemaphoreGive( xSemaphoreConfig );
+        return;
+      }
+
+      StaticJsonDocument<DOCSIZE> doc;
+
+      char dv[16];
+      sprintf(dv, "%s", getDeviceId());
+      doc["name"] = "UDAWA" + String(dv);
+      doc["model"] = "Generic";
+      doc["group"] = "UDAWA";
+      doc["broker"] = broker;
+      doc["port"] = port;
+      doc["wssid"] = wssid;
+      doc["wpass"] = wpass;
+      doc["dssid"] = dssid;
+      doc["dpass"] = dpass;
+      doc["upass"] = upass;
+      doc["accTkn"] = accTkn;
+      doc["provSent"] = false;
+      doc["provDK"] = provDK;
+      doc["provDS"] = provDS;
+      doc["logLev"] = 5;
+      doc["gmtOff"] = 28880;
+
+      doc["fIoT"] = 1;
+      doc["fWOTA"] = 1;
+      doc["fIface"] = 1;
+
+      doc["hname"] = "UDAWA" + String(dv);
+
+      doc["htU"] = "UDAWA";
+      doc["htP"] = "defaultkey";
+
+      doc["logIP"] = "192.168.18.255";
+      doc["logPrt"] = 29514;
 
       size_t size = serializeJson(doc, file);
-      log_manager->info(PSTR(__func__),PSTR("Writing: %d of data, file size: %d\n"), size, file.size());
+      file.close();
+
+      log_manager->info(PSTR(__func__),PSTR("Resetted config file (size: %d) is written successfully...\n"), size);
+      file = SPIFFS.open(configFile, FILE_READ);
+      if (!file)
+      {
+        log_manager->warn(PSTR(__func__),PSTR("Failed to open the config file!"));
+      }
+      else
+      {
+        log_manager->info(PSTR(__func__),PSTR("New config file opened, size: %d\n"), file.size());
+
+        if(file.size() < 1)
+        {
+          log_manager->warn(PSTR(__func__),PSTR("Config file size is abnormal: %d, trying to rewrite...\n"), file.size());
+
+          size_t size = serializeJson(doc, file);
+          log_manager->info(PSTR(__func__),PSTR("Writing: %d of data, file size: %d\n"), size, file.size());
+        }
+        else
+        {
+          log_manager->info(PSTR(__func__),PSTR("Config file size is normal: %d, trying to reboot...\n"), file.size());
+          file.close();
+          reboot();
+        }
+      }
+      file.close();
+      xSemaphoreGive( xSemaphoreConfig );
     }
     else
     {
-      log_manager->info(PSTR(__func__),PSTR("Config file size is normal: %d, trying to reboot...\n"), file.size());
-      file.close();
-      reboot();
+        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
     }
   }
-  file.close();
 }
 
 void configLoadFailSafe()
 {
-  char dv[16];
-  sprintf(dv, "%s", getDeviceId());
-  strlcpy(config.hwid, dv, sizeof(config.hwid));
+  if( xSemaphoreConfig != NULL ){
+    if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 1000 ) == pdTRUE )
+    {
+      char dv[16];
+      sprintf(dv, "%s", getDeviceId());
+      strlcpy(config.hwid, dv, sizeof(config.hwid));
 
-  String name = "UDAWA" + String(dv);
-  strlcpy(config.name, name.c_str(), sizeof(config.name));
-  strlcpy(config.model, "Generic", sizeof(config.model));
-  strlcpy(config.group, "UDAWA", sizeof(config.group));
-  strlcpy(config.broker, broker, sizeof(config.broker));
-  strlcpy(config.wssid, wssid, sizeof(config.wssid));
-  strlcpy(config.wpass, wpass, sizeof(config.wpass));
-  strlcpy(config.dssid, dssid, sizeof(config.dssid));
-  strlcpy(config.dpass, dpass, sizeof(config.dpass));
-  strlcpy(config.upass, upass, sizeof(config.upass));
-  strlcpy(config.accTkn, accTkn, sizeof(config.accTkn));
-  config.provSent = false;
-  config.port = port;
-  strlcpy(config.provDK, provDK, sizeof(config.provDK));
-  strlcpy(config.provDS, provDS, sizeof(config.provDS));
-  config.logLev = 5;
-  config.gmtOff = 28800;
+      String name = "UDAWA" + String(dv);
+      strlcpy(config.name, name.c_str(), sizeof(config.name));
+      strlcpy(config.model, "Generic", sizeof(config.model));
+      strlcpy(config.group, "UDAWA", sizeof(config.group));
+      strlcpy(config.broker, broker, sizeof(config.broker));
+      strlcpy(config.wssid, wssid, sizeof(config.wssid));
+      strlcpy(config.wpass, wpass, sizeof(config.wpass));
+      strlcpy(config.dssid, dssid, sizeof(config.dssid));
+      strlcpy(config.dpass, dpass, sizeof(config.dpass));
+      strlcpy(config.upass, upass, sizeof(config.upass));
+      strlcpy(config.accTkn, accTkn, sizeof(config.accTkn));
+      config.provSent = false;
+      config.port = port;
+      strlcpy(config.provDK, provDK, sizeof(config.provDK));
+      strlcpy(config.provDS, provDS, sizeof(config.provDS));
+      config.logLev = 5;
+      config.gmtOff = 28800;
 
-  config.fIoT = 1;
-  config.fWOTA = 1;
-  config.fIface = 1;
-  String hname = "UDAWA" + String(dv);
-  strlcpy(config.hname, hname.c_str(), sizeof(config.hname));
-  strlcpy(config.htU, "UDAWA", sizeof(config.htU));
-  strlcpy(config.htP, "defaultkey", sizeof(config.htP));
-  strlcpy(config.logIP, "192.168.18.255", sizeof(config.logIP));
-  config.logPrt = 29514;
+      config.fIoT = 1;
+      config.fWOTA = 1;
+      config.fIface = 1;
+      String hname = "UDAWA" + String(dv);
+      strlcpy(config.hname, hname.c_str(), sizeof(config.hname));
+      strlcpy(config.htU, "UDAWA", sizeof(config.htU));
+      strlcpy(config.htP, "defaultkey", sizeof(config.htP));
+      strlcpy(config.logIP, "192.168.18.255", sizeof(config.logIP));
+      config.logPrt = 29514;
+
+      xSemaphoreGive( xSemaphoreConfig );
+    }
+    else
+    {
+        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+    }
+  }
 }
 
 void configLoad()
 {
-  File file = SPIFFS.open(configFile, FILE_READ);
-  log_manager->info(PSTR(__func__),PSTR("Loading config file.\n"));
-  if(file.size() > 1)
-  {
-    log_manager->info(PSTR(__func__),PSTR("Config file size is normal: %d, trying to fit it in %d docsize.\n"), file.size(), DOCSIZE);
+  if( xSemaphoreConfig != NULL ){
+    if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 1000 ) == pdTRUE )
+    {
+      log_manager->info(PSTR(__func__),PSTR("Loading config file.\n"));
+      File file = SPIFFS.open(configFile, FILE_READ);
+      if(file.size() > 1)
+      {
+        log_manager->info(PSTR(__func__),PSTR("Config file size is normal: %d, trying to fit it in %d docsize.\n"), file.size(), DOCSIZE);
+      }
+      else
+      {
+        file.close();
+        log_manager->warn(PSTR(__func__),PSTR("Config file size is abnormal: %d. Closing file and trying to reset...\n"), file.size());
+        xSemaphoreGive( xSemaphoreConfig );
+        configReset();
+        return;
+      }
+
+      StaticJsonDocument<DOCSIZE> doc;
+      DeserializationError error = deserializeJson(doc, file);
+
+      if(error)
+      {
+        log_manager->warn(PSTR(__func__),PSTR("Failed to load config file! (%s - %s - %d). Falling back to failsafe.\n"), configFile, error.c_str(), file.size());
+        file.close();
+        xSemaphoreGive( xSemaphoreConfig );
+        configLoadFailSafe();
+        return;
+      }
+      else
+      {
+        char dv[16];
+        sprintf(dv, "%s", getDeviceId());
+        strlcpy(config.hwid, dv, sizeof(config.hwid));
+
+        log_manager->info(PSTR(__func__),PSTR("Device ID: %s\n"), dv);
+
+
+        String name = "UDAWA" + String(dv);
+        strlcpy(config.name, name.c_str(), sizeof(config.name));
+        //strlcpy(config.name, doc["name"].as<const char*>(), sizeof(config.name));
+        if(doc["model"] != nullptr){strlcpy(config.model, doc["model"].as<const char*>(), sizeof(config.model));}
+        if(doc["group"] != nullptr){strlcpy(config.group, doc["group"].as<const char*>(), sizeof(config.group));}
+        if(doc["broker"] != nullptr){strlcpy(config.broker, doc["broker"].as<const char*>(), sizeof(config.broker));}
+        if(doc["port"] != nullptr){config.port = doc["port"].as<uint16_t>();}
+        if(doc["wssid"] != nullptr){strlcpy(config.wssid, doc["wssid"].as<const char*>(), sizeof(config.wssid));}
+        if(doc["wpass"] != nullptr){strlcpy(config.wpass, doc["wpass"].as<const char*>(), sizeof(config.wpass));}
+        if(doc["dssid"] != nullptr){strlcpy(config.dssid, doc["dssid"].as<const char*>(), sizeof(config.dssid));}
+        if(doc["dpass"] != nullptr){strlcpy(config.dpass, doc["dpass"].as<const char*>(), sizeof(config.dpass));}
+        if(doc["upass"] != nullptr){strlcpy(config.upass, doc["upass"].as<const char*>(), sizeof(config.upass));}
+        if(doc["accTkn"] != nullptr){strlcpy(config.accTkn, doc["accTkn"].as<const char*>(), sizeof(config.accTkn));}
+        if(doc["provDK"] != nullptr){strlcpy(config.provDK, doc["provDK"].as<const char*>(), sizeof(config.provDK));}
+        if(doc["provDS"] != nullptr){strlcpy(config.provDS, doc["provDS"].as<const char*>(), sizeof(config.provDS));}
+        if(doc["provSent"] != nullptr){config.provSent = doc["provSent"].as<bool>();}
+        if(doc["logLev"] != nullptr){config.logLev = doc["logLev"].as<uint8_t>(); log_manager->set_log_level(PSTR("*"), (LogLevel) config.logLev);;}
+        if(doc["gmtOff"] != nullptr){config.gmtOff = doc["gmtOff"].as<int>();}
+        if(doc["fIoT"] != nullptr){config.fIoT = doc["fIoT"].as<int>();}
+        if(doc["htU"] != nullptr){strlcpy(config.htU, doc["htU"].as<const char*>(), sizeof(config.htU));}
+        if(doc["htP"] != nullptr){strlcpy(config.htP, doc["htP"].as<const char*>(), sizeof(config.htP));}
+        if(doc["fWOTA"] != nullptr){config.fWOTA = doc["fWOTA"].as<bool>();}
+        if(doc["fIface"] != nullptr){config.fIface = doc["fIface"].as<bool>();}
+        if(doc["hname"] != nullptr){strlcpy(config.hname, doc["hname"].as<const char*>(), sizeof(config.hname));}
+        if(doc["logIP"] != nullptr){strlcpy(config.logIP, doc["logIP"].as<const char*>(), sizeof(config.logIP));}
+        if(doc["logPrt"] != nullptr){config.logPrt = doc["logPrt"].as<uint16_t>();}
+
+        int jsonSize = JSON_STRING_SIZE(measureJson(doc));
+        char buffer[jsonSize];
+        serializeJson(doc, buffer, jsonSize);
+        log_manager->verbose(PSTR(__func__),PSTR("Loaded config: %s.\n"), buffer);
+      }
+      file.close();
+      xSemaphoreGive( xSemaphoreConfig );
+    }
+    else
+    {
+        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+    }
   }
-  else
-  {
-    file.close();
-    log_manager->warn(PSTR(__func__),PSTR("Config file size is abnormal: %d. Closing file and trying to reset...\n"), file.size());
-    configReset();
-    return;
-  }
-
-  StaticJsonDocument<DOCSIZE> doc;
-  DeserializationError error = deserializeJson(doc, file);
-
-  if(error)
-  {
-    log_manager->warn(PSTR(__func__),PSTR("Failed to load config file! (%s - %s - %d). Falling back to failsafe.\n"), configFile, error.c_str(), file.size());
-    file.close();
-    configLoadFailSafe();
-    return;
-  }
-  else
-  {
-    char dv[16];
-    sprintf(dv, "%s", getDeviceId());
-    strlcpy(config.hwid, dv, sizeof(config.hwid));
-
-    log_manager->info(PSTR(__func__),PSTR("Device ID: %s\n"), dv);
-
-
-    String name = "UDAWA" + String(dv);
-    strlcpy(config.name, name.c_str(), sizeof(config.name));
-    //strlcpy(config.name, doc["name"].as<const char*>(), sizeof(config.name));
-    if(doc["model"] != nullptr){strlcpy(config.model, doc["model"].as<const char*>(), sizeof(config.model));}
-    if(doc["group"] != nullptr){strlcpy(config.group, doc["group"].as<const char*>(), sizeof(config.group));}
-    if(doc["broker"] != nullptr){strlcpy(config.broker, doc["broker"].as<const char*>(), sizeof(config.broker));}
-    if(doc["port"] != nullptr){config.port = doc["port"].as<uint16_t>();}
-    if(doc["wssid"] != nullptr){strlcpy(config.wssid, doc["wssid"].as<const char*>(), sizeof(config.wssid));}
-    if(doc["wpass"] != nullptr){strlcpy(config.wpass, doc["wpass"].as<const char*>(), sizeof(config.wpass));}
-    if(doc["dssid"] != nullptr){strlcpy(config.dssid, doc["dssid"].as<const char*>(), sizeof(config.dssid));}
-    if(doc["dpass"] != nullptr){strlcpy(config.dpass, doc["dpass"].as<const char*>(), sizeof(config.dpass));}
-    if(doc["upass"] != nullptr){strlcpy(config.upass, doc["upass"].as<const char*>(), sizeof(config.upass));}
-    if(doc["accTkn"] != nullptr){strlcpy(config.accTkn, doc["accTkn"].as<const char*>(), sizeof(config.accTkn));}
-    if(doc["provDK"] != nullptr){strlcpy(config.provDK, doc["provDK"].as<const char*>(), sizeof(config.provDK));}
-    if(doc["provDS"] != nullptr){strlcpy(config.provDS, doc["provDS"].as<const char*>(), sizeof(config.provDS));}
-    if(doc["provSent"] != nullptr){config.provSent = doc["provSent"].as<bool>();}
-    if(doc["logLev"] != nullptr){config.logLev = doc["logLev"].as<uint8_t>(); log_manager->set_log_level(PSTR("*"), (LogLevel) config.logLev);;}
-    if(doc["gmtOff"] != nullptr){config.gmtOff = doc["gmtOff"].as<int>();}
-    if(doc["fIoT"] != nullptr){config.fIoT = doc["fIoT"].as<int>();}
-    if(doc["htU"] != nullptr){strlcpy(config.htU, doc["htU"].as<const char*>(), sizeof(config.htU));}
-    if(doc["htP"] != nullptr){strlcpy(config.htP, doc["htP"].as<const char*>(), sizeof(config.htP));}
-    if(doc["fWOTA"] != nullptr){config.fWOTA = doc["fWOTA"].as<bool>();}
-    if(doc["fIface"] != nullptr){config.fIface = doc["fIface"].as<bool>();}
-    if(doc["hname"] != nullptr){strlcpy(config.hname, doc["hname"].as<const char*>(), sizeof(config.hname));}
-    if(doc["logIP"] != nullptr){strlcpy(config.logIP, doc["logIP"].as<const char*>(), sizeof(config.logIP));}
-    if(doc["logPrt"] != nullptr){config.logPrt = doc["logPrt"].as<uint16_t>();}
-
-    int jsonSize = JSON_STRING_SIZE(measureJson(doc));
-    char buffer[jsonSize];
-    serializeJson(doc, buffer, jsonSize);
-    log_manager->verbose(PSTR(__func__),PSTR("Loaded config: %s.\n"), buffer);
-  }
-  file.close();
 }
 
 void configSave()
 {
-  if(!SPIFFS.remove(configFile))
-  {
-    log_manager->warn(PSTR(__func__),PSTR("Failed to delete the old configFile: %s\n"), configFile);
+  if( xSemaphoreConfig != NULL ){
+    if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 1000 ) == pdTRUE ) {
+      if(!SPIFFS.remove(configFile))
+      {
+        log_manager->warn(PSTR(__func__),PSTR("Failed to delete the old configFile: %s\n"), configFile);
+      }
+      File file = SPIFFS.open(configFile, FILE_WRITE);
+      if (!file)
+      {
+        file.close();
+        xSemaphoreGive( xSemaphoreConfig );
+        return;
+      }
+
+      StaticJsonDocument<DOCSIZE> doc;
+      doc["name"] = config.name;
+      doc["model"] = config.model;
+      doc["group"] = config.group;
+      doc["broker"] = config.broker;
+      doc["port"]  = config.port;
+      doc["wssid"] = config.wssid;
+      doc["wpass"] = config.wpass;
+      doc["dssid"] = config.dssid;
+      doc["dpass"] = config.dpass;
+      doc["upass"] = config.upass;
+      doc["accTkn"] = config.accTkn;
+      doc["provSent"] = config.provSent;
+      doc["provDK"] = config.provDK;
+      doc["provDS"] = config.provDS;
+      doc["logLev"] = config.logLev;
+      doc["gmtOff"] = config.gmtOff;
+
+      doc["fIoT"] = config.fIoT;
+      doc["fWOTA"] = config.fWOTA;
+      doc["fIface"] = config.fIface;
+      doc["hname"] = config.hname;
+      doc["htU"] = config.htU;
+      doc["htP"] = config.htP;
+
+      doc["logIP"] = config.logIP;
+      doc["logPrt"] = config.logPrt;
+
+      serializeJson(doc, file);
+      file.close();
+      log_manager->verbose(PSTR(__func__), PSTR("Config saved successfully.\n."));
+      xSemaphoreGive( xSemaphoreConfig );
+    }
+    else
+    {
+        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+    }
   }
-  File file = SPIFFS.open(configFile, FILE_WRITE);
-  if (!file)
-  {
-    file.close();
-    return;
-  }
-
-  StaticJsonDocument<DOCSIZE> doc;
-  doc["name"] = config.name;
-  doc["model"] = config.model;
-  doc["group"] = config.group;
-  doc["broker"] = config.broker;
-  doc["port"]  = config.port;
-  doc["wssid"] = config.wssid;
-  doc["wpass"] = config.wpass;
-  doc["dssid"] = config.dssid;
-  doc["dpass"] = config.dpass;
-  doc["upass"] = config.upass;
-  doc["accTkn"] = config.accTkn;
-  doc["provSent"] = config.provSent;
-  doc["provDK"] = config.provDK;
-  doc["provDS"] = config.provDS;
-  doc["logLev"] = config.logLev;
-  doc["gmtOff"] = config.gmtOff;
-
-  doc["fIoT"] = config.fIoT;
-  doc["fWOTA"] = config.fWOTA;
-  doc["fIface"] = config.fIface;
-  doc["hname"] = config.hname;
-  doc["htU"] = config.htU;
-  doc["htP"] = config.htP;
-
-  doc["logIP"] = config.logIP;
-  doc["logPrt"] = config.logPrt;
-
-  serializeJson(doc, file);
-  file.close();
-  log_manager->verbose(PSTR(__func__), PSTR("Config saved successfully.\n."));
 }
 
 
 void configCoMCUReset()
 {
-  SPIFFS.remove(configFileCoMCU);
-  File file = SPIFFS.open(configFileCoMCU, FILE_WRITE);
-  if (!file) {
-    file.close();
-    return;
+  if( xSemaphoreConfigCoMCU != NULL ){
+    if( xSemaphoreTake( xSemaphoreConfigCoMCU, ( TickType_t ) 1000 ) == pdTRUE )
+    {
+      SPIFFS.remove(configFileCoMCU);
+      File file = SPIFFS.open(configFileCoMCU, FILE_WRITE);
+      if (!file) {
+        file.close();
+        xSemaphoreGive( xSemaphoreConfigCoMCU );
+        return;
+      }
+
+      StaticJsonDocument<DOCSIZE> doc;
+
+      doc["fP"] = false;
+
+      doc["bFr"] = 1600;
+      doc["fB"] = 1;
+
+      doc["pBz"] = 2;
+      doc["pLR"] = 3;
+      doc["pLG"] = 5;
+      doc["pLB"] = 6;
+      doc["lON"] = 0;
+
+      serializeJson(doc, file);
+      file.close();
+
+      log_manager->info(PSTR(__func__),PSTR("ConfigCoMCU hard reset!\n")); 
+      xSemaphoreGive( xSemaphoreConfigCoMCU );
+    }
+    else
+    {
+        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+    }
   }
-
-  StaticJsonDocument<DOCSIZE> doc;
-
-  doc["fP"] = false;
-
-  doc["bFr"] = 1600;
-  doc["fB"] = 1;
-
-  doc["pBz"] = 2;
-  doc["pLR"] = 3;
-  doc["pLG"] = 5;
-  doc["pLB"] = 6;
-  doc["lON"] = 0;
-
-  serializeJson(doc, file);
-  file.close();
-
-  log_manager->info(PSTR(__func__),PSTR("ConfigCoMCU hard reset!\n"));
 }
 
 void configCoMCULoad()
 {
-  File file = SPIFFS.open(configFileCoMCU);
-  StaticJsonDocument<DOCSIZE> doc;
-  DeserializationError error = deserializeJson(doc, file);
+  if( xSemaphoreConfigCoMCU != NULL ){
+    if( xSemaphoreTake( xSemaphoreConfigCoMCU, ( TickType_t ) 1000 ) == pdTRUE )
+    {
+      File file = SPIFFS.open(configFileCoMCU);
+      StaticJsonDocument<DOCSIZE> doc;
+      DeserializationError error = deserializeJson(doc, file);
 
-  if(error)
-  {
-    file.close();
-    configCoMCUReset();
-    return;
+      if(error)
+      {
+        file.close();
+        xSemaphoreGive( xSemaphoreConfigCoMCU );
+        configCoMCUReset();
+        return;
+      }
+      else
+      {
+
+        if(doc["fP"] != nullptr){configcomcu.fP = doc["fP"].as<bool>();}
+        if(doc["bFr"] != nullptr){configcomcu.bFr = doc["bFr"].as<uint16_t>();}
+        if(doc["fB"] != nullptr){configcomcu.fB = doc["fB"].as<bool>();}
+        if(doc["pBz"] != nullptr){configcomcu.pBz = doc["pBz"].as<uint8_t>();}
+        if(doc["pLR"] != nullptr){configcomcu.pLR = doc["pLR"].as<uint8_t>();}
+        if(doc["pLG"] != nullptr){configcomcu.pLG = doc["pLG"].as<uint8_t>();}
+        if(doc["pLB"] != nullptr){configcomcu.pLB = doc["pLB"].as<uint8_t>();}
+        if(doc["lON"] != nullptr){configcomcu.lON = doc["lON"].as<uint8_t>();}
+
+        log_manager->info(PSTR(__func__),PSTR("ConfigCoMCU loaded successfuly.\n"));
+      }
+      file.close(); 
+      xSemaphoreGive( xSemaphoreConfigCoMCU );
+    }
+    else
+    {
+        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+    }
   }
-  else
-  {
-
-    if(doc["fP"] != nullptr){configcomcu.fP = doc["fP"].as<bool>();}
-    if(doc["bFr"] != nullptr){configcomcu.bFr = doc["bFr"].as<uint16_t>();}
-    if(doc["fB"] != nullptr){configcomcu.fB = doc["fB"].as<bool>();}
-    if(doc["pBz"] != nullptr){configcomcu.pBz = doc["pBz"].as<uint8_t>();}
-    if(doc["pLR"] != nullptr){configcomcu.pLR = doc["pLR"].as<uint8_t>();}
-    if(doc["pLG"] != nullptr){configcomcu.pLG = doc["pLG"].as<uint8_t>();}
-    if(doc["pLB"] != nullptr){configcomcu.pLB = doc["pLB"].as<uint8_t>();}
-    if(doc["lON"] != nullptr){configcomcu.lON = doc["lON"].as<uint8_t>();}
-
-    log_manager->info(PSTR(__func__),PSTR("ConfigCoMCU loaded successfuly.\n"));
-  }
-  file.close();
 }
 
 void configCoMCUSave()
 {
-  if(!SPIFFS.remove(configFileCoMCU))
-  {
-    log_manager->warn(PSTR(__func__),PSTR("Failed to delete the old configFileCoMCU: %s\n"), configFileCoMCU);
+  if( xSemaphoreConfigCoMCU != NULL ){
+    if( xSemaphoreTake( xSemaphoreConfigCoMCU, ( TickType_t ) 1000 ) == pdTRUE )
+    {
+      if(!SPIFFS.remove(configFileCoMCU))
+      {
+        log_manager->warn(PSTR(__func__),PSTR("Failed to delete the old configFileCoMCU: %s\n"), configFileCoMCU);
+      }
+      File file = SPIFFS.open(configFileCoMCU, FILE_WRITE);
+      if (!file)
+      {
+        file.close();
+        xSemaphoreGive( xSemaphoreConfigCoMCU );
+        return;
+      }
+
+      StaticJsonDocument<DOCSIZE> doc;
+
+      doc["fP"] = configcomcu.fP;
+
+      doc["bFr"] = configcomcu.bFr;
+      doc["fB"] = configcomcu.fB;
+
+      doc["pBz"] = configcomcu.pBz;
+      doc["pLR"] = configcomcu.pLR;
+      doc["pLG"] = configcomcu.pLG;
+      doc["pLB"] = configcomcu.pLB;
+      doc["lON"] = configcomcu.lON;
+
+      serializeJson(doc, file);
+      file.close();
+      log_manager->verbose(PSTR(__func__), PSTR("ConfigCoMCU saved successfully.\n."));
+      xSemaphoreGive( xSemaphoreConfigCoMCU );
+    }
+    else
+    {
+        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+    }
   }
-  File file = SPIFFS.open(configFileCoMCU, FILE_WRITE);
-  if (!file)
-  {
-    file.close();
-    return;
-  }
-
-  StaticJsonDocument<DOCSIZE> doc;
-
-  doc["fP"] = configcomcu.fP;
-
-  doc["bFr"] = configcomcu.bFr;
-  doc["fB"] = configcomcu.fB;
-
-  doc["pBz"] = configcomcu.pBz;
-  doc["pLR"] = configcomcu.pLR;
-  doc["pLG"] = configcomcu.pLG;
-  doc["pLB"] = configcomcu.pLB;
-  doc["lON"] = configcomcu.lON;
-
-  serializeJson(doc, file);
-  file.close();
-  log_manager->verbose(PSTR(__func__), PSTR("ConfigCoMCU saved successfully.\n."));
 }
 
 void syncConfigCoMCU()
 {
   configCoMCULoad();
-
-  StaticJsonDocument<DOCSIZE_MIN> doc;
-  doc["fP"] = configcomcu.fP;
-  doc["bFr"] = configcomcu.bFr;
-  doc["fB"] = configcomcu.fB;
-  doc["pBz"] = configcomcu.pBz;
-  doc["method"] = "sCfg";
-  serialWriteToCoMcu(doc, 0);
-  doc.clear();
-  doc["pLR"] = configcomcu.pLR;
-  doc["pLG"] = configcomcu.pLG;
-  doc["pLB"] = configcomcu.pLB;
-  doc["lON"] = configcomcu.lON;
-  doc["method"] = "sCfg";
-  serialWriteToCoMcu(doc, 0);
-  doc.clear();
+  if( xSemaphoreConfigCoMCU != NULL ){
+    if( xSemaphoreTake( xSemaphoreConfigCoMCU, ( TickType_t ) 1000 ) == pdTRUE )
+    {
+      StaticJsonDocument<DOCSIZE_MIN> doc;
+      doc["fP"] = configcomcu.fP;
+      doc["bFr"] = configcomcu.bFr;
+      doc["fB"] = configcomcu.fB;
+      doc["pBz"] = configcomcu.pBz;
+      doc["method"] = "sCfg";
+      serialWriteToCoMcu(doc, 0);
+      doc.clear();
+      doc["pLR"] = configcomcu.pLR;
+      doc["pLG"] = configcomcu.pLG;
+      doc["pLB"] = configcomcu.pLB;
+      doc["lON"] = configcomcu.lON;
+      doc["method"] = "sCfg";
+      serialWriteToCoMcu(doc, 0);
+      doc.clear();
+      xSemaphoreGive( xSemaphoreConfigCoMCU );
+    }
+    else
+    {
+        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+    }
+  }
 }
 
 bool loadFile(const char* filePath, char *buffer)
@@ -1199,107 +1361,130 @@ bool loadFile(const char* filePath, char *buffer)
   return true;
 }
 
-void processProvisionResponse(const Provision_Data &data)
-{
-  tbKeeperLoop.setCallback(tbKeeperCb);
-
-  constexpr char CREDENTIALS_TYPE[] PROGMEM = "credentialsType";
-  constexpr char CREDENTIALS_VALUE[] PROGMEM = "credentialsValue";
-  int jsonSize = JSON_STRING_SIZE(measureJson(data));
-  char buffer[jsonSize];
-  serializeJson(data, buffer, jsonSize);
-  log_manager->verbose(PSTR(__func__),PSTR("Received device provision response: %s\n"), buffer);
-
-  if (strncmp(data["status"], "SUCCESS", strlen("SUCCESS")) != 0) {
-    log_manager->warn(PSTR(__func__),PSTR("Provision response contains the error: (%s)\n"), data["errorMsg"].as<const char*>());
-    return;
-  }
-
-  if (strncmp(data[CREDENTIALS_TYPE], ACCESS_TOKEN_CRED_TYPE, strlen(ACCESS_TOKEN_CRED_TYPE)) == 0) {
-    strlcpy(config.accTkn, data[CREDENTIALS_VALUE].as<std::string>().c_str(), sizeof(config.accTkn));
-    config.provSent = true;
-    configSave();
-  }
-  else if (strncmp(data[CREDENTIALS_TYPE], MQTT_BASIC_CRED_TYPE, strlen(MQTT_BASIC_CRED_TYPE)) == 0) {
-    /*auto credentials_value = data[CREDENTIALS_VALUE].as<JsonObjectConst>();
-    credentials.client_id = credentials_value[CLIENT_ID].as<std::string>();
-    credentials.username = credentials_value[CLIENT_USERNAME].as<std::string>();
-    credentials.password = credentials_value[CLIENT_PASSWORD].as<std::string>();*/
-  }
-  else {
-    log_manager->warn(PSTR(__func__),PSTR("Unexpected provision credentialsType: (%s)\n"), data[CREDENTIALS_TYPE].as<const char*>());
-    return;
-  }
-
-  // Disconnect from the cloud client connected to the provision account, because it is no longer needed the device has been provisioned
-  // and we can reconnect to the cloud with the newly generated credentials.
-  if (tb.connected()) {
-    tb.disconnect();
-  }
-}
-
 void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc)
 {
-  long startMillis = millis();
-  serializeJson(doc, Serial2);
-  StringPrint stream;
-  serializeJson(doc, stream);
-  //String result = stream.str();
-  //log_manager->verbose(PSTR(__func__),PSTR("Sent to CoMCU: %s\n"), result.c_str());
-  if(isRpc)
-  {
-    delay(50);
-    doc.clear();
-    serialReadFromCoMcu(doc);
+  if( xSemaphoreSerialCoMCU != NULL ){
+      /* See if we can obtain the semaphore.  If the semaphore is not
+      available wait 10 ticks to see if it becomes free. */
+      if( xSemaphoreTake( xSemaphoreSerialCoMCU, ( TickType_t ) 10000 ) == pdTRUE )
+      {
+          /* We were able to obtain the semaphore and can now access the
+          shared resource. */
+
+          long startMillis = millis();
+          serializeJson(doc, Serial2);
+          StringPrint stream;
+          serializeJson(doc, stream);
+          //String result = stream.str();
+          //log_manager->verbose(PSTR(__func__),PSTR("Sent to CoMCU: %s\n"), result.c_str());
+          if(isRpc)
+          {
+            delay(50);
+            doc.clear();
+            serialReadFromCoMcu(doc);
+          }
+          log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
+
+          /* We have finished accessing the shared resource.  Release the
+          semaphore. */
+          xSemaphoreGive( xSemaphoreSerialCoMCU );
+      }
+      else
+      {
+          /* We could not obtain the semaphore and can therefore not access
+          the shared resource safely. */
+          log_manager->debug(PSTR(__func__), PSTR("Undable to get semaphore.\n"));
+      }
   }
-  log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
 }
 
 void serialReadFromCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc)
 {
-  long startMillis = millis();
-  StringPrint stream;
-  String result;
-  ReadLoggingStream loggingStream(Serial2, stream);
-  DeserializationError err = deserializeJson(doc, loggingStream);
-  //result = stream.str();
-  if (err == DeserializationError::Ok)
-  {
-    //log_manager->verbose(PSTR(__func__),PSTR("Received from CoMCU: %s\n"), result.c_str());
+  if( xSemaphoreSerialCoMCU != NULL ){
+      /* See if we can obtain the semaphore.  If the semaphore is not
+      available wait 10 ticks to see if it becomes free. */
+      if( xSemaphoreTake( xSemaphoreSerialCoMCU, ( TickType_t ) 10000 ) == pdTRUE )
+      {
+          /* We were able to obtain the semaphore and can now access the
+          shared resource. */
+
+          long startMillis = millis();
+          StringPrint stream;
+          String result;
+          ReadLoggingStream loggingStream(Serial2, stream);
+          DeserializationError err = deserializeJson(doc, loggingStream);
+          //result = stream.str();
+          if (err == DeserializationError::Ok)
+          {
+            //log_manager->verbose(PSTR(__func__),PSTR("Received from CoMCU: %s\n"), result.c_str());
+          }
+          else
+          {
+            //log_manager->verbose(PSTR(__func__),PSTR("Serial2CoMCU DeserializeJson() returned: %s, content: %s\n"), err.c_str(), result.c_str());
+            return;
+          }
+          log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
+
+          /* We have finished accessing the shared resource.  Release the
+          semaphore. */
+          xSemaphoreGive( xSemaphoreSerialCoMCU );
+      }
+      else
+      {
+          /* We could not obtain the semaphore and can therefore not access
+          the shared resource safely. */
+          log_manager->debug(PSTR(__func__), PSTR("Undable to get semaphore.\n"));
+      }
   }
-  else
-  {
-    //log_manager->verbose(PSTR(__func__),PSTR("Serial2CoMCU DeserializeJson() returned: %s, content: %s\n"), err.c_str(), result.c_str());
-    return;
-  }
-  log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
 }
 
 
 void readSettings(StaticJsonDocument<DOCSIZE> &doc, const char* path)
 {
-  File file = SPIFFS.open(path);
-  DeserializationError error = deserializeJson(doc, file);
+  if( xSemaphoreSettings != NULL ){
+    if( xSemaphoreTake( xSemaphoreSettings, ( TickType_t ) 1000 ) == pdTRUE )
+    {
+      File file = SPIFFS.open(path);
+      DeserializationError error = deserializeJson(doc, file);
 
-  if(error)
-  {
-    file.close();
-    return;
+      if(error)
+      {
+        file.close();
+        xSemaphoreGive( xSemaphoreSettings );
+        return;
+      }
+      file.close();
+      xSemaphoreGive( xSemaphoreSettings );
+    }
+    else
+    {
+        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+    }
   }
-  file.close();
 }
 
 void writeSettings(StaticJsonDocument<DOCSIZE> &doc, const char* path)
 {
-  SPIFFS.remove(path);
-  File file = SPIFFS.open(path, FILE_WRITE);
-  if (!file)
-  {
-    file.close();
-    return;
+  if( xSemaphoreSettings != NULL ){
+    if( xSemaphoreTake( xSemaphoreSettings, ( TickType_t ) 1000 ) == pdTRUE )
+    {
+      SPIFFS.remove(path);
+      File file = SPIFFS.open(path, FILE_WRITE);
+      if (!file)
+      {
+        file.close();
+        xSemaphoreGive( xSemaphoreSettings );
+        return;
+      }
+      serializeJson(doc, file);
+      file.close();
+      xSemaphoreGive( xSemaphoreSettings );
+    }
+    else
+    {
+        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+    }
   }
-  serializeJson(doc, file);
-  file.close();
 }
 
 void setCoMCUPin(uint8_t pin, uint8_t op, uint8_t mode, uint16_t aval, uint8_t state)
@@ -1335,19 +1520,13 @@ uint32_t micro2milli(uint32_t hi, uint32_t lo)
   return ans;
 }
 
-
-static SemaphoreHandle_t udpSemaphore = NULL;
 void ESP32UDPLogger::log_message(const char *tag, LogLevel level, const char *fmt, va_list args)
 {
     if((int)level > config.logLev || !WiFi.isConnected()){
       return;
     }
-    if(udpSemaphore == NULL)
-    {
-        udpSemaphore = xSemaphoreCreateMutex();
-    }
 
-    if(udpSemaphore != NULL && xSemaphoreTake(udpSemaphore, (TickType_t) 20))
+    if(xSemaphoreUDPLogger != NULL && xSemaphoreTake(xSemaphoreUDPLogger, (TickType_t) 20))
     {
         int size = 1024;
         WiFiUDP udp;
@@ -1359,7 +1538,7 @@ void ESP32UDPLogger::log_message(const char *tag, LogLevel level, const char *fm
         udp.write((uint8_t*)msg.c_str(), msg.length());
         udp.endPacket();
 
-        xSemaphoreGive(udpSemaphore);
+        xSemaphoreGive(xSemaphoreUDPLogger);
     }
     else{
         printf("Could not get UDP semaphore.\n");
@@ -1506,16 +1685,12 @@ RPC_Response processSaveSettings(const RPC_Data &data){
 
 RPC_Response processSetPanic(const RPC_Data &data){
   processSetPanicCb(data);
-  taskSyncClientAttr.setInterval(TASK_IMMEDIATE);
-  taskSyncClientAttr.setIterations(TASK_ONCE);
-  taskSyncClientAttr.enableDelayed(3 * TASK_SECOND);
+  
   return RPC_Response(PSTR("setPanic"), configcomcu.fP);
 }
 
 RPC_Response processUpdateSpiffs(const RPC_Data &data){
-  taskUpdateSpiffs.setInterval(TASK_IMMEDIATE);
-  taskUpdateSpiffs.setIterations(TASK_ONCE);
-  taskUpdateSpiffs.enableDelayed(10 * TASK_SECOND);
+  
   StaticJsonDocument<JSON_OBJECT_SIZE(1)> doc;
   doc[PSTR("updateSpiffs")] = 1;
   return RPC_Response(doc);
@@ -1533,87 +1708,80 @@ RPC_Response processGenericClientRPC(const RPC_Data &data){
   return processGenericClientRPCCb(data);
 }
 
-void syncClientAttrCb(){
+void syncClientAttr(uint8_t direction){
   long startMillis = millis();
 
   String ip = WiFi.localIP().toString();
   
-  StaticJsonDocument<1024> doc;
-  char buffer[1024];
+  StaticJsonDocument<DOCSIZE_MIN> doc;
 
-  doc[PSTR("ipad")] = ip;
-  doc[PSTR("compdate")] = COMPILED;
-  doc[PSTR("fmTitle")] = CURRENT_FIRMWARE_TITLE;
-  doc[PSTR("fmVersion")] = CURRENT_FIRMWARE_VERSION;
-  doc[PSTR("stamac")] = WiFi.macAddress();
-  doc[PSTR("apmac")] = WiFi.softAPmacAddress();
-  serializeJson(doc, buffer);
-  tb.sendAttributeJSON(buffer);
-  doc.clear();
-  doc[PSTR("flFree")] = ESP.getFreeSketchSpace();
-  doc[PSTR("fwSize")] = ESP.getSketchSize();
-  doc[PSTR("flSize")] = ESP.getFlashChipSize();
-  doc[PSTR("dSize")] = (int)SPIFFS.totalBytes(); 
-  doc[PSTR("dUsed")] = (int)SPIFFS.usedBytes();
-  serializeJson(doc, buffer);
-  tb.sendAttributeJSON(buffer);
-  doc.clear();
-  doc[PSTR("sdkVer")] = ESP.getSdkVersion();
-  doc[PSTR("model")] = config.model;
-  doc[PSTR("name")] = config.name;
-  doc[PSTR("group")] = config.group;
-  doc[PSTR("broker")] = config.broker;
-  doc[PSTR("port")] = config.port;
-  serializeJson(doc, buffer);
-  tb.sendAttributeJSON(buffer);
-  doc.clear();
-  doc[PSTR("wssid")] = config.wssid;
-  doc[PSTR("ap")] = WiFi.SSID();
-  doc[PSTR("wpass")] = config.wpass;
-  doc[PSTR("dssid")] = config.dssid;
-  doc[PSTR("dpass")] = config.dpass;
-  serializeJson(doc, buffer);
-  tb.sendAttributeJSON(buffer);
-  doc.clear();
-  doc[PSTR("upass")] = config.upass;
-  doc[PSTR("accTkn")] = config.accTkn;
-  doc[PSTR("provDK")] = config.provDK;
-  doc[PSTR("provDS")] = config.provDS;
-  doc[PSTR("logLev")] = config.logLev;
-  serializeJson(doc, buffer);
-  tb.sendAttributeJSON(buffer);
-  doc.clear();
-  doc[PSTR("gmtOff")] = config.gmtOff;
-  doc[PSTR("bFr")] = configcomcu.bFr;
-  doc[PSTR("fP")] = (int)configcomcu.fP;
-  doc[PSTR("fB")] = (int)configcomcu.fB;
-  doc[PSTR("fIoT")] = (int)config.fIoT;
-  serializeJson(doc, buffer);
-  tb.sendAttributeJSON(buffer);
-  doc.clear();
-  doc[PSTR("fWOTA")] = (int)config.fWOTA;
-  doc[PSTR("fIface")] = (int)config.fIface;
-  doc[PSTR("hname")] = config.hname;
-  doc[PSTR("logIP")] = config.logIP;
-  doc[PSTR("logPrt")] = config.logPrt;
-  serializeJson(doc, buffer);
-  tb.sendAttributeJSON(buffer);
-  doc.clear();
-  doc[PSTR("pBz")] = configcomcu.pBz;
-  doc[PSTR("pLR")] = configcomcu.pLR;
-  doc[PSTR("pLG")] = configcomcu.pLG;
-  doc[PSTR("pLB")] = configcomcu.pLB;
-  doc[PSTR("htU")] = config.htU;
-  serializeJson(doc, buffer);
-  tb.sendAttributeJSON(buffer);
-  doc.clear();
-  doc[PSTR("htP")] = config.htP;
-  doc[PSTR("lON")] = configcomcu.lON;
-  serializeJson(doc, buffer);
-  tb.sendAttributeJSON(buffer);
-  doc.clear();
+  if(tb.connected() && (direction == 0 || direction == 1) ){
+    doc[PSTR("ipad")] = ip;
+    doc[PSTR("compdate")] = COMPILED;
+    doc[PSTR("fmTitle")] = CURRENT_FIRMWARE_TITLE;
+    doc[PSTR("fmVersion")] = CURRENT_FIRMWARE_VERSION;
+    doc[PSTR("stamac")] = WiFi.macAddress();
+    doc[PSTR("apmac")] = WiFi.softAPmacAddress();
+    tbSendAttribute(doc);
+    doc.clear();
+    doc[PSTR("flFree")] = ESP.getFreeSketchSpace();
+    doc[PSTR("fwSize")] = ESP.getSketchSize();
+    doc[PSTR("flSize")] = ESP.getFlashChipSize();
+    doc[PSTR("dSize")] = (int)SPIFFS.totalBytes(); 
+    doc[PSTR("dUsed")] = (int)SPIFFS.usedBytes();
+    tbSendAttribute(doc);
+    doc.clear();
+    doc[PSTR("sdkVer")] = ESP.getSdkVersion();
+    doc[PSTR("model")] = config.model;
+    doc[PSTR("name")] = config.name;
+    doc[PSTR("group")] = config.group;
+    doc[PSTR("broker")] = config.broker;
+    doc[PSTR("port")] = config.port;
+    tbSendAttribute(doc);
+    doc.clear();
+    doc[PSTR("wssid")] = config.wssid;
+    doc[PSTR("ap")] = WiFi.SSID();
+    doc[PSTR("wpass")] = config.wpass;
+    doc[PSTR("dssid")] = config.dssid;
+    doc[PSTR("dpass")] = config.dpass;
+    tbSendAttribute(doc);
+    doc.clear();
+    doc[PSTR("upass")] = config.upass;
+    doc[PSTR("accTkn")] = config.accTkn;
+    doc[PSTR("provDK")] = config.provDK;
+    doc[PSTR("provDS")] = config.provDS;
+    doc[PSTR("logLev")] = config.logLev;
+    tbSendAttribute(doc);
+    doc.clear();
+    doc[PSTR("gmtOff")] = config.gmtOff;
+    doc[PSTR("bFr")] = configcomcu.bFr;
+    doc[PSTR("fP")] = (int)configcomcu.fP;
+    doc[PSTR("fB")] = (int)configcomcu.fB;
+    doc[PSTR("fIoT")] = (int)config.fIoT;
+    tbSendAttribute(doc);
+    doc.clear();
+    doc[PSTR("fWOTA")] = (int)config.fWOTA;
+    doc[PSTR("fIface")] = (int)config.fIface;
+    doc[PSTR("hname")] = config.hname;
+    doc[PSTR("logIP")] = config.logIP;
+    doc[PSTR("logPrt")] = config.logPrt;
+    tbSendAttribute(doc);
+    doc.clear();
+    doc[PSTR("pBz")] = configcomcu.pBz;
+    doc[PSTR("pLR")] = configcomcu.pLR;
+    doc[PSTR("pLG")] = configcomcu.pLG;
+    doc[PSTR("pLB")] = configcomcu.pLB;
+    doc[PSTR("htU")] = config.htU;
+    tbSendAttribute(doc);
+    doc.clear();
+    doc[PSTR("htP")] = config.htP;
+    doc[PSTR("lON")] = configcomcu.lON;
+    tbSendAttribute(doc);
+    doc.clear();
+  }
 
-  if(config.wsCount > 0){
+  if(config.wsCount > 0 && (direction == 0 || direction == 2)){
+    char buffer[1024];
     JsonObject attr = doc.createNestedObject("attr");
     attr[PSTR("ipad")] = ip.c_str();
     attr[PSTR("compdate")] = COMPILED;
@@ -1669,9 +1837,44 @@ void syncClientAttrCb(){
   
   log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
 
-  onSyncClientAttrCb();
+  onSyncClientAttrCb(direction);
 }
 
+bool tbSendAttribute(StaticJsonDocument<DOCSIZE_MIN> &doc){
+  char buffer[DOCSIZE_MIN];
+  serializeJson(doc, buffer);
+  bool res = false;
+  if( xSemaphoreTBSend != NULL ){
+    if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
+    {
+      res = tb.sendAttributeJSON(buffer);
+      xSemaphoreGive( xSemaphoreTBSend );
+    }
+    else
+    {
+      log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+    }
+  }
+  return res;
+}
+
+bool tbSendTelemetry(StaticJsonDocument<DOCSIZE_MIN> &doc){
+  char buffer[DOCSIZE_MIN];
+  serializeJson(doc, buffer);
+  bool res = false;
+  if( xSemaphoreTBSend != NULL ){
+    if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
+    {
+      res = tb.sendTelemetryJson(buffer); 
+      xSemaphoreGive( xSemaphoreTBSend );
+    }
+    else
+    {
+      log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+    }   
+  }
+  return res;
+}
 
 } // namespace libudawa
 #endif
