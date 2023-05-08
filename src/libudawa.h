@@ -265,7 +265,7 @@ QueueHandle_t xQueueAlarm;
 
 
 void startup() {
-  xQueueAlarm = xQueueCreate( 10, sizeof( struct AlarmMessage ) );
+  xQueueAlarm = xQueueCreate( 1, sizeof( struct AlarmMessage ) );
 
   if(xSemaphoreSerialCoMCU == NULL){xSemaphoreSerialCoMCU = xSemaphoreCreateMutex();}
   if(xSemaphoreUDPLogger == NULL){xSemaphoreUDPLogger = xSemaphoreCreateMutex();}
@@ -702,7 +702,6 @@ void wifiKeeperTR(void *arg){
   while (true)
   {
     wifiMulti.run();
-    setLed(0, 1, 3, 250);
     vTaskDelay((const TickType_t) 30000 / portTICK_PERIOD_MS);
   }
 }
@@ -717,7 +716,9 @@ void onWsEventCb(uint8_t num, WStype_t type, uint8_t * data, size_t length){
         if( xSemaphoreConfig != NULL ){
           if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 1000 ) == pdTRUE )
           {
-            config.wsCount--;
+            if(config.wsCount > 0){
+              config.wsCount--;
+            }
             xSemaphoreGive( xSemaphoreConfig );
           }
           else
