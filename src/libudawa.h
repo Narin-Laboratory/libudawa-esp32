@@ -265,7 +265,7 @@ QueueHandle_t xQueueAlarm;
 
 
 void startup() {
-  xQueueAlarm = xQueueCreate( 10, sizeof( struct AlarmMessage * ) );
+  xQueueAlarm = xQueueCreate( 10, sizeof( struct AlarmMessage ) );
 
   if(xSemaphoreSerialCoMCU == NULL){xSemaphoreSerialCoMCU = xSemaphoreCreateMutex();}
   if(xSemaphoreUDPLogger == NULL){xSemaphoreUDPLogger = xSemaphoreCreateMutex();}
@@ -307,7 +307,7 @@ void startup() {
   log_manager->verbose(PSTR(__func__), PSTR("SPIFFS total bytes: %d, used bytes: %d, free space: %d.\n"), tBytes, uBytes, tBytes-uBytes);
 
   xReturnedWifiKeeper = xTaskCreatePinnedToCore(wifiKeeperTR, "wifiKeeper", 4096, NULL, 1, &xHandleWifiKeeper, 1);
-  xReturnedAlarm = xTaskCreatePinnedToCore(setAlarmTR, "setAlarm", 1024, NULL, 1, &xHandleAlarm, 1);
+  xReturnedAlarm = xTaskCreatePinnedToCore(setAlarmTR, "setAlarm", 4096, NULL, 1, &xHandleAlarm, 1);
 
 }
 
@@ -592,7 +592,11 @@ void TBTR(void *arg){
 
 
 void emitAlarm(int code){
-  tb.sendTelemetryInt(PSTR("alarm"), code);
+  if(tb.connected()){
+    StaticJsonDocument<DOCSIZE_MIN> doc;
+    doc[PSTR("alarm")] = code;
+    tbSendTelemetry(doc);
+  }
   emitAlarmCb(code);
   log_manager->error(PSTR(__func__), PSTR("%i\n"), code);
 }
@@ -650,14 +654,14 @@ void cbWiFiOnGotIp(WiFiEvent_t event, WiFiEventInfo_t info)
 
   rtcUpdate(0);
   if(config.fWOTA && xHandleWifiOta == NULL){
-    xReturnedWifiOta = xTaskCreatePinnedToCore(wifiOtaTR, "wifiOta", 1536, NULL, 1, &xHandleWifiOta, 1);
+    xReturnedWifiOta = xTaskCreatePinnedToCore(wifiOtaTR, "wifiOta", 6144, NULL, 1, &xHandleWifiOta, 1);
     if(xReturnedWifiOta == pdPASS){
       log_manager->warn(PSTR(__func__), PSTR("Task wifiOta has been created.\n"));
     }
   }
 
   if(config.fIoT && xHandleTB == NULL){
-    xReturnedTB = xTaskCreatePinnedToCore(TBTR, "TB", 10240, NULL, 1, &xHandleTB, 1);
+    xReturnedTB = xTaskCreatePinnedToCore(TBTR, "TB", 16384, NULL, 1, &xHandleTB, 1);
     if(xReturnedTB == pdPASS){
       log_manager->warn(PSTR(__func__), PSTR("Task TB has been created.\n"));
     }
@@ -672,6 +676,9 @@ void cbWiFiOnGotIp(WiFiEvent_t event, WiFiEventInfo_t info)
   }
   #endif
 
+  if(rtc.getYear() < 2023){
+    setAlarm(131, 1, 5, 1000);
+  }
   log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
 }
 
@@ -868,7 +875,7 @@ void setAlarm(uint16_t code, uint8_t color, int32_t blinkCount, uint16_t blinkDe
   if( xQueueAlarm != NULL ){
     AlarmMessage alarmMsg;
     alarmMsg.code = code; alarmMsg.color = color; alarmMsg.blinkCount = blinkCount; alarmMsg.blinkDelay = blinkDelay;
-    if( xQueueSend( xQueueAlarm, ( void * ) &alarmMsg, ( TickType_t ) 1000 ) != pdPASS )
+    if( xQueueSend( xQueueAlarm, &alarmMsg, ( TickType_t ) 1000 ) != pdPASS )
     {
         log_manager->debug(PSTR(__func__), PSTR("Failed to set alarm. Queue is full. \n"));
     }
@@ -878,14 +885,9 @@ void setAlarm(uint16_t code, uint8_t color, int32_t blinkCount, uint16_t blinkDe
 void setAlarmTR(void *arg){
   while(true){
     if( xQueueAlarm != NULL ){
-      /* Receive a message from the created queue to hold complex struct AMessage
-      structure.  Block for 10 ticks if a message is not immediately available.
-      The value is read into a struct AMessage variable, so after calling
-      xQueueReceive() xRxedStructure will hold a copy of xMessage. */
       AlarmMessage alarmMsg;
       if( xQueueReceive( xQueueAlarm,  &( alarmMsg ), ( TickType_t ) 1000 ) == pdPASS )
       {
-        /* xRxedStructure now contains a copy of xMessage. */
         setLed(alarmMsg.color, 1, alarmMsg.blinkCount, alarmMsg.blinkDelay);
         setBuzzer(alarmMsg.blinkCount, alarmMsg.blinkDelay);
         if(alarmMsg.code > 0){
@@ -894,7 +896,7 @@ void setAlarmTR(void *arg){
         vTaskDelay((const TickType_t) (alarmMsg.blinkCount * alarmMsg.blinkDelay) / portTICK_PERIOD_MS);
       }
     }
-    vTaskDelay((const TickType_t) 100 / portTICK_PERIOD_MS);
+    vTaskDelay((const TickType_t) 500 / portTICK_PERIOD_MS);
   }
 }
 
@@ -1371,7 +1373,7 @@ void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc)
           /* We were able to obtain the semaphore and can now access the
           shared resource. */
 
-          long startMillis = millis();
+          //long startMillis = millis();
           serializeJson(doc, Serial2);
           StringPrint stream;
           serializeJson(doc, stream);
@@ -1383,7 +1385,7 @@ void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc)
             doc.clear();
             serialReadFromCoMcu(doc);
           }
-          log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
+          //log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
 
           /* We have finished accessing the shared resource.  Release the
           semaphore. */
@@ -1408,7 +1410,7 @@ void serialReadFromCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc)
           /* We were able to obtain the semaphore and can now access the
           shared resource. */
 
-          long startMillis = millis();
+          //long startMillis = millis();
           StringPrint stream;
           String result;
           ReadLoggingStream loggingStream(Serial2, stream);
@@ -1423,7 +1425,7 @@ void serialReadFromCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc)
             //log_manager->verbose(PSTR(__func__),PSTR("Serial2CoMCU DeserializeJson() returned: %s, content: %s\n"), err.c_str(), result.c_str());
             return;
           }
-          log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
+          //log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
 
           /* We have finished accessing the shared resource.  Release the
           semaphore. */
@@ -1841,12 +1843,12 @@ void syncClientAttr(uint8_t direction){
 }
 
 bool tbSendAttribute(StaticJsonDocument<DOCSIZE_MIN> &doc){
-  char buffer[DOCSIZE_MIN];
-  serializeJson(doc, buffer);
   bool res = false;
-  if( xSemaphoreTBSend != NULL ){
+  if( xSemaphoreTBSend != NULL && config.provSent && tb.connected() ){
     if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
     {
+      char buffer[DOCSIZE_MIN];
+      serializeJson(doc, buffer);
       res = tb.sendAttributeJSON(buffer);
       xSemaphoreGive( xSemaphoreTBSend );
     }
@@ -1859,12 +1861,12 @@ bool tbSendAttribute(StaticJsonDocument<DOCSIZE_MIN> &doc){
 }
 
 bool tbSendTelemetry(StaticJsonDocument<DOCSIZE_MIN> &doc){
-  char buffer[DOCSIZE_MIN];
-  serializeJson(doc, buffer);
   bool res = false;
-  if( xSemaphoreTBSend != NULL ){
+  if( xSemaphoreTBSend != NULL && config.provSent && tb.connected()){
     if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
     {
+      char buffer[DOCSIZE_MIN];
+      serializeJson(doc, buffer);
       res = tb.sendTelemetryJson(buffer); 
       xSemaphoreGive( xSemaphoreTBSend );
     }
