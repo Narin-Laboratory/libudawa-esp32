@@ -1783,6 +1783,7 @@ void syncClientAttr(uint8_t direction){
     doc.clear();
   }
 
+  #ifdef USE_WEB_IFACE
   if(config.wsCount > 0 && (direction == 0 || direction == 2)){
     char buffer[1024];
     JsonObject attr = doc.createNestedObject("attr");
@@ -1837,6 +1838,7 @@ void syncClientAttr(uint8_t direction){
     serializeJson(doc, buffer);
     ws.broadcastTXT(buffer);
   }
+  #endif
   
   log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
 
