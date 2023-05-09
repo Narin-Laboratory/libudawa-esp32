@@ -21,7 +21,9 @@
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 #include <StreamUtils.h>
+#ifdef USE_WIFI_OTA
 #include <ArduinoOTA.h>
+#endif
 #include "logging.h"
 #include "serialLogger.h"
 #include <ESP32Time.h>
@@ -35,14 +37,25 @@
 #include <WebSocketsServer.h>
 #endif
 
-#define _TASK_TIMEOUT
-#include <TaskScheduler.h>
-
 #define countof(a) (sizeof(a) / sizeof(a[0]))
 #define COMPILED __DATE__ " " __TIME__
 #define S2_RX 16
 #define S2_TX 17
-#define WIFI_FALLBACK_COUNTER 3
+#ifndef STACKSIZE_WIFIKEEPER 
+  #define STACKSIZE_WIFIKEEPER 4096
+#endif
+#ifndef STACKSIZE_SETALARM 
+#define STACKSIZE_SETALARM 4096
+#endif
+#ifndef STACKSIZE_WIFIOTA 
+#define STACKSIZE_WIFIOTA 4096
+#endif
+#ifndef STACKSIZE_TB 
+#define STACKSIZE_TB 4096
+#endif
+#ifndef STACKSIZE_IFACE 
+#define STACKSIZE_IFACE 4096
+#endif
 #ifndef DOCSIZE
   #define DOCSIZE 1024
 #endif
@@ -116,10 +129,17 @@ class ESP32UDPLogger : public ILogHandler
         void log_message(const char *tag, const LogLevel level, const char *fmt, va_list args) override;
 };
 
+class TBLogger {
+  public:
+    static void log(const char *error) {
+      
+    }
+};
+
 uint32_t micro2milli(uint32_t hi, uint32_t lo);
 double round2(double value);
+void udawa();
 void reboot();
-void plannedReboot(int countdown);
 char* getDeviceId();
 void cbWiFiOnDisconnected(WiFiEvent_t event, WiFiEventInfo_t info);
 void cbWiFiOnGotIp(WiFiEvent_t event, WiFiEventInfo_t info);
@@ -131,6 +151,7 @@ void configCoMCULoadFailSafe();
 void configCoMCULoad();
 void configCoMCUSave();
 void configCoMCUReset();
+void (*onSaveSettings)();
 bool loadFile(const char* filePath, char* buffer);
 void processProvisionResponse(const Provision_Data &data);
 void processSharedAttributeRequest(const Shared_Attribute_Data &data);
@@ -139,7 +160,6 @@ void processSharedAttributeUpdate(const Shared_Attribute_Data &data);
 void (*processSharedAttributeUpdateCb)(const Shared_Attribute_Data &data);
 void startup();
 void wifiKeeperTR(void *arg);
-void udawa();
 void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc);
 void serialReadFromCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc);
 void syncConfigCoMCU();
@@ -160,7 +180,9 @@ void (*wsEventCb)(const JsonObject &payload);
 void webSendFile(String path, String type);
 void ifaceTR(void *arg);
 #endif
+#ifdef USE_WIFI_OTA
 void wifiOtaTR(void *arg);
+#endif
 void TBTR(void *arg);
 void tbOtaFinishedCb(const bool& success);
 void tbOtaProgressCb(const uint32_t& currentChunk, const uint32_t& totalChuncks);
@@ -168,12 +190,9 @@ void (*httpOtaOnUpdateFinishedCb)(const int partition);
 void updateSpiffs();
 void (*onTbDisconnectedCb)();
 void (*onTbConnectedCb)();
-bool plannedRebootOnEnable();
-void (*plannedRebootOnEnableCb)();
 RPC_Response processConfigSave(const RPC_Data &data);
 RPC_Response processConfigCoMCUSave(const RPC_Data &data);
 RPC_Response processSaveSettings(const RPC_Data &data);
-void (*processSaveSettingsCb)();
 RPC_Response processSetPanic(const RPC_Data &data);
 void (*processSetPanicCb)(const RPC_Data &data);
 RPC_Response processUpdateSpiffs(const RPC_Data &data);
@@ -182,8 +201,8 @@ RPC_Response processGenericClientRPC(const RPC_Data &data);
 RPC_Response (*processGenericClientRPCCb)(const RPC_Data &data);
 void syncClientAttr(uint8_t direction);
 void (*onSyncClientAttrCb)(uint8_t);
-bool tbSendAttribute(StaticJsonDocument<DOCSIZE_MIN> &doc);
-bool tbSendTelemetry(StaticJsonDocument<DOCSIZE_MIN> &doc);
+bool tbSendAttribute(const char *buffer);
+bool tbSendTelemetry(const char *buffer);
 
 
 ESP32SerialLogger serial_logger;
@@ -193,13 +212,18 @@ WiFiClientSecure ssl = WiFiClientSecure();
 WiFiMulti wifiMulti;
 Config config;
 ConfigCoMCU configcomcu;
-ThingsBoard tb(ssl, DOCSIZE_MIN);
+ThingsBoardSized<32, TBLogger> tb(ssl, DOCSIZE_MIN);
 ESP32Time rtc(0);
-Scheduler r;
 #ifdef USE_WEB_IFACE
 WebServer web(80);
 WebSocketsServer ws = WebSocketsServer(81);
 #endif
+bool FLAG_SAVE_SETTINGS = false;
+bool FLAG_SAVE_CONFIG = false;
+bool FLAG_SAVE_CONFIGCOMCU = false;
+bool FLAG_SYNC_CLIENT_ATTR_0 = false;
+bool FLAG_SYNC_CLIENT_ATTR_1 = false;
+bool FLAG_SYNC_CLIENT_ATTR_2 = false;
 
 // Shared attributes we want to request from the server
 constexpr const char FW_TAG_KEY[] PROGMEM = "fw_tag";
@@ -235,13 +259,17 @@ const Shared_Attribute_Callback tbSharedAttrUpdateCb(&processSharedAttributeUpda
 
 BaseType_t xReturnedWifiKeeper;
 BaseType_t xReturnedAlarm;
+#ifdef USE_WIFI_OTA
 BaseType_t xReturnedWifiOta;
+#endif
 BaseType_t xReturnedTB;
 BaseType_t xReturnedIface;
 
 TaskHandle_t xHandleWifiKeeper = NULL;
 TaskHandle_t xHandleAlarm = NULL;
+#ifdef USE_WIFI_OTA
 TaskHandle_t xHandleWifiOta;
+#endif
 TaskHandle_t xHandleTB;
 #ifdef USE_WEB_IFACE
 TaskHandle_t xHandleIface;
@@ -306,11 +334,37 @@ void startup() {
   int uBytes = SPIFFS.usedBytes();
   log_manager->verbose(PSTR(__func__), PSTR("SPIFFS total bytes: %d, used bytes: %d, free space: %d.\n"), tBytes, uBytes, tBytes-uBytes);
 
-  xReturnedWifiKeeper = xTaskCreatePinnedToCore(wifiKeeperTR, "wifiKeeper", 4096, NULL, 1, &xHandleWifiKeeper, 1);
-  xReturnedAlarm = xTaskCreatePinnedToCore(setAlarmTR, "setAlarm", 4096, NULL, 1, &xHandleAlarm, 1);
+  xReturnedWifiKeeper = xTaskCreatePinnedToCore(wifiKeeperTR, "wifiKeeper", STACKSIZE_WIFIKEEPER, NULL, 1, &xHandleWifiKeeper, 1);
+  xReturnedAlarm = xTaskCreatePinnedToCore(setAlarmTR, "setAlarm", STACKSIZE_SETALARM, NULL, 1, &xHandleAlarm, 1);
 
 }
 
+void udawa(){
+  if(FLAG_SAVE_CONFIG){
+    configSave();
+    FLAG_SAVE_CONFIG = false;
+  }
+  if(FLAG_SAVE_CONFIGCOMCU){
+    configCoMCUSave();
+    FLAG_SAVE_CONFIGCOMCU = false;
+  }
+  if(FLAG_SAVE_SETTINGS){
+    onSaveSettings();
+    FLAG_SAVE_SETTINGS = false;
+  }
+  if(FLAG_SYNC_CLIENT_ATTR_0){
+    syncClientAttr(0);
+    FLAG_SYNC_CLIENT_ATTR_0 = false;
+  }
+  if(FLAG_SYNC_CLIENT_ATTR_1){
+    syncClientAttr(1);
+    FLAG_SYNC_CLIENT_ATTR_1 = false;
+  }
+  if(FLAG_SYNC_CLIENT_ATTR_2){
+    syncClientAttr(2);
+    FLAG_SYNC_CLIENT_ATTR_2 = false;
+  }
+}
 
 /// @brief Update callback that will be called as soon as the requested shared attributes, have been received.
 /// The callback will then not be called anymore unless it is reused for another request
@@ -350,11 +404,11 @@ void processSharedAttributeUpdate(const Shared_Attribute_Data &data){
       if(data["provDS"] != nullptr){strlcpy(config.provDS, data["provDS"].as<const char*>(), sizeof(config.provDS));}
       if(data["logLev"] != nullptr){config.logLev = data["logLev"].as<uint8_t>(); log_manager->set_log_level(PSTR("*"), (LogLevel) config.logLev);;}
       if(data["gmtOff"] != nullptr){config.gmtOff = data["gmtOff"].as<int>();}
-      if(data["fIoT"] != nullptr){config.fIoT = data["fIoT"].as<int>();}
       if(data["htU"] != nullptr){strlcpy(config.htU, data["htU"].as<const char*>(), sizeof(config.htU));}
       if(data["htP"] != nullptr){strlcpy(config.htP, data["htP"].as<const char*>(), sizeof(config.htP));}
       if(data["fWOTA"] != nullptr){config.fWOTA = data["fWOTA"].as<bool>();}
       if(data["fIface"] != nullptr){config.fIface = data["fIface"].as<bool>();}
+      if(data["fIoT"] != nullptr){config.fIoT = data["fIoT"].as<bool>();}
       if(data["hname"] != nullptr){strlcpy(config.hname, data["hname"].as<const char*>(), sizeof(config.hname));}
       if(data["logIP"] != nullptr){strlcpy(config.logIP, data["logIP"].as<const char*>(), sizeof(config.logIP));}
       if(data["logPrt"] != nullptr){config.logPrt = data["logPrt"].as<uint16_t>();}
@@ -429,44 +483,49 @@ void ifaceTR(void *arg){
 }
 #endif
 
-
+#ifdef USE_WIFI_OTA
 void wifiOtaTR(void *arg){
-  ArduinoOTA.setHostname(config.hname);
-  ArduinoOTA.setPasswordHash(config.upass);
-  ArduinoOTA.begin();
+  if(config.fWOTA){
+    ArduinoOTA.setHostname(config.hname);
+    ArduinoOTA.setPasswordHash(config.upass);
+    ArduinoOTA.begin();
 
-  ArduinoOTA
-    .onStart([]()
-    {
-      String type;
-      if (ArduinoOTA.getCommand() == U_FLASH)
-          type = "sketch";
-      else // U_SPIFFS
-          type = "filesystem";
-          SPIFFS.end();
-      log_manager->warn(PSTR(__func__),PSTR("Starting OTA %s\n"), type.c_str());
-    })
-    .onEnd([]()
-    {
-      log_manager->warn(PSTR(__func__),PSTR("Device rebooting...\n"));
-      reboot();
-    })
-    .onProgress([](unsigned int progress, unsigned int total)
-    {
-      log_manager->warn(PSTR(__func__),PSTR("OTA progress: %d/%d\n"), progress, total);
-    })
-    .onError([](ota_error_t error)
-    {
-      log_manager->warn(PSTR(__func__),PSTR("OTA Failed: %d\n"), error);
-      reboot();
-    }
-  );
+    ArduinoOTA
+      .onStart([]()
+      {
+        String type;
+        if (ArduinoOTA.getCommand() == U_FLASH)
+            type = "sketch";
+        else // U_SPIFFS
+            type = "filesystem";
+            SPIFFS.end();
+        log_manager->warn(PSTR(__func__),PSTR("Starting OTA %s\n"), type.c_str());
+      })
+      .onEnd([]()
+      {
+        log_manager->warn(PSTR(__func__),PSTR("Device rebooting...\n"));
+        reboot();
+      })
+      .onProgress([](unsigned int progress, unsigned int total)
+      {
+        log_manager->warn(PSTR(__func__),PSTR("OTA progress: %d/%d\n"), progress, total);
+      })
+      .onError([](ota_error_t error)
+      {
+        log_manager->warn(PSTR(__func__),PSTR("OTA Failed: %d\n"), error);
+        reboot();
+      }
+    );
+  }
 
   while(true){
-    ArduinoOTA.handle();
+    if(config.fWOTA){
+      ArduinoOTA.handle();
+    }
     vTaskDelay((const TickType_t) 10 / portTICK_PERIOD_MS);
   }
 }
+#endif
 
 void processProvisionResponse(const Provision_Data &data)
 {
@@ -485,7 +544,7 @@ void processProvisionResponse(const Provision_Data &data)
   if (strncmp(data[CREDENTIALS_TYPE], ACCESS_TOKEN_CRED_TYPE, strlen(ACCESS_TOKEN_CRED_TYPE)) == 0) {
     strlcpy(config.accTkn, data[CREDENTIALS_VALUE].as<std::string>().c_str(), sizeof(config.accTkn));
     config.provSent = true;  
-    configSave();
+    FLAG_SAVE_CONFIG = true;
 
   }
   else if (strncmp(data[CREDENTIALS_TYPE], MQTT_BASIC_CRED_TYPE, strlen(MQTT_BASIC_CRED_TYPE)) == 0) {
@@ -593,9 +652,11 @@ void TBTR(void *arg){
 
 void emitAlarm(int code){
   if(tb.connected()){
-    StaticJsonDocument<DOCSIZE_MIN> doc;
+    StaticJsonDocument<32> doc;
     doc[PSTR("alarm")] = code;
-    tbSendTelemetry(doc);
+    char buffer[32];
+    serializeJson(doc, buffer);
+    tbSendTelemetry(buffer);
   }
   emitAlarmCb(code);
   log_manager->error(PSTR(__func__), PSTR("%i\n"), code);
@@ -625,10 +686,12 @@ void cbWiFiOnDisconnected(WiFiEvent_t event, WiFiEventInfo_t info)
     log_manager->warn(PSTR(__func__), PSTR("Task TB has been deleted.\n"));
   }
 
+  #ifdef USE_WIFI_OTA
   if(config.fWOTA && xHandleWifiOta != NULL){
     vTaskDelete(xHandleWifiOta);
     log_manager->warn(PSTR(__func__), PSTR("Task WifiOta has been deleted.\n"));
   }
+  #endif
 
   #ifdef USE_WEB_IFACE
   if(config.fIface && xHandleIface != NULL){
@@ -653,15 +716,18 @@ void cbWiFiOnGotIp(WiFiEvent_t event, WiFiEventInfo_t info)
   log_manager->info(PSTR(__func__),PSTR("Started MDNS on %s\n"), config.hname);
 
   rtcUpdate(0);
+
+  #ifdef USE_WIFI_OTA
   if(config.fWOTA && xHandleWifiOta == NULL){
-    xReturnedWifiOta = xTaskCreatePinnedToCore(wifiOtaTR, "wifiOta", 6144, NULL, 1, &xHandleWifiOta, 1);
+    xReturnedWifiOta = xTaskCreatePinnedToCore(wifiOtaTR, "wifiOta", STACKSIZE_WIFIOTA, NULL, 1, &xHandleWifiOta, 1);
     if(xReturnedWifiOta == pdPASS){
       log_manager->warn(PSTR(__func__), PSTR("Task wifiOta has been created.\n"));
     }
   }
+  #endif
 
   if(config.fIoT && xHandleTB == NULL){
-    xReturnedTB = xTaskCreatePinnedToCore(TBTR, "TB", 16384, NULL, 1, &xHandleTB, 1);
+    xReturnedTB = xTaskCreatePinnedToCore(TBTR, "TB", STACKSIZE_TB, NULL, 1, &xHandleTB, 1);
     if(xReturnedTB == pdPASS){
       log_manager->warn(PSTR(__func__), PSTR("Task TB has been created.\n"));
     }
@@ -669,7 +735,7 @@ void cbWiFiOnGotIp(WiFiEvent_t event, WiFiEventInfo_t info)
 
   #ifdef USE_WEB_IFACE
   if(config.fIface && xHandleIface == NULL){
-    xReturnedIface = xTaskCreatePinnedToCore(ifaceTR, "iface", 10240, NULL, 1, &xHandleIface, 1);
+    xReturnedIface = xTaskCreatePinnedToCore(ifaceTR, "iface", STACKSIZE_IFACE, NULL, 1, &xHandleIface, 1);
     if(xReturnedIface == pdPASS){
       log_manager->warn(PSTR(__func__), PSTR("Task iface has been created.\n"));
     }
@@ -768,11 +834,6 @@ void onWsEventCb(uint8_t num, WStype_t type, uint8_t * data, size_t length){
         }
       }
       break;
-    case WStype_BIN:
-      {
-
-      }
-      break;
     case WStype_ERROR:
       {
         log_manager->warn(PSTR(__func__), PSTR("ws [%u] error\n"), num);
@@ -780,19 +841,10 @@ void onWsEventCb(uint8_t num, WStype_t type, uint8_t * data, size_t length){
         doc["num"] = num;
         wsEventCb(doc);
       }
-      break;			
-    case WStype_FRAGMENT_TEXT_START:
-    case WStype_FRAGMENT_BIN_START:
-    case WStype_FRAGMENT:
-    case WStype_FRAGMENT_FIN:
-      break;
+      break;	
   }
 }
 #endif
-
-void udawa() {
-  r.execute();
-}
 
 void setBuzzer(int32_t beepCount, uint16_t beepDelay){
   StaticJsonDocument<DOCSIZE_MIN> doc;
@@ -899,16 +951,6 @@ void setAlarmTR(void *arg){
     }
     vTaskDelay((const TickType_t) 500 / portTICK_PERIOD_MS);
   }
-}
-
-bool plannedRebootOnEnable(){
-  return true;
-}
-
-void plannedReboot(int countdown){
-  plannedRebootOnEnableCb();
-  log_manager->warn(PSTR(__func__), PSTR("Device reboot in: %d second(s)\n"), countdown);
-  reboot();
 }
 
 void reboot()
@@ -1115,7 +1157,7 @@ void configLoad()
         if(doc["provSent"] != nullptr){config.provSent = doc["provSent"].as<bool>();}
         if(doc["logLev"] != nullptr){config.logLev = doc["logLev"].as<uint8_t>(); log_manager->set_log_level(PSTR("*"), (LogLevel) config.logLev);;}
         if(doc["gmtOff"] != nullptr){config.gmtOff = doc["gmtOff"].as<int>();}
-        if(doc["fIoT"] != nullptr){config.fIoT = doc["fIoT"].as<int>();}
+        if(doc["fIoT"] != nullptr){config.fIoT = doc["fIoT"].as<bool>();}
         if(doc["htU"] != nullptr){strlcpy(config.htU, doc["htU"].as<const char*>(), sizeof(config.htU));}
         if(doc["htP"] != nullptr){strlcpy(config.htP, doc["htP"].as<const char*>(), sizeof(config.htP));}
         if(doc["fWOTA"] != nullptr){config.fWOTA = doc["fWOTA"].as<bool>();}
@@ -1650,14 +1692,16 @@ void updateSpiffs()
 
     if (!Update.end()) {
         log_manager->warn(PSTR(__func__), PSTR("An Update Error Occurred: %d\n"), Update.getError());
-        configSave();
-        configCoMCUSave();
+        FLAG_SAVE_CONFIG = true;
+        FLAG_SAVE_SETTINGS = true;
+        FLAG_SAVE_CONFIGCOMCU = true;
         return;
     }
     if (Update.isFinished()) {
         log_manager->info(PSTR(__func__), PSTR("Update successfully completed.\n"));
-        configSave();
-        configCoMCUSave();
+        FLAG_SAVE_CONFIG = true;
+        FLAG_SAVE_SETTINGS = true;
+        FLAG_SAVE_CONFIGCOMCU = true;
     } else {
         log_manager->warn(PSTR(__func__), PSTR("Update not finished! Something went wrong!\n"));
     }
@@ -1666,21 +1710,21 @@ void updateSpiffs()
 }
 
 RPC_Response processConfigSave(const RPC_Data &data){
-  configSave();
+  FLAG_SAVE_CONFIG = true;
   StaticJsonDocument<JSON_OBJECT_SIZE(1)> doc;
   doc[PSTR("configSave")] = 1;
   return RPC_Response(doc);
 }
 
 RPC_Response processConfigCoMCUSave(const RPC_Data &data){
-  configCoMCUSave();
+  FLAG_SAVE_CONFIGCOMCU = true;
   StaticJsonDocument<JSON_OBJECT_SIZE(1)> doc;
   doc[PSTR("configCoMCUSave")] = 1;
   return RPC_Response(doc);
 }
 
 RPC_Response processSaveSettings(const RPC_Data &data){
-  processSaveSettingsCb();
+  FLAG_SAVE_SETTINGS = true;
   StaticJsonDocument<JSON_OBJECT_SIZE(1)> doc;
   doc[PSTR("saveSettings")] = 1;
   return RPC_Response(doc);
@@ -1693,7 +1737,7 @@ RPC_Response processSetPanic(const RPC_Data &data){
 }
 
 RPC_Response processUpdateSpiffs(const RPC_Data &data){
-  
+  updateSpiffs();
   StaticJsonDocument<JSON_OBJECT_SIZE(1)> doc;
   doc[PSTR("updateSpiffs")] = 1;
   return RPC_Response(doc);
@@ -1701,7 +1745,7 @@ RPC_Response processUpdateSpiffs(const RPC_Data &data){
 
 
 RPC_Response processReboot(const RPC_Data &data){
-  plannedReboot(20);
+  reboot();
   StaticJsonDocument<JSON_OBJECT_SIZE(1)> doc;
   doc[PSTR("cdown")] = 20;
   return RPC_Response(doc);
@@ -1717,6 +1761,7 @@ void syncClientAttr(uint8_t direction){
   String ip = WiFi.localIP().toString();
   
   StaticJsonDocument<DOCSIZE_MIN> doc;
+  char buffer[384];
 
   if(tb.connected() && (direction == 0 || direction == 1) ){
     doc[PSTR("ipad")] = ip;
@@ -1725,14 +1770,16 @@ void syncClientAttr(uint8_t direction){
     doc[PSTR("fmVersion")] = CURRENT_FIRMWARE_VERSION;
     doc[PSTR("stamac")] = WiFi.macAddress();
     doc[PSTR("apmac")] = WiFi.softAPmacAddress();
-    tbSendAttribute(doc);
+    serializeJson(doc, buffer);
+    tbSendAttribute(buffer);
     doc.clear();
     doc[PSTR("flFree")] = ESP.getFreeSketchSpace();
     doc[PSTR("fwSize")] = ESP.getSketchSize();
     doc[PSTR("flSize")] = ESP.getFlashChipSize();
     doc[PSTR("dSize")] = (int)SPIFFS.totalBytes(); 
     doc[PSTR("dUsed")] = (int)SPIFFS.usedBytes();
-    tbSendAttribute(doc);
+    serializeJson(doc, buffer);
+    tbSendAttribute(buffer);
     doc.clear();
     doc[PSTR("sdkVer")] = ESP.getSdkVersion();
     doc[PSTR("model")] = config.model;
@@ -1740,52 +1787,58 @@ void syncClientAttr(uint8_t direction){
     doc[PSTR("group")] = config.group;
     doc[PSTR("broker")] = config.broker;
     doc[PSTR("port")] = config.port;
-    tbSendAttribute(doc);
+    serializeJson(doc, buffer);
+    tbSendAttribute(buffer);
     doc.clear();
     doc[PSTR("wssid")] = config.wssid;
     doc[PSTR("ap")] = WiFi.SSID();
     doc[PSTR("wpass")] = config.wpass;
     doc[PSTR("dssid")] = config.dssid;
     doc[PSTR("dpass")] = config.dpass;
-    tbSendAttribute(doc);
+    serializeJson(doc, buffer);
+    tbSendAttribute(buffer);
     doc.clear();
     doc[PSTR("upass")] = config.upass;
     doc[PSTR("accTkn")] = config.accTkn;
     doc[PSTR("provDK")] = config.provDK;
     doc[PSTR("provDS")] = config.provDS;
     doc[PSTR("logLev")] = config.logLev;
-    tbSendAttribute(doc);
+    serializeJson(doc, buffer);
+    tbSendAttribute(buffer);
     doc.clear();
     doc[PSTR("gmtOff")] = config.gmtOff;
     doc[PSTR("bFr")] = configcomcu.bFr;
     doc[PSTR("fP")] = (int)configcomcu.fP;
     doc[PSTR("fB")] = (int)configcomcu.fB;
     doc[PSTR("fIoT")] = (int)config.fIoT;
-    tbSendAttribute(doc);
+    serializeJson(doc, buffer);
+    tbSendAttribute(buffer);
     doc.clear();
     doc[PSTR("fWOTA")] = (int)config.fWOTA;
     doc[PSTR("fIface")] = (int)config.fIface;
     doc[PSTR("hname")] = config.hname;
     doc[PSTR("logIP")] = config.logIP;
     doc[PSTR("logPrt")] = config.logPrt;
-    tbSendAttribute(doc);
+    serializeJson(doc, buffer);
+    tbSendAttribute(buffer);
     doc.clear();
     doc[PSTR("pBz")] = configcomcu.pBz;
     doc[PSTR("pLR")] = configcomcu.pLR;
     doc[PSTR("pLG")] = configcomcu.pLG;
     doc[PSTR("pLB")] = configcomcu.pLB;
     doc[PSTR("htU")] = config.htU;
-    tbSendAttribute(doc);
+    serializeJson(doc, buffer);
+    tbSendAttribute(buffer);
     doc.clear();
     doc[PSTR("htP")] = config.htP;
     doc[PSTR("lON")] = configcomcu.lON;
-    tbSendAttribute(doc);
+    serializeJson(doc, buffer);
+    tbSendAttribute(buffer);
     doc.clear();
   }
 
   #ifdef USE_WEB_IFACE
   if(config.wsCount > 0 && (direction == 0 || direction == 2)){
-    char buffer[1024];
     JsonObject attr = doc.createNestedObject("attr");
     attr[PSTR("ipad")] = ip.c_str();
     attr[PSTR("compdate")] = COMPILED;
@@ -1806,35 +1859,15 @@ void syncClientAttr(uint8_t direction){
     cfg[PSTR("name")] = config.name;
     cfg[PSTR("model")] = config.model;
     cfg[PSTR("group")] = config.group;
-    cfg[PSTR("broker")] = config.broker;
-    cfg[PSTR("port")] = config.port;
     cfg[PSTR("wssid")] = config.wssid;
-    cfg[PSTR("ap")] = WiFi.SSID();
     cfg[PSTR("wpass")] = config.wpass;
-    cfg[PSTR("dssid")] = config.dssid;
-    cfg[PSTR("dpass")] = config.dpass;
-    cfg[PSTR("upass")] = config.upass;
-    cfg[PSTR("accTkn")] = config.accTkn;
-    cfg[PSTR("provDK")] = config.provDK;
-    cfg[PSTR("provDS")] = config.provDS;
-    cfg[PSTR("logLev")] = config.logLev;
+    cfg[PSTR("ap")] = WiFi.SSID();
     cfg[PSTR("gmtOff")] = config.gmtOff;
-    cfg[PSTR("bFr")] = configcomcu.bFr;
     cfg[PSTR("fP")] = (int)configcomcu.fP;
-    cfg[PSTR("fB")] = (int)configcomcu.fB;
     cfg[PSTR("fIoT")] = (int)config.fIoT;
-    cfg[PSTR("fWOTA")] = (int)config.fWOTA;
-    cfg[PSTR("fIface")] = (int)config.fIface;
     cfg[PSTR("hname")] = config.hname;
-    cfg[PSTR("logIP")] = config.logIP;
-    cfg[PSTR("logPrt")] = config.logPrt;
-    cfg[PSTR("pBz")] = configcomcu.pBz;
-    cfg[PSTR("pLR")] = configcomcu.pLR;
-    cfg[PSTR("pLG")] = configcomcu.pLG;
-    cfg[PSTR("pLB")] = configcomcu.pLB;
     cfg[PSTR("htU")] = config.htU;
     cfg[PSTR("htP")] = config.htP;
-    cfg[PSTR("lON")] = configcomcu.lON;
     serializeJson(doc, buffer);
     ws.broadcastTXT(buffer);
   }
@@ -1845,13 +1878,11 @@ void syncClientAttr(uint8_t direction){
   onSyncClientAttrCb(direction);
 }
 
-bool tbSendAttribute(StaticJsonDocument<DOCSIZE_MIN> &doc){
+bool tbSendAttribute(const char *buffer){
   bool res = false;
   if( xSemaphoreTBSend != NULL && config.provSent && tb.connected() ){
     if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
     {
-      char buffer[DOCSIZE_MIN];
-      serializeJson(doc, buffer);
       res = tb.sendAttributeJSON(buffer);
       xSemaphoreGive( xSemaphoreTBSend );
     }
@@ -1863,13 +1894,11 @@ bool tbSendAttribute(StaticJsonDocument<DOCSIZE_MIN> &doc){
   return res;
 }
 
-bool tbSendTelemetry(StaticJsonDocument<DOCSIZE_MIN> &doc){
+bool tbSendTelemetry(const char * buffer){
   bool res = false;
   if( xSemaphoreTBSend != NULL && config.provSent && tb.connected()){
     if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
     {
-      char buffer[DOCSIZE_MIN];
-      serializeJson(doc, buffer);
       res = tb.sendTelemetryJson(buffer); 
       xSemaphoreGive( xSemaphoreTBSend );
     }
