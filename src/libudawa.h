@@ -59,9 +59,11 @@
 #ifndef DOCSIZE
   #define DOCSIZE 1024
 #endif
-
 #ifndef DOCSIZE_MIN
   #define DOCSIZE_MIN 384
+#endif
+#ifndef DOCSIZE_SETTINGS
+  #define DOCSIZE_SETTINGS 2048
 #endif
 
 namespace libudawa
@@ -377,23 +379,18 @@ void udawa(){
 /// The callback will then not be called anymore unless it is reused for another request
 /// @param data Data containing the shared attributes that were requested and their current value
 void processSharedAttributeRequest(const Shared_Attribute_Data &data) {
-  int jsonSize = JSON_STRING_SIZE(measureJson(data));
-  char buffer[jsonSize];
-  serializeJson(data, buffer, jsonSize);
-  log_manager->verbose(PSTR(__func__), PSTR("Received shared attribute(s): %s.\n"), buffer);
+  log_manager->verbose(PSTR(__func__), PSTR("Received shared attribute(s).\n"));
 }
 
 /// @brief Update callback that will be called as soon as the requested client-side attributes, have been received.
 /// The callback will then not be called anymore unless it is reused for another request
 /// @param data Data containing the client-side attributes that were requested and their current value
 void processClientAttributeRequest(const Shared_Attribute_Data &data) {
-  int jsonSize = JSON_STRING_SIZE(measureJson(data));
-  char buffer[jsonSize];
-  serializeJson(data, buffer, jsonSize);
-  log_manager->verbose(PSTR(__func__), PSTR("Received client attribute(s): %s.\n"), buffer);
+  log_manager->verbose(PSTR(__func__), PSTR("Received client attribute(s): %s.\n"));
 }
 
 void processSharedAttributeUpdate(const Shared_Attribute_Data &data){
+  log_manager->verbose(PSTR(__func__), PSTR("Received shared attribute(s) update.\n"));
   if( xSemaphoreConfig != NULL ){
     if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 1000 ) == pdTRUE )
     {
@@ -445,13 +442,6 @@ void processSharedAttributeUpdate(const Shared_Attribute_Data &data){
       log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
     }
   }
-
-
-  int jsonSize = JSON_STRING_SIZE(measureJson(data));
-  char buffer[jsonSize];
-  serializeJson(data, buffer, jsonSize);
-  log_manager->verbose(PSTR(__func__), PSTR("Received shared attribute(s) update: %s.\n"), buffer);
-
   processSharedAttributeUpdateCb(data);
 }
 
@@ -1496,7 +1486,7 @@ void serialReadFromCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc)
 }
 
 
-void readSettings(StaticJsonDocument<DOCSIZE> &doc, const char* path)
+void readSettings(StaticJsonDocument<DOCSIZE_SETTINGS> &doc, const char* path)
 {
   if( xSemaphoreSettings != NULL ){
     if( xSemaphoreTake( xSemaphoreSettings, ( TickType_t ) 1000 ) == pdTRUE )
@@ -1520,7 +1510,7 @@ void readSettings(StaticJsonDocument<DOCSIZE> &doc, const char* path)
   }
 }
 
-void writeSettings(StaticJsonDocument<DOCSIZE> &doc, const char* path)
+void writeSettings(StaticJsonDocument<DOCSIZE_SETTINGS> &doc, const char* path)
 {
   if( xSemaphoreSettings != NULL ){
     if( xSemaphoreTake( xSemaphoreSettings, ( TickType_t ) 1000 ) == pdTRUE )
