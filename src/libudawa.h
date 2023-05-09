@@ -224,6 +224,7 @@ bool FLAG_SAVE_CONFIGCOMCU = false;
 bool FLAG_SYNC_CLIENT_ATTR_0 = false;
 bool FLAG_SYNC_CLIENT_ATTR_1 = false;
 bool FLAG_SYNC_CLIENT_ATTR_2 = false;
+bool FLAG_UPDATE_SPIFFS = false;
 
 // Shared attributes we want to request from the server
 constexpr const char FW_TAG_KEY[] PROGMEM = "fw_tag";
@@ -337,6 +338,8 @@ void startup() {
   xReturnedWifiKeeper = xTaskCreatePinnedToCore(wifiKeeperTR, "wifiKeeper", STACKSIZE_WIFIKEEPER, NULL, 1, &xHandleWifiKeeper, 1);
   xReturnedAlarm = xTaskCreatePinnedToCore(setAlarmTR, "setAlarm", STACKSIZE_SETALARM, NULL, 1, &xHandleAlarm, 1);
 
+
+  setAlarm(0, 0, 3, 50);
 }
 
 void udawa(){
@@ -363,6 +366,10 @@ void udawa(){
   if(FLAG_SYNC_CLIENT_ATTR_2){
     syncClientAttr(2);
     FLAG_SYNC_CLIENT_ATTR_2 = false;
+  }
+  if(FLAG_UPDATE_SPIFFS){
+    updateSpiffs();
+    FLAG_UPDATE_SPIFFS = false;
   }
 }
 
@@ -416,7 +423,7 @@ void processSharedAttributeUpdate(const Shared_Attribute_Data &data){
     }
     else
     {
-      log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+      log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
     }
   }
 
@@ -435,7 +442,7 @@ void processSharedAttributeUpdate(const Shared_Attribute_Data &data){
     }
     else
     {
-      log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+      log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
     }
   }
 
@@ -500,10 +507,12 @@ void wifiOtaTR(void *arg){
             type = "filesystem";
             SPIFFS.end();
         log_manager->warn(PSTR(__func__),PSTR("Starting OTA %s\n"), type.c_str());
+        setAlarm(0, 2, 1000, 50);
       })
       .onEnd([]()
       {
         log_manager->warn(PSTR(__func__),PSTR("Device rebooting...\n"));
+        setAlarm(0, 0, 0, 1000);
         reboot();
       })
       .onProgress([](unsigned int progress, unsigned int total)
@@ -606,7 +615,7 @@ void TBTR(void *arg){
               }
               else
               {
-                log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+                log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
               }
             }
             tbDisco = 0;
@@ -635,11 +644,12 @@ void TBTR(void *arg){
           }
           else
           {
-            log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+            log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
           }
         }
 
         onTbConnectedCb();
+        setAlarm(0, 0, 3, 50);
         log_manager->info(PSTR(__func__),PSTR("IoT Connected!\n"));
       }
     }
@@ -745,6 +755,8 @@ void cbWiFiOnGotIp(WiFiEvent_t event, WiFiEventInfo_t info)
   if(rtc.getYear() < 2023){
     setAlarm(131, 1, 5, 1000);
   }
+
+  setAlarm(0, 0, 3, 50);
   log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
 }
 
@@ -789,7 +801,7 @@ void onWsEventCb(uint8_t num, WStype_t type, uint8_t * data, size_t length){
           }
           else
           {
-              log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+              log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
           }
         }
         
@@ -809,7 +821,7 @@ void onWsEventCb(uint8_t num, WStype_t type, uint8_t * data, size_t length){
           }
           else
           {
-              log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+              log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
           }
         }
         log_manager->debug(PSTR(__func__), PSTR("ws [%u] connect. WsCount: %d\n"), num, config.wsCount);
@@ -1048,7 +1060,7 @@ void configReset()
     }
     else
     {
-        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
     }
   }
 }
@@ -1094,7 +1106,7 @@ void configLoadFailSafe()
     }
     else
     {
-        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
     }
   }
 }
@@ -1176,7 +1188,7 @@ void configLoad()
     }
     else
     {
-        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
     }
   }
 }
@@ -1227,12 +1239,12 @@ void configSave()
 
       serializeJson(doc, file);
       file.close();
-      log_manager->verbose(PSTR(__func__), PSTR("Config saved successfully.\n."));
+      log_manager->verbose(PSTR(__func__), PSTR("Config saved successfully.\n"));
       xSemaphoreGive( xSemaphoreConfig );
     }
     else
     {
-        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
     }
   }
 }
@@ -1272,7 +1284,7 @@ void configCoMCUReset()
     }
     else
     {
-        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
     }
   }
 }
@@ -1312,7 +1324,7 @@ void configCoMCULoad()
     }
     else
     {
-        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
     }
   }
 }
@@ -1349,12 +1361,12 @@ void configCoMCUSave()
 
       serializeJson(doc, file);
       file.close();
-      log_manager->verbose(PSTR(__func__), PSTR("ConfigCoMCU saved successfully.\n."));
+      log_manager->verbose(PSTR(__func__), PSTR("ConfigCoMCU saved successfully.\n"));
       xSemaphoreGive( xSemaphoreConfigCoMCU );
     }
     else
     {
-        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
     }
   }
 }
@@ -1384,7 +1396,7 @@ void syncConfigCoMCU()
     }
     else
     {
-        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
     }
   }
 }
@@ -1424,7 +1436,7 @@ void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc)
           //log_manager->verbose(PSTR(__func__),PSTR("Sent to CoMCU: %s\n"), result.c_str());
           if(isRpc)
           {
-            delay(50);
+            vTaskDelay((const TickType_t) 50 / portTICK_PERIOD_MS);
             doc.clear();
             serialReadFromCoMcu(doc);
           }
@@ -1503,7 +1515,7 @@ void readSettings(StaticJsonDocument<DOCSIZE> &doc, const char* path)
     }
     else
     {
-        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
     }
   }
 }
@@ -1527,7 +1539,7 @@ void writeSettings(StaticJsonDocument<DOCSIZE> &doc, const char* path)
     }
     else
     {
-        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
     }
   }
 }
@@ -1658,7 +1670,7 @@ void updateSpiffs()
                 log_manager->warn(PSTR(__func__), PSTR("Stream timed out!\n"));
                 return;
             }
-            vTaskDelay(1);
+            vTaskDelay((const TickType_t)10 / portTICK_PERIOD_MS);
         }
     }
 
@@ -1671,10 +1683,12 @@ void updateSpiffs()
         log_manager->warn(PSTR(__func__), PSTR("Not enough space to begin OTA, partition size mismatch?\n"));
         Update.abort();
         return;
+    }else{
+      setAlarm(0, 3, 1000, 25);
     }
 
     Update.onProgress( [](size_t progress, size_t size) {
-        log_manager->verbose(PSTR(__func__), PSTR("SPIFFS Updater: %d/%d\n"), (int)progress, (int)size);
+      log_manager->verbose(PSTR(__func__), PSTR("SPIFFS Updater: %d/%d\n"), (int)progress, (int)size);
     });
 
     Serial.printf("Begin SPIFFS OTA. This may take 2 - 5 mins to complete. Things might be quiet for a while.. Patience!\n");
@@ -1692,6 +1706,7 @@ void updateSpiffs()
 
     if (!Update.end()) {
         log_manager->warn(PSTR(__func__), PSTR("An Update Error Occurred: %d\n"), Update.getError());
+        setAlarm(0, 0, 0, 1000);
         FLAG_SAVE_CONFIG = true;
         FLAG_SAVE_SETTINGS = true;
         FLAG_SAVE_CONFIGCOMCU = true;
@@ -1699,6 +1714,7 @@ void updateSpiffs()
     }
     if (Update.isFinished()) {
         log_manager->info(PSTR(__func__), PSTR("Update successfully completed.\n"));
+        setAlarm(0, 0, 0, 1000);
         FLAG_SAVE_CONFIG = true;
         FLAG_SAVE_SETTINGS = true;
         FLAG_SAVE_CONFIGCOMCU = true;
@@ -1732,12 +1748,11 @@ RPC_Response processSaveSettings(const RPC_Data &data){
 
 RPC_Response processSetPanic(const RPC_Data &data){
   processSetPanicCb(data);
-  
   return RPC_Response(PSTR("setPanic"), configcomcu.fP);
 }
 
 RPC_Response processUpdateSpiffs(const RPC_Data &data){
-  updateSpiffs();
+  FLAG_UPDATE_SPIFFS = true;
   StaticJsonDocument<JSON_OBJECT_SIZE(1)> doc;
   doc[PSTR("updateSpiffs")] = 1;
   return RPC_Response(doc);
@@ -1888,7 +1903,7 @@ bool tbSendAttribute(const char *buffer){
     }
     else
     {
-      log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+      log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
     }
   }
   return res;
@@ -1904,7 +1919,7 @@ bool tbSendTelemetry(const char * buffer){
     }
     else
     {
-      log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n."));
+      log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
     }   
   }
   return res;
