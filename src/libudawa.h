@@ -360,8 +360,10 @@ void udawa(){
     if( xSemaphoreTBSend != NULL && config.provSent && tb.connected()){
       if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
       {
+        taskENTER_CRITICAL();
         tb.Start_Firmware_Update(tbOtaCb);
         xSemaphoreGive( xSemaphoreTBSend );
+        taskEXIT_CRITICAL();
       }
       else
       {
