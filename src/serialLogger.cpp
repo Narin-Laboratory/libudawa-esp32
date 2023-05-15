@@ -18,7 +18,7 @@
 #define CYAN_COLOR_CODE 34
 #define WHITE_COLOR_CODE 37
 
-static SemaphoreHandle_t xSemaphore = NULL;
+static SemaphoreHandle_t xSemaphoreSerialLogger = NULL;
 
 char get_error_char(const LogLevel level)
 {
@@ -81,19 +81,19 @@ int map_log_level(const LogLevel level)
 
 void ESP32SerialLogger::log_message(const char *tag, LogLevel level, const char *fmt, va_list args)
 {
-    if(xSemaphore == NULL)
+    if(xSemaphoreSerialLogger == NULL)
     {
-        xSemaphore = xSemaphoreCreateMutex();
+        xSemaphoreSerialLogger = xSemaphoreCreateMutex();
     }
 
-    if(xSemaphore != NULL && xSemaphoreTake(xSemaphore, (TickType_t) 20))
+    if(xSemaphoreSerialLogger != NULL && xSemaphoreTake(xSemaphoreSerialLogger, (TickType_t) 20))
     {
         //esp_log_level_t esp_log_level = (esp_log_level_t)map_log_level(level);
         esp_log_level_t esp_log_level = ESP_LOG_NONE;
         esp_log_write(esp_log_level, tag, "\033[0;%dm%c (%d) %s: ", get_console_color_code(level), get_error_char(level), esp_log_timestamp(), tag);
         esp_log_writev(esp_log_level, tag, fmt, args);
         esp_log_write(esp_log_level, tag, "\033[0m");
-        xSemaphoreGive(xSemaphore);
+        xSemaphoreGive(xSemaphoreSerialLogger);
     }
     else{
         printf("Could not get semaphore\n");

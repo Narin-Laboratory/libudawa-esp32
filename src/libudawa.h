@@ -108,9 +108,6 @@ struct Config
   #ifdef USE_WEB_IFACE
   uint8_t wsCount = 0;
   #endif
-
-  bool currentFWSent = false;
-  bool updateRequestSent = false;
 };
 
 struct ConfigCoMCU
@@ -129,13 +126,6 @@ class ESP32UDPLogger : public ILogHandler
 {
     public:
         void log_message(const char *tag, const LogLevel level, const char *fmt, va_list args) override;
-};
-
-class TBLogger {
-  public:
-    static void log(const char *error) {
-      
-    }
 };
 
 uint32_t micro2milli(uint32_t hi, uint32_t lo);
@@ -205,7 +195,15 @@ void syncClientAttr(uint8_t direction);
 void (*onSyncClientAttrCb)(uint8_t);
 bool tbSendAttribute(const char *buffer);
 bool tbSendTelemetry(const char *buffer);
+void (*tbloggerCb)(const char *error);
+void onTbLogger(const char *error);
 
+class TBLogger {
+  public:
+    static void log(const char *error) {
+      tbloggerCb(error);
+    }
+};
 
 ESP32SerialLogger serial_logger;
 ESP32UDPLogger udp_logger;
@@ -227,22 +225,7 @@ bool FLAG_SYNC_CLIENT_ATTR_0 = false;
 bool FLAG_SYNC_CLIENT_ATTR_1 = false;
 bool FLAG_SYNC_CLIENT_ATTR_2 = false;
 bool FLAG_UPDATE_SPIFFS = false;
-
-// Shared attributes we want to request from the server
-constexpr const char FW_TAG_KEY[] PROGMEM = "fw_tag";
-constexpr std::array<const char*, 6U> REQUESTED_SHARED_ATTRIBUTES = {
-  FW_CHKS_KEY,
-  FW_CHKS_ALGO_KEY,
-  FW_SIZE_KEY,
-  FW_TAG_KEY,
-  FW_TITLE_KEY,
-  FW_VER_KEY
-};
-
-// Client-side attributes we want to request from the server
-constexpr std::array<const char*, 1U> REQUESTED_CLIENT_ATTRIBUTES = {
-  PSTR("fIface")
-};
+bool FLAG_MQTT_OTA = false;
 
 // Client-side RPC that can be executed from cloud
 const std::array<RPC_Callback, 7U> clientRPCCallbacks = {
@@ -255,9 +238,7 @@ const std::array<RPC_Callback, 7U> clientRPCCallbacks = {
   RPC_Callback{ PSTR("generic"), processGenericClientRPC }
 };
 
-const Attribute_Request_Callback tbSharedCb(REQUESTED_SHARED_ATTRIBUTES.cbegin(), REQUESTED_SHARED_ATTRIBUTES.cend(), &processSharedAttributeRequest);
-const Attribute_Request_Callback tbClientCb(REQUESTED_CLIENT_ATTRIBUTES.cbegin(), REQUESTED_CLIENT_ATTRIBUTES.cend(), &processClientAttributeRequest);
-const OTA_Update_Callback tbOtaCb(&tbOtaProgressCb, &tbOtaFinishedCb, CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION, 5, 1024);
+const OTA_Update_Callback tbOtaCb(&tbOtaProgressCb, &tbOtaFinishedCb, CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION, 20, 4096);
 const Shared_Attribute_Callback tbSharedAttrUpdateCb(&processSharedAttributeUpdate);
 
 BaseType_t xReturnedWifiKeeper;
@@ -296,6 +277,7 @@ QueueHandle_t xQueueAlarm;
 
 
 void startup() {
+  tbloggerCb = &onTbLogger;
   xQueueAlarm = xQueueCreate( 1, sizeof( struct AlarmMessage ) );
 
   if(xSemaphoreSerialCoMCU == NULL){xSemaphoreSerialCoMCU = xSemaphoreCreateMutex();}
@@ -346,32 +328,53 @@ void startup() {
 
 void udawa(){
   if(FLAG_SAVE_CONFIG){
-    configSave();
     FLAG_SAVE_CONFIG = false;
+    configSave();
   }
   if(FLAG_SAVE_CONFIGCOMCU){
-    configCoMCUSave();
     FLAG_SAVE_CONFIGCOMCU = false;
+    configCoMCUSave();
   }
   if(FLAG_SAVE_SETTINGS){
-    onSaveSettings();
     FLAG_SAVE_SETTINGS = false;
+    onSaveSettings();
   }
   if(FLAG_SYNC_CLIENT_ATTR_0){
-    syncClientAttr(0);
     FLAG_SYNC_CLIENT_ATTR_0 = false;
+    syncClientAttr(0);
   }
   if(FLAG_SYNC_CLIENT_ATTR_1){
-    syncClientAttr(1);
     FLAG_SYNC_CLIENT_ATTR_1 = false;
+    syncClientAttr(1);
   }
   if(FLAG_SYNC_CLIENT_ATTR_2){
-    syncClientAttr(2);
     FLAG_SYNC_CLIENT_ATTR_2 = false;
+    syncClientAttr(2);
   }
   if(FLAG_UPDATE_SPIFFS){
-    updateSpiffs();
     FLAG_UPDATE_SPIFFS = false;
+    updateSpiffs();
+  }
+  if(FLAG_MQTT_OTA){
+    FLAG_MQTT_OTA = false;
+    if( xSemaphoreTBSend != NULL && config.provSent && tb.connected()){
+      if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
+      {
+        tb.Start_Firmware_Update(tbOtaCb);
+        xSemaphoreGive( xSemaphoreTBSend );
+      }
+      else
+      {
+        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+      }   
+    }
+  }
+}
+
+void onTbLogger(const char *error){
+  if (config.logLev == 5)
+  {
+    log_manager->verbose(PSTR(__func__), PSTR("%s.\n"), error);
   }
 }
 
@@ -380,17 +383,20 @@ void udawa(){
 /// @param data Data containing the shared attributes that were requested and their current value
 void processSharedAttributeRequest(const Shared_Attribute_Data &data) {
   log_manager->verbose(PSTR(__func__), PSTR("Received shared attribute(s).\n"));
+  if(config.logLev == 5){serializeJson(data, Serial); Serial.println();}
 }
 
 /// @brief Update callback that will be called as soon as the requested client-side attributes, have been received.
 /// The callback will then not be called anymore unless it is reused for another request
 /// @param data Data containing the client-side attributes that were requested and their current value
 void processClientAttributeRequest(const Shared_Attribute_Data &data) {
-  log_manager->verbose(PSTR(__func__), PSTR("Received client attribute(s): %s.\n"));
+  log_manager->verbose(PSTR(__func__), PSTR("Received client attribute(s).\n"));
+  if(config.logLev == 5){serializeJson(data, Serial); Serial.println();}
 }
 
 void processSharedAttributeUpdate(const Shared_Attribute_Data &data){
   log_manager->verbose(PSTR(__func__), PSTR("Received shared attribute(s) update.\n"));
+  if(config.logLev == 5){serializeJson(data, Serial); Serial.println();}
   if( xSemaphoreConfig != NULL ){
     if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 1000 ) == pdTRUE )
     {
@@ -443,11 +449,12 @@ void processSharedAttributeUpdate(const Shared_Attribute_Data &data){
     }
   }
   processSharedAttributeUpdateCb(data);
+  FLAG_SYNC_CLIENT_ATTR_2 = true;
 }
 
 void tbOtaFinishedCb(const bool& success){
   if(success){
-    log_manager->info(PSTR(__func__), PSTR("IoT OTA update success!\n"));
+    log_manager->info(PSTR(__func__), PSTR("IoT OTA update ended.!\n"));
   }else{
     log_manager->warn(PSTR(__func__), PSTR("IoT OTA update failed!\n"));
   }
@@ -568,79 +575,63 @@ void processProvisionResponse(const Provision_Data &data)
 void TBTR(void *arg){
   uint8_t tbDisco = 0;
   while(true){
-    if(!config.provSent)
-    {
-      if (tb.connect(config.broker, "provision", config.port)) {
-        const Provision_Callback provisionCallback(Access_Token(), &processProvisionResponse, config.provDK, config.provDS, config.name);
-        if(tb.Provision_Request(provisionCallback))
+    if(!FLAG_MQTT_OTA){
+      if(!config.provSent)
+      {
+        if (tb.connect(config.broker, "provision", config.port)) {
+          const Provision_Callback provisionCallback(Access_Token(), &processProvisionResponse, config.provDK, config.provDS, config.name);
+          if(tb.Provision_Request(provisionCallback))
+          {
+            log_manager->info(PSTR(__func__),PSTR("Connected to provisioning server: %s:%d\n"),  config.broker, config.port);
+          }
+        }
+        else
         {
-          log_manager->info(PSTR(__func__),PSTR("Connected to provisioning server: %s:%d\n"),  config.broker, config.port);
+          log_manager->warn(PSTR(__func__),PSTR("Failed to connect to provisioning server: %s:%d\n"),  config.broker, config.port);
+        }
+        unsigned long timer = millis();
+        while(true){
+          tb.loop();
+          if(config.provSent || (millis() - timer) > 10000){break;}
+          vTaskDelay((const TickType_t)10 / portTICK_PERIOD_MS);
         }
       }
-      else
-      {
-        log_manager->warn(PSTR(__func__),PSTR("Failed to connect to provisioning server: %s:%d\n"),  config.broker, config.port);
-      }
-      while(true){
-        tb.loop();
-        if(config.provSent){break;}
-        vTaskDelay((const TickType_t)10 / portTICK_PERIOD_MS);
-      }
-    }
-    else{
-      if(!tb.connected())
-      {
-        log_manager->warn(PSTR(__func__),PSTR("IoT disconnected!\n"));
-        onTbDisconnectedCb();
-        log_manager->info(PSTR(__func__),PSTR("Connecting to broker %s:%d\n"), config.broker, config.port);
-        while(!tb.connect(config.broker, config.accTkn, config.port, config.name)){  
-          tbDisco++;
-          log_manager->warn(PSTR(__func__),PSTR("Failed to connect to IoT Broker %s (%d)\n"), config.broker, tbDisco);
-          if(tbDisco >= 10){
-            if( xSemaphoreConfig != NULL ){
-              if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 1000 ) == pdTRUE )
-              {
-                config.provSent = 0;
-                xSemaphoreGive( xSemaphoreConfig );
+      else{
+        if(!tb.connected())
+        {
+          log_manager->warn(PSTR(__func__),PSTR("IoT disconnected!\n"));
+          onTbDisconnectedCb();
+          log_manager->info(PSTR(__func__),PSTR("Connecting to broker %s:%d\n"), config.broker, config.port);
+          while(!tb.connect(config.broker, config.accTkn, config.port, config.name)){  
+            tbDisco++;
+            log_manager->warn(PSTR(__func__),PSTR("Failed to connect to IoT Broker %s (%d)\n"), config.broker, tbDisco);
+            if(tbDisco >= 10){
+              if( xSemaphoreConfig != NULL ){
+                if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 1000 ) == pdTRUE )
+                {
+                  config.provSent = 0;
+                  xSemaphoreGive( xSemaphoreConfig );
+                }
+                else
+                {
+                  log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+                }
               }
-              else
-              {
-                log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
-              }
+              tbDisco = 0;
+              break;
             }
-            tbDisco = 0;
-            break;
+            vTaskDelay((const TickType_t)1000 / portTICK_PERIOD_MS);
           }
-          vTaskDelay((const TickType_t)1000 / portTICK_PERIOD_MS);
+
+          bool tbSharedUpdate_status = tb.Shared_Attributes_Subscribe(tbSharedAttrUpdateCb);
+          bool tbClientRPC_status = tb.RPC_Subscribe(clientRPCCallbacks.cbegin(), clientRPCCallbacks.cend());
+          
+          FLAG_MQTT_OTA = true;
+
+          onTbConnectedCb();
+          setAlarm(0, 0, 3, 50);
+          log_manager->info(PSTR(__func__),PSTR("IoT Connected!\n"));
         }
-
-        //bool tbShared_status = tb.Shared_Attributes_Request(tbSharedCb);
-        //bool tbClient_status = tb.Client_Attributes_Request(tbClientCb);
-        bool tbSharedUpdate_status = tb.Shared_Attributes_Subscribe(tbSharedAttrUpdateCb);
-        bool tbClientRPC_status = tb.RPC_Subscribe(clientRPCCallbacks.cbegin(), clientRPCCallbacks.cend());
-        
-
-        if( xSemaphoreConfig != NULL ){
-          if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 1000 ) == pdTRUE )
-          {
-            if (!config.currentFWSent) {
-              constexpr char FW_STATE_UPDATED[] PROGMEM = "UPDATED";
-              config.currentFWSent = tb.Firmware_Send_Info(CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION) && tb.Firmware_Send_State(FW_STATE_UPDATED);
-            }
-            if (!config.updateRequestSent) {
-              config.updateRequestSent = tb.Subscribe_Firmware_Update(tbOtaCb);
-            }
-            xSemaphoreGive( xSemaphoreConfig );
-          }
-          else
-          {
-            log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
-          }
-        }
-
-        onTbConnectedCb();
-        setAlarm(0, 0, 3, 50);
-        log_manager->info(PSTR(__func__),PSTR("IoT Connected!\n"));
       }
     }
 
