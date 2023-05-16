@@ -1988,6 +1988,7 @@ bool tbSendAttribute(const char *buffer){
   if( xSemaphoreTBSend != NULL && WiFi.isConnected() && config.provSent && tb.connected()){
     if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
     {
+      //log_manager->verbose(PSTR(__func__), PSTR("%s\n"), buffer);
       res = tb.sendAttributeJSON(buffer);
       xSemaphoreGive( xSemaphoreTBSend );
     }
@@ -2004,6 +2005,7 @@ bool tbSendTelemetry(const char * buffer){
   if( xSemaphoreTBSend != NULL && WiFi.isConnected() && config.provSent && tb.connected()){
     if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
     {
+      //log_manager->verbose(PSTR(__func__), PSTR("%s\n"), buffer);
       res = tb.sendTelemetryJson(buffer); 
       xSemaphoreGive( xSemaphoreTBSend );
     }
