@@ -371,7 +371,7 @@ void udawa(){
 }
 
 void onTbLogger(const char *error){
-  if (config.logLev == 5)
+  if (config.logLev == 6)
   {
     log_manager->verbose(PSTR(__func__), PSTR("%s.\n"), error);
   }
@@ -467,6 +467,7 @@ void processSharedAttributeUpdate(const Shared_Attribute_Data &data){
     }
     processSharedAttributeUpdateCb(data);
     FLAG_SYNC_CLIENT_ATTR_2 = true;
+    setAlarm(0, 0, 1, 50);
     xSemaphoreGive( xSemaphoreTBSend );
   }
   else
@@ -507,7 +508,7 @@ void ifaceTR(void *arg){
   while(true){
     ws.loop();
     web.handleClient();
-    vTaskDelay((const TickType_t) 10 / portTICK_PERIOD_MS);
+    vTaskDelay((const TickType_t) 3 / portTICK_PERIOD_MS);
   }
 }
 #endif
@@ -560,7 +561,7 @@ void wifiOtaTR(void *arg){
 
 void processProvisionResponse(const Provision_Data &data)
 {
-  if( xSemaphoreTBSend != NULL && WiFi.isConnected() && config.provSent && tb.connected()){
+  if( xSemaphoreTBSend != NULL && WiFi.isConnected() && !config.provSent && tb.connected()){
     if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
     {
       constexpr char CREDENTIALS_TYPE[] PROGMEM = "credentialsType";
@@ -572,14 +573,13 @@ void processProvisionResponse(const Provision_Data &data)
 
       if (strncmp(data["status"], "SUCCESS", strlen("SUCCESS")) != 0) {
         log_manager->warn(PSTR(__func__),PSTR("Provision response contains the error: (%s)\n"), data["errorMsg"].as<const char*>());
-        return;
       }
 
       if (strncmp(data[CREDENTIALS_TYPE], ACCESS_TOKEN_CRED_TYPE, strlen(ACCESS_TOKEN_CRED_TYPE)) == 0) {
         strlcpy(config.accTkn, data[CREDENTIALS_VALUE].as<std::string>().c_str(), sizeof(config.accTkn));
         config.provSent = true;  
         FLAG_SAVE_CONFIG = true;
-
+        log_manager->verbose(PSTR(__func__),PSTR("Access token provision response saved.\n"));
       }
       else if (strncmp(data[CREDENTIALS_TYPE], MQTT_BASIC_CRED_TYPE, strlen(MQTT_BASIC_CRED_TYPE)) == 0) {
         /*auto credentials_value = data[CREDENTIALS_VALUE].as<JsonObjectConst>();
@@ -589,7 +589,7 @@ void processProvisionResponse(const Provision_Data &data)
       }
       else {
         log_manager->warn(PSTR(__func__),PSTR("Unexpected provision credentialsType: (%s)\n"), data[CREDENTIALS_TYPE].as<const char*>());
-        return;
+
       }
 
       // Disconnect from the cloud client connected to the provision account, because it is no longer needed the device has been provisioned
@@ -608,7 +608,6 @@ void processProvisionResponse(const Provision_Data &data)
 
 
 void TBTR(void *arg){
-  uint8_t tbDisco = 0;
   while(true){
     if(!config.provSent){
       if (tb.connect(config.broker, "provision", config.port)) {
@@ -635,6 +634,7 @@ void TBTR(void *arg){
         log_manager->warn(PSTR(__func__),PSTR("IoT disconnected!\n"));
         onTbDisconnectedCb();
         log_manager->info(PSTR(__func__),PSTR("Connecting to broker %s:%d\n"), config.broker, config.port);
+        uint8_t tbDisco = 0;
         while(!tb.connect(config.broker, config.accTkn, config.port, config.name)){  
           tbDisco++;
           log_manager->warn(PSTR(__func__),PSTR("Failed to connect to IoT Broker %s (%d)\n"), config.broker, tbDisco);
@@ -656,22 +656,24 @@ void TBTR(void *arg){
           vTaskDelay((const TickType_t)1000 / portTICK_PERIOD_MS);
         }
 
-        bool tbSharedUpdate_status = tb.Shared_Attributes_Subscribe(tbSharedAttrUpdateCb);
-        bool tbClientRPC_status = tb.RPC_Subscribe(clientRPCCallbacks.cbegin(), clientRPCCallbacks.cend());
-        tb.Firmware_Send_Info(CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION); 
-        tb.Firmware_Send_State(PSTR("updated"));
-        tb.Shared_Attributes_Request(fwCheckCb);
+        if(tb.connected()){
+          bool tbSharedUpdate_status = tb.Shared_Attributes_Subscribe(tbSharedAttrUpdateCb);
+          bool tbClientRPC_status = tb.RPC_Subscribe(clientRPCCallbacks.cbegin(), clientRPCCallbacks.cend());
+          tb.Firmware_Send_Info(CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION); 
+          tb.Firmware_Send_State(PSTR("updated"));
+          tb.Shared_Attributes_Request(fwCheckCb);
 
-        FLAG_SYNC_CLIENT_ATTR_1 = true;
+          FLAG_SYNC_CLIENT_ATTR_1 = true;
 
-        onTbConnectedCb();
-        setAlarm(0, 0, 3, 50);
-        log_manager->info(PSTR(__func__),PSTR("IoT Connected!\n"));
+          onTbConnectedCb();
+          setAlarm(0, 0, 3, 50);
+          log_manager->info(PSTR(__func__),PSTR("IoT Connected!\n"));
+        }
       }
     }
 
     tb.loop();
-    vTaskDelay((const TickType_t) 10 / portTICK_PERIOD_MS);
+    vTaskDelay((const TickType_t) 1 / portTICK_PERIOD_MS);
   }
 }
 
@@ -1283,7 +1285,7 @@ void configCoMCUReset()
 
       doc["fP"] = false;
 
-      doc["bFr"] = 1600;
+      doc["bFr"] = 0;
       doc["fB"] = 1;
 
       doc["pBz"] = 2;
@@ -1717,6 +1719,9 @@ void updateSpiffs()
     } else {
         log_manager->warn(PSTR(__func__), PSTR("Written only : %d / %d. Premature end of stream?\n"), (int)written, (int)updateSize);
         Update.abort();
+        FLAG_SAVE_CONFIG = true;
+        FLAG_SAVE_SETTINGS = true;
+        FLAG_SAVE_CONFIGCOMCU = true;
         return;
     }
 
@@ -1735,6 +1740,9 @@ void updateSpiffs()
         FLAG_SAVE_SETTINGS = true;
         FLAG_SAVE_CONFIGCOMCU = true;
     } else {
+        FLAG_SAVE_CONFIG = true;
+        FLAG_SAVE_SETTINGS = true;
+        FLAG_SAVE_CONFIGCOMCU = true;
         log_manager->warn(PSTR(__func__), PSTR("Update not finished! Something went wrong!\n"));
     }
 
@@ -2049,7 +2057,7 @@ void processFwCheckAttributeRequest(const Shared_Attribute_Data &data){
 bool wsBroadcastTXT(const char *buffer){
   bool res = false;
   if(config.fIface && config.wsCount > 0){
-    if( xSemaphoreWSSend != NULL && WiFi.isConnected() && config.provSent && tb.connected()){
+    if( xSemaphoreWSSend != NULL){
       if( xSemaphoreTake( xSemaphoreWSSend, ( TickType_t ) 1000 ) == pdTRUE )
       {
         res = ws.broadcastTXT(buffer);
