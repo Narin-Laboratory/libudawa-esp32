@@ -1743,8 +1743,8 @@ RPC_Response processConfigSave(const RPC_Data &data){
       FLAG_SAVE_CONFIG = true;
       StaticJsonDocument<JSON_OBJECT_SIZE(1)> doc;
       doc[PSTR("configSave")] = 1;
-      return RPC_Response(doc);
       xSemaphoreGive( xSemaphoreTBSend );
+      return RPC_Response(doc);
     }
     else
     {
@@ -1761,8 +1761,8 @@ RPC_Response processConfigCoMCUSave(const RPC_Data &data){
       FLAG_SAVE_CONFIGCOMCU = true;
       StaticJsonDocument<JSON_OBJECT_SIZE(1)> doc;
       doc[PSTR("configCoMCUSave")] = 1;
-      return RPC_Response(doc);
       xSemaphoreGive( xSemaphoreTBSend );
+      return RPC_Response(doc);
     }
     else
     {
@@ -1779,8 +1779,8 @@ RPC_Response processSaveSettings(const RPC_Data &data){
       FLAG_SAVE_SETTINGS = true;
       StaticJsonDocument<JSON_OBJECT_SIZE(1)> doc;
       doc[PSTR("saveSettings")] = 1;
-      return RPC_Response(doc);
       xSemaphoreGive( xSemaphoreTBSend );
+      return RPC_Response(doc);
     }
     else
     {
@@ -1795,8 +1795,8 @@ RPC_Response processSetPanic(const RPC_Data &data){
     if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
     {
       processSetPanicCb(data);
-      return RPC_Response(PSTR("setPanic"), configcomcu.fP);
       xSemaphoreGive( xSemaphoreTBSend );
+      return RPC_Response(PSTR("setPanic"), configcomcu.fP);
     }
     else
     {
@@ -1813,8 +1813,8 @@ RPC_Response processUpdateSpiffs(const RPC_Data &data){
       FLAG_UPDATE_SPIFFS = true;
       StaticJsonDocument<JSON_OBJECT_SIZE(1)> doc;
       doc[PSTR("updateSpiffs")] = 1;
-      return RPC_Response(doc);
       xSemaphoreGive( xSemaphoreTBSend );
+      return RPC_Response(doc);
     }
     else
     {
@@ -1832,8 +1832,8 @@ RPC_Response processReboot(const RPC_Data &data){
       reboot();
       StaticJsonDocument<JSON_OBJECT_SIZE(1)> doc;
       doc[PSTR("cdown")] = 20; 
-      return RPC_Response(doc);
       xSemaphoreGive( xSemaphoreTBSend );
+      return RPC_Response(doc);
     }
     else
     {
@@ -2010,8 +2010,8 @@ RPC_Response processUpdateApp(const RPC_Data &data){
       setAlarm(0, 3, 65000, 50);
       tb.Start_Firmware_Update(tbOtaCb);
       reboot();
-      return RPC_Response(PSTR("updateApp"), 1);
       xSemaphoreGive( xSemaphoreTBSend );
+      return RPC_Response(PSTR("updateApp"), 1);
     }
     else
     {
