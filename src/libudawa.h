@@ -191,12 +191,16 @@ RPC_Response processUpdateSpiffs(const RPC_Data &data);
 RPC_Response processReboot(const RPC_Data &data);
 RPC_Response processGenericClientRPC(const RPC_Data &data);
 RPC_Response (*processGenericClientRPCCb)(const RPC_Data &data);
+RPC_Response processUpdateApp(const RPC_Data &data);
+void processFwCheckAttributeRequest(const Shared_Attribute_Data &data);
 void syncClientAttr(uint8_t direction);
 void (*onSyncClientAttrCb)(uint8_t);
 bool tbSendAttribute(const char *buffer);
 bool tbSendTelemetry(const char *buffer);
 void (*tbloggerCb)(const char *error);
 void onTbLogger(const char *error);
+void (*onMQTTUpdateStartCb)();
+void (*onMQTTUpdateEndCb)();
 
 class TBLogger {
   public:
@@ -225,18 +229,24 @@ bool FLAG_SYNC_CLIENT_ATTR_0 = false;
 bool FLAG_SYNC_CLIENT_ATTR_1 = false;
 bool FLAG_SYNC_CLIENT_ATTR_2 = false;
 bool FLAG_UPDATE_SPIFFS = false;
-bool FLAG_MQTT_OTA = false;
 
 // Client-side RPC that can be executed from cloud
-const std::array<RPC_Callback, 7U> clientRPCCallbacks = {
+const std::array<RPC_Callback, 8U> clientRPCCallbacks = {
   RPC_Callback{ PSTR("configSave"),    processConfigSave },
   RPC_Callback{ PSTR("configCoMCUSave"), processConfigCoMCUSave },
   RPC_Callback{ PSTR("saveSettings"), processSaveSettings },
   RPC_Callback{ PSTR("updateSpiffs"), processUpdateSpiffs },
   RPC_Callback{ PSTR("setPanic"), processSetPanic }, 
   RPC_Callback{ PSTR("reboot"),  processReboot},
+  RPC_Callback{ PSTR("updateApp"), processUpdateApp },
   RPC_Callback{ PSTR("generic"), processGenericClientRPC }
 };
+
+// Shared attributes we want to request from the server
+constexpr std::array<const char*, 1U> REQUESTED_FW_CHECK_SHARED_ATTRIBUTES = {
+  FW_VER_KEY
+};
+const Attribute_Request_Callback fwCheckCb(REQUESTED_FW_CHECK_SHARED_ATTRIBUTES.cbegin(), REQUESTED_FW_CHECK_SHARED_ATTRIBUTES.cend(), &processFwCheckAttributeRequest);
 
 const OTA_Update_Callback tbOtaCb(&tbOtaProgressCb, &tbOtaFinishedCb, CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION, 20, 4096);
 const Shared_Attribute_Callback tbSharedAttrUpdateCb(&processSharedAttributeUpdate);
@@ -355,22 +365,6 @@ void udawa(){
     FLAG_UPDATE_SPIFFS = false;
     updateSpiffs();
   }
-  if(FLAG_MQTT_OTA){
-    FLAG_MQTT_OTA = false;
-    if( xSemaphoreTBSend != NULL && config.provSent && tb.connected()){
-      if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
-      {
-        taskENTER_CRITICAL();
-        tb.Start_Firmware_Update(tbOtaCb);
-        xSemaphoreGive( xSemaphoreTBSend );
-        taskEXIT_CRITICAL();
-      }
-      else
-      {
-        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
-      }   
-    }
-  }
 }
 
 void onTbLogger(const char *error){
@@ -384,82 +378,108 @@ void onTbLogger(const char *error){
 /// The callback will then not be called anymore unless it is reused for another request
 /// @param data Data containing the shared attributes that were requested and their current value
 void processSharedAttributeRequest(const Shared_Attribute_Data &data) {
-  log_manager->verbose(PSTR(__func__), PSTR("Received shared attribute(s).\n"));
-  if(config.logLev == 5){serializeJson(data, Serial); Serial.println();}
+  if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
+  {
+    log_manager->verbose(PSTR(__func__), PSTR("Received shared attribute(s).\n"));
+    if(config.logLev == 5){serializeJson(data, Serial); Serial.println();}
+    xSemaphoreGive( xSemaphoreTBSend );
+  }
+  else
+  {
+    log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+  }
 }
 
 /// @brief Update callback that will be called as soon as the requested client-side attributes, have been received.
 /// The callback will then not be called anymore unless it is reused for another request
 /// @param data Data containing the client-side attributes that were requested and their current value
 void processClientAttributeRequest(const Shared_Attribute_Data &data) {
-  log_manager->verbose(PSTR(__func__), PSTR("Received client attribute(s).\n"));
-  if(config.logLev == 5){serializeJson(data, Serial); Serial.println();}
+  if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
+  {
+    log_manager->verbose(PSTR(__func__), PSTR("Received client attribute(s).\n"));
+    if(config.logLev == 5){serializeJson(data, Serial); Serial.println();}
+    xSemaphoreGive( xSemaphoreTBSend );
+  }
+  else
+  {
+    log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+  }
 }
 
 void processSharedAttributeUpdate(const Shared_Attribute_Data &data){
-  log_manager->verbose(PSTR(__func__), PSTR("Received shared attribute(s) update.\n"));
-  if(config.logLev == 5){serializeJson(data, Serial); Serial.println();}
-  if( xSemaphoreConfig != NULL ){
-    if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 1000 ) == pdTRUE )
-    {
-      if(data["model"] != nullptr){strlcpy(config.model, data["model"].as<const char*>(), sizeof(config.model));}
-      if(data["group"] != nullptr){strlcpy(config.group, data["group"].as<const char*>(), sizeof(config.group));}
-      if(data["broker"] != nullptr){strlcpy(config.broker, data["broker"].as<const char*>(), sizeof(config.broker));}
-      if(data["port"] != nullptr){config.port = data["port"].as<uint16_t>();}
-      if(data["wssid"] != nullptr){strlcpy(config.wssid, data["wssid"].as<const char*>(), sizeof(config.wssid));}
-      if(data["wpass"] != nullptr){strlcpy(config.wpass, data["wpass"].as<const char*>(), sizeof(config.wpass));}
-      if(data["dssid"] != nullptr){strlcpy(config.dssid, data["dssid"].as<const char*>(), sizeof(config.dssid));}
-      if(data["dpass"] != nullptr){strlcpy(config.dpass, data["dpass"].as<const char*>(), sizeof(config.dpass));}
-      if(data["upass"] != nullptr){strlcpy(config.upass, data["upass"].as<const char*>(), sizeof(config.upass));}
-      if(data["accTkn"] != nullptr){strlcpy(config.accTkn, data["accTkn"].as<const char*>(), sizeof(config.accTkn));}
-      if(data["provDK"] != nullptr){strlcpy(config.provDK, data["provDK"].as<const char*>(), sizeof(config.provDK));}
-      if(data["provDS"] != nullptr){strlcpy(config.provDS, data["provDS"].as<const char*>(), sizeof(config.provDS));}
-      if(data["logLev"] != nullptr){config.logLev = data["logLev"].as<uint8_t>(); log_manager->set_log_level(PSTR("*"), (LogLevel) config.logLev);;}
-      if(data["gmtOff"] != nullptr){config.gmtOff = data["gmtOff"].as<int>();}
-      if(data["htU"] != nullptr){strlcpy(config.htU, data["htU"].as<const char*>(), sizeof(config.htU));}
-      if(data["htP"] != nullptr){strlcpy(config.htP, data["htP"].as<const char*>(), sizeof(config.htP));}
-      if(data["fWOTA"] != nullptr){config.fWOTA = data["fWOTA"].as<bool>();}
-      if(data["fIface"] != nullptr){config.fIface = data["fIface"].as<bool>();}
-      if(data["fIoT"] != nullptr){config.fIoT = data["fIoT"].as<bool>();}
-      if(data["hname"] != nullptr){strlcpy(config.hname, data["hname"].as<const char*>(), sizeof(config.hname));}
-      if(data["logIP"] != nullptr){strlcpy(config.logIP, data["logIP"].as<const char*>(), sizeof(config.logIP));}
-      if(data["logPrt"] != nullptr){config.logPrt = data["logPrt"].as<uint16_t>();}
-      xSemaphoreGive( xSemaphoreConfig );
+  if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
+  {
+    log_manager->verbose(PSTR(__func__), PSTR("Received shared attribute(s) update.\n"));
+    if(config.logLev == 5){serializeJson(data, Serial); Serial.println();}
+    if( xSemaphoreConfig != NULL ){
+      if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 1000 ) == pdTRUE )
+      {
+        if(data["model"] != nullptr){strlcpy(config.model, data["model"].as<const char*>(), sizeof(config.model));}
+        if(data["group"] != nullptr){strlcpy(config.group, data["group"].as<const char*>(), sizeof(config.group));}
+        if(data["broker"] != nullptr){strlcpy(config.broker, data["broker"].as<const char*>(), sizeof(config.broker));}
+        if(data["port"] != nullptr){config.port = data["port"].as<uint16_t>();}
+        if(data["wssid"] != nullptr){strlcpy(config.wssid, data["wssid"].as<const char*>(), sizeof(config.wssid));}
+        if(data["wpass"] != nullptr){strlcpy(config.wpass, data["wpass"].as<const char*>(), sizeof(config.wpass));}
+        if(data["dssid"] != nullptr){strlcpy(config.dssid, data["dssid"].as<const char*>(), sizeof(config.dssid));}
+        if(data["dpass"] != nullptr){strlcpy(config.dpass, data["dpass"].as<const char*>(), sizeof(config.dpass));}
+        if(data["upass"] != nullptr){strlcpy(config.upass, data["upass"].as<const char*>(), sizeof(config.upass));}
+        if(data["accTkn"] != nullptr){strlcpy(config.accTkn, data["accTkn"].as<const char*>(), sizeof(config.accTkn));}
+        if(data["provDK"] != nullptr){strlcpy(config.provDK, data["provDK"].as<const char*>(), sizeof(config.provDK));}
+        if(data["provDS"] != nullptr){strlcpy(config.provDS, data["provDS"].as<const char*>(), sizeof(config.provDS));}
+        if(data["logLev"] != nullptr){config.logLev = data["logLev"].as<uint8_t>(); log_manager->set_log_level(PSTR("*"), (LogLevel) config.logLev);;}
+        if(data["gmtOff"] != nullptr){config.gmtOff = data["gmtOff"].as<int>();}
+        if(data["htU"] != nullptr){strlcpy(config.htU, data["htU"].as<const char*>(), sizeof(config.htU));}
+        if(data["htP"] != nullptr){strlcpy(config.htP, data["htP"].as<const char*>(), sizeof(config.htP));}
+        if(data["fWOTA"] != nullptr){config.fWOTA = data["fWOTA"].as<bool>();}
+        if(data["fIface"] != nullptr){config.fIface = data["fIface"].as<bool>();}
+        if(data["fIoT"] != nullptr){config.fIoT = data["fIoT"].as<bool>();}
+        if(data["hname"] != nullptr){strlcpy(config.hname, data["hname"].as<const char*>(), sizeof(config.hname));}
+        if(data["logIP"] != nullptr){strlcpy(config.logIP, data["logIP"].as<const char*>(), sizeof(config.logIP));}
+        if(data["logPrt"] != nullptr){config.logPrt = data["logPrt"].as<uint16_t>();}
+        xSemaphoreGive( xSemaphoreConfig );
+      }
+      else
+      {
+        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+      }
     }
-    else
-    {
-      log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
-    }
-  }
 
-  if( xSemaphoreConfigCoMCU != NULL ){
-    if( xSemaphoreTake( xSemaphoreConfigCoMCU, ( TickType_t ) 1000 ) == pdTRUE )
-    {
-      if(data["fP"] != nullptr){configcomcu.fP = data["fP"].as<bool>();}
-      if(data["bFr"] != nullptr){configcomcu.bFr = data["bFr"].as<uint16_t>();}
-      if(data["fB"] != nullptr){configcomcu.fB = data["fB"].as<bool>();}
-      if(data["pBz"] != nullptr){configcomcu.pBz = data["pBz"].as<uint8_t>();}
-      if(data["pLR"] != nullptr){configcomcu.pLR = data["pLR"].as<uint8_t>();}
-      if(data["pLG"] != nullptr){configcomcu.pLG = data["pLG"].as<uint8_t>();}
-      if(data["pLB"] != nullptr){configcomcu.pLB = data["pLB"].as<uint8_t>();}
-      if(data["lON"] != nullptr){configcomcu.lON = data["lON"].as<uint8_t>();}
-      xSemaphoreGive( xSemaphoreConfigCoMCU );
+    if( xSemaphoreConfigCoMCU != NULL ){
+      if( xSemaphoreTake( xSemaphoreConfigCoMCU, ( TickType_t ) 1000 ) == pdTRUE )
+      {
+        if(data["fP"] != nullptr){configcomcu.fP = data["fP"].as<bool>();}
+        if(data["bFr"] != nullptr){configcomcu.bFr = data["bFr"].as<uint16_t>();}
+        if(data["fB"] != nullptr){configcomcu.fB = data["fB"].as<bool>();}
+        if(data["pBz"] != nullptr){configcomcu.pBz = data["pBz"].as<uint8_t>();}
+        if(data["pLR"] != nullptr){configcomcu.pLR = data["pLR"].as<uint8_t>();}
+        if(data["pLG"] != nullptr){configcomcu.pLG = data["pLG"].as<uint8_t>();}
+        if(data["pLB"] != nullptr){configcomcu.pLB = data["pLB"].as<uint8_t>();}
+        if(data["lON"] != nullptr){configcomcu.lON = data["lON"].as<uint8_t>();}
+        xSemaphoreGive( xSemaphoreConfigCoMCU );
+      }
+      else
+      {
+        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+      }
     }
-    else
-    {
-      log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
-    }
+    processSharedAttributeUpdateCb(data);
+    FLAG_SYNC_CLIENT_ATTR_2 = true;
+    xSemaphoreGive( xSemaphoreTBSend );
   }
-  processSharedAttributeUpdateCb(data);
-  FLAG_SYNC_CLIENT_ATTR_2 = true;
+  else
+  {
+    log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+  }
 }
 
 void tbOtaFinishedCb(const bool& success){
+  onMQTTUpdateEndCb();
   if(success){
     log_manager->info(PSTR(__func__), PSTR("IoT OTA update ended.!\n"));
   }else{
     log_manager->warn(PSTR(__func__), PSTR("IoT OTA update failed!\n"));
   }
+  reboot();
 }
 
 void tbOtaProgressCb(const uint32_t& currentChunk, const uint32_t& totalChuncks){
@@ -537,39 +557,49 @@ void wifiOtaTR(void *arg){
 
 void processProvisionResponse(const Provision_Data &data)
 {
-  constexpr char CREDENTIALS_TYPE[] PROGMEM = "credentialsType";
-  constexpr char CREDENTIALS_VALUE[] PROGMEM = "credentialsValue";
-  int jsonSize = JSON_STRING_SIZE(measureJson(data));
-  char buffer[jsonSize];
-  serializeJson(data, buffer, jsonSize);
-  log_manager->verbose(PSTR(__func__),PSTR("Received device provision response: %s\n"), buffer);
+  if( xSemaphoreTBSend != NULL && WiFi.isConnected() && config.provSent && tb.connected()){
+    if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
+    {
+      constexpr char CREDENTIALS_TYPE[] PROGMEM = "credentialsType";
+      constexpr char CREDENTIALS_VALUE[] PROGMEM = "credentialsValue";
+      int jsonSize = JSON_STRING_SIZE(measureJson(data));
+      char buffer[jsonSize];
+      serializeJson(data, buffer, jsonSize);
+      log_manager->verbose(PSTR(__func__),PSTR("Received device provision response: %s\n"), buffer);
 
-  if (strncmp(data["status"], "SUCCESS", strlen("SUCCESS")) != 0) {
-    log_manager->warn(PSTR(__func__),PSTR("Provision response contains the error: (%s)\n"), data["errorMsg"].as<const char*>());
-    return;
-  }
+      if (strncmp(data["status"], "SUCCESS", strlen("SUCCESS")) != 0) {
+        log_manager->warn(PSTR(__func__),PSTR("Provision response contains the error: (%s)\n"), data["errorMsg"].as<const char*>());
+        return;
+      }
 
-  if (strncmp(data[CREDENTIALS_TYPE], ACCESS_TOKEN_CRED_TYPE, strlen(ACCESS_TOKEN_CRED_TYPE)) == 0) {
-    strlcpy(config.accTkn, data[CREDENTIALS_VALUE].as<std::string>().c_str(), sizeof(config.accTkn));
-    config.provSent = true;  
-    FLAG_SAVE_CONFIG = true;
+      if (strncmp(data[CREDENTIALS_TYPE], ACCESS_TOKEN_CRED_TYPE, strlen(ACCESS_TOKEN_CRED_TYPE)) == 0) {
+        strlcpy(config.accTkn, data[CREDENTIALS_VALUE].as<std::string>().c_str(), sizeof(config.accTkn));
+        config.provSent = true;  
+        FLAG_SAVE_CONFIG = true;
 
-  }
-  else if (strncmp(data[CREDENTIALS_TYPE], MQTT_BASIC_CRED_TYPE, strlen(MQTT_BASIC_CRED_TYPE)) == 0) {
-    /*auto credentials_value = data[CREDENTIALS_VALUE].as<JsonObjectConst>();
-    credentials.client_id = credentials_value[CLIENT_ID].as<std::string>();
-    credentials.username = credentials_value[CLIENT_USERNAME].as<std::string>();
-    credentials.password = credentials_value[CLIENT_PASSWORD].as<std::string>();*/
-  }
-  else {
-    log_manager->warn(PSTR(__func__),PSTR("Unexpected provision credentialsType: (%s)\n"), data[CREDENTIALS_TYPE].as<const char*>());
-    return;
-  }
+      }
+      else if (strncmp(data[CREDENTIALS_TYPE], MQTT_BASIC_CRED_TYPE, strlen(MQTT_BASIC_CRED_TYPE)) == 0) {
+        /*auto credentials_value = data[CREDENTIALS_VALUE].as<JsonObjectConst>();
+        credentials.client_id = credentials_value[CLIENT_ID].as<std::string>();
+        credentials.username = credentials_value[CLIENT_USERNAME].as<std::string>();
+        credentials.password = credentials_value[CLIENT_PASSWORD].as<std::string>();*/
+      }
+      else {
+        log_manager->warn(PSTR(__func__),PSTR("Unexpected provision credentialsType: (%s)\n"), data[CREDENTIALS_TYPE].as<const char*>());
+        return;
+      }
 
-  // Disconnect from the cloud client connected to the provision account, because it is no longer needed the device has been provisioned
-  // and we can reconnect to the cloud with the newly generated credentials.
-  if (tb.connected()) {
-    tb.disconnect();
+      // Disconnect from the cloud client connected to the provision account, because it is no longer needed the device has been provisioned
+      // and we can reconnect to the cloud with the newly generated credentials.
+      if (tb.connected()) {
+        tb.disconnect();
+      }
+      xSemaphoreGive( xSemaphoreTBSend );
+    }
+    else
+    {
+      log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+    }
   }
 }
 
@@ -577,63 +607,61 @@ void processProvisionResponse(const Provision_Data &data)
 void TBTR(void *arg){
   uint8_t tbDisco = 0;
   while(true){
-    if(!FLAG_MQTT_OTA){
-      if(!config.provSent)
-      {
-        if (tb.connect(config.broker, "provision", config.port)) {
-          const Provision_Callback provisionCallback(Access_Token(), &processProvisionResponse, config.provDK, config.provDS, config.name);
-          if(tb.Provision_Request(provisionCallback))
-          {
-            log_manager->info(PSTR(__func__),PSTR("Connected to provisioning server: %s:%d\n"),  config.broker, config.port);
-          }
-        }
-        else
+    if(!config.provSent){
+      if (tb.connect(config.broker, "provision", config.port)) {
+        const Provision_Callback provisionCallback(Access_Token(), &processProvisionResponse, config.provDK, config.provDS, config.name);
+        if(tb.Provision_Request(provisionCallback))
         {
-          log_manager->warn(PSTR(__func__),PSTR("Failed to connect to provisioning server: %s:%d\n"),  config.broker, config.port);
-        }
-        unsigned long timer = millis();
-        while(true){
-          tb.loop();
-          if(config.provSent || (millis() - timer) > 10000){break;}
-          vTaskDelay((const TickType_t)10 / portTICK_PERIOD_MS);
+          log_manager->info(PSTR(__func__),PSTR("Connected to provisioning server: %s:%d\n"),  config.broker, config.port);
         }
       }
-      else{
-        if(!tb.connected())
-        {
-          log_manager->warn(PSTR(__func__),PSTR("IoT disconnected!\n"));
-          onTbDisconnectedCb();
-          log_manager->info(PSTR(__func__),PSTR("Connecting to broker %s:%d\n"), config.broker, config.port);
-          while(!tb.connect(config.broker, config.accTkn, config.port, config.name)){  
-            tbDisco++;
-            log_manager->warn(PSTR(__func__),PSTR("Failed to connect to IoT Broker %s (%d)\n"), config.broker, tbDisco);
-            if(tbDisco >= 10){
-              if( xSemaphoreConfig != NULL ){
-                if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 1000 ) == pdTRUE )
-                {
-                  config.provSent = 0;
-                  xSemaphoreGive( xSemaphoreConfig );
-                }
-                else
-                {
-                  log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
-                }
+      else
+      {
+        log_manager->warn(PSTR(__func__),PSTR("Failed to connect to provisioning server: %s:%d\n"),  config.broker, config.port);
+      }
+      unsigned long timer = millis();
+      while(true){
+        tb.loop();
+        if(config.provSent || (millis() - timer) > 10000){break;}
+        vTaskDelay((const TickType_t)10 / portTICK_PERIOD_MS);
+      }
+    }
+    else{
+      if(!tb.connected())
+      {
+        log_manager->warn(PSTR(__func__),PSTR("IoT disconnected!\n"));
+        onTbDisconnectedCb();
+        log_manager->info(PSTR(__func__),PSTR("Connecting to broker %s:%d\n"), config.broker, config.port);
+        while(!tb.connect(config.broker, config.accTkn, config.port, config.name)){  
+          tbDisco++;
+          log_manager->warn(PSTR(__func__),PSTR("Failed to connect to IoT Broker %s (%d)\n"), config.broker, tbDisco);
+          if(tbDisco >= 10){
+            if( xSemaphoreConfig != NULL ){
+              if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 1000 ) == pdTRUE )
+              {
+                config.provSent = 0;
+                xSemaphoreGive( xSemaphoreConfig );
               }
-              tbDisco = 0;
-              break;
+              else
+              {
+                log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+              }
             }
-            vTaskDelay((const TickType_t)1000 / portTICK_PERIOD_MS);
+            tbDisco = 0;
+            break;
           }
-
-          bool tbSharedUpdate_status = tb.Shared_Attributes_Subscribe(tbSharedAttrUpdateCb);
-          bool tbClientRPC_status = tb.RPC_Subscribe(clientRPCCallbacks.cbegin(), clientRPCCallbacks.cend());
-          
-          FLAG_MQTT_OTA = true;
-
-          onTbConnectedCb();
-          setAlarm(0, 0, 3, 50);
-          log_manager->info(PSTR(__func__),PSTR("IoT Connected!\n"));
+          vTaskDelay((const TickType_t)1000 / portTICK_PERIOD_MS);
         }
+
+        bool tbSharedUpdate_status = tb.Shared_Attributes_Subscribe(tbSharedAttrUpdateCb);
+        bool tbClientRPC_status = tb.RPC_Subscribe(clientRPCCallbacks.cbegin(), clientRPCCallbacks.cend());
+        tb.Firmware_Send_Info(CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION); 
+        tb.Firmware_Send_State(PSTR("updated"));
+        tb.Shared_Attributes_Request(fwCheckCb);
+
+        onTbConnectedCb();
+        setAlarm(0, 0, 3, 50);
+        log_manager->info(PSTR(__func__),PSTR("IoT Connected!\n"));
       }
     }
 
@@ -1709,44 +1737,110 @@ void updateSpiffs()
 }
 
 RPC_Response processConfigSave(const RPC_Data &data){
-  FLAG_SAVE_CONFIG = true;
-  StaticJsonDocument<JSON_OBJECT_SIZE(1)> doc;
-  doc[PSTR("configSave")] = 1;
-  return RPC_Response(doc);
+  if( xSemaphoreTBSend != NULL && WiFi.isConnected() && config.provSent && tb.connected()){
+    if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
+    {
+      FLAG_SAVE_CONFIG = true;
+      StaticJsonDocument<JSON_OBJECT_SIZE(1)> doc;
+      doc[PSTR("configSave")] = 1;
+      return RPC_Response(doc);
+      xSemaphoreGive( xSemaphoreTBSend );
+    }
+    else
+    {
+      log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+    }
+  }
+  return RPC_Response(PSTR("configSave"), 1);
 }
 
 RPC_Response processConfigCoMCUSave(const RPC_Data &data){
-  FLAG_SAVE_CONFIGCOMCU = true;
-  StaticJsonDocument<JSON_OBJECT_SIZE(1)> doc;
-  doc[PSTR("configCoMCUSave")] = 1;
-  return RPC_Response(doc);
+  if( xSemaphoreTBSend != NULL && WiFi.isConnected() && config.provSent && tb.connected()){
+    if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
+    {
+      FLAG_SAVE_CONFIGCOMCU = true;
+      StaticJsonDocument<JSON_OBJECT_SIZE(1)> doc;
+      doc[PSTR("configCoMCUSave")] = 1;
+      return RPC_Response(doc);
+      xSemaphoreGive( xSemaphoreTBSend );
+    }
+    else
+    {
+      log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+    }
+  }
+  return RPC_Response(PSTR("configCoMCUSave"), 1);
 }
 
 RPC_Response processSaveSettings(const RPC_Data &data){
-  FLAG_SAVE_SETTINGS = true;
-  StaticJsonDocument<JSON_OBJECT_SIZE(1)> doc;
-  doc[PSTR("saveSettings")] = 1;
-  return RPC_Response(doc);
+  if( xSemaphoreTBSend != NULL && WiFi.isConnected() && config.provSent && tb.connected()){
+    if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
+    {
+      FLAG_SAVE_SETTINGS = true;
+      StaticJsonDocument<JSON_OBJECT_SIZE(1)> doc;
+      doc[PSTR("saveSettings")] = 1;
+      return RPC_Response(doc);
+      xSemaphoreGive( xSemaphoreTBSend );
+    }
+    else
+    {
+      log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+    }
+  }
+  return RPC_Response(PSTR("saveSettings"), 1);
 }
 
 RPC_Response processSetPanic(const RPC_Data &data){
-  processSetPanicCb(data);
-  return RPC_Response(PSTR("setPanic"), configcomcu.fP);
+  if( xSemaphoreTBSend != NULL && WiFi.isConnected() && config.provSent && tb.connected()){
+    if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
+    {
+      processSetPanicCb(data);
+      return RPC_Response(PSTR("setPanic"), configcomcu.fP);
+      xSemaphoreGive( xSemaphoreTBSend );
+    }
+    else
+    {
+      log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+    }
+  }
+  return RPC_Response(PSTR("setPanic"), 1);
 }
 
 RPC_Response processUpdateSpiffs(const RPC_Data &data){
-  FLAG_UPDATE_SPIFFS = true;
-  StaticJsonDocument<JSON_OBJECT_SIZE(1)> doc;
-  doc[PSTR("updateSpiffs")] = 1;
-  return RPC_Response(doc);
+  if( xSemaphoreTBSend != NULL && WiFi.isConnected() && config.provSent && tb.connected()){
+    if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
+    {
+      FLAG_UPDATE_SPIFFS = true;
+      StaticJsonDocument<JSON_OBJECT_SIZE(1)> doc;
+      doc[PSTR("updateSpiffs")] = 1;
+      return RPC_Response(doc);
+      xSemaphoreGive( xSemaphoreTBSend );
+    }
+    else
+    {
+      log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+    }
+  }
+  return RPC_Response(PSTR("updateSpiffs"), 1);
 }
 
 
 RPC_Response processReboot(const RPC_Data &data){
-  reboot();
-  StaticJsonDocument<JSON_OBJECT_SIZE(1)> doc;
-  doc[PSTR("cdown")] = 20;
-  return RPC_Response(doc);
+  if( xSemaphoreTBSend != NULL && WiFi.isConnected() && config.provSent && tb.connected()){
+    if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
+    {
+      reboot();
+      StaticJsonDocument<JSON_OBJECT_SIZE(1)> doc;
+      doc[PSTR("cdown")] = 20; 
+      return RPC_Response(doc);
+      xSemaphoreGive( xSemaphoreTBSend );
+    }
+    else
+    {
+      log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+    }
+  }
+  return RPC_Response(PSTR("cdown"), 1);
 }
 
 RPC_Response processGenericClientRPC(const RPC_Data &data){
@@ -1878,7 +1972,7 @@ void syncClientAttr(uint8_t direction){
 
 bool tbSendAttribute(const char *buffer){
   bool res = false;
-  if( xSemaphoreTBSend != NULL && config.provSent && tb.connected() ){
+  if( xSemaphoreTBSend != NULL && WiFi.isConnected() && config.provSent && tb.connected()){
     if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
     {
       res = tb.sendAttributeJSON(buffer);
@@ -1894,7 +1988,7 @@ bool tbSendAttribute(const char *buffer){
 
 bool tbSendTelemetry(const char * buffer){
   bool res = false;
-  if( xSemaphoreTBSend != NULL && config.provSent && tb.connected()){
+  if( xSemaphoreTBSend != NULL && WiFi.isConnected() && config.provSent && tb.connected()){
     if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
     {
       res = tb.sendTelemetryJson(buffer); 
@@ -1906,6 +2000,45 @@ bool tbSendTelemetry(const char * buffer){
     }   
   }
   return res;
+}
+
+RPC_Response processUpdateApp(const RPC_Data &data){
+  if( xSemaphoreTBSend != NULL && WiFi.isConnected() && config.provSent && tb.connected()){
+    if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
+    {
+      onMQTTUpdateStartCb();
+      setAlarm(0, 3, 65000, 50);
+      tb.Start_Firmware_Update(tbOtaCb);
+      reboot();
+      return RPC_Response(PSTR("updateApp"), 1);
+      xSemaphoreGive( xSemaphoreTBSend );
+    }
+    else
+    {
+      log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+    }
+  }
+  return RPC_Response(PSTR("updateApp"), 1);
+}
+
+void processFwCheckAttributeRequest(const Shared_Attribute_Data &data){
+  if( xSemaphoreTBSend != NULL && WiFi.isConnected() && config.provSent && tb.connected()){
+    if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
+    {
+      if(data["fw_version"] != nullptr){
+        if(strcmp(data["fw_version"].as<const char*>(), CURRENT_FIRMWARE_VERSION)){
+          onMQTTUpdateStartCb();
+          setAlarm(0, 3, 65000, 50);
+          tb.Start_Firmware_Update(tbOtaCb);
+        }
+      }
+      xSemaphoreGive( xSemaphoreTBSend );
+    }
+    else
+    {
+      log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+    }
+  }
 }
 
 } // namespace libudawa
