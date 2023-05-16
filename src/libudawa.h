@@ -197,6 +197,7 @@ void syncClientAttr(uint8_t direction);
 void (*onSyncClientAttrCb)(uint8_t);
 bool tbSendAttribute(const char *buffer);
 bool tbSendTelemetry(const char *buffer);
+bool wsBroadcastTXT(const char *buffer);
 void (*tbloggerCb)(const char *error);
 void onTbLogger(const char *error);
 void (*onMQTTUpdateStartCb)();
@@ -275,6 +276,7 @@ SemaphoreHandle_t xSemaphoreSettings = NULL;
 SemaphoreHandle_t xSemaphoreConfig = NULL;
 SemaphoreHandle_t xSemaphoreConfigCoMCU = NULL;
 SemaphoreHandle_t xSemaphoreTBSend = NULL;
+SemaphoreHandle_t xSemaphoreWSSend = NULL;
 
 struct AlarmMessage
 {
@@ -296,6 +298,7 @@ void startup() {
   if(xSemaphoreConfig == NULL){xSemaphoreConfig = xSemaphoreCreateMutex();}
   if(xSemaphoreConfigCoMCU == NULL){xSemaphoreConfigCoMCU = xSemaphoreCreateMutex();}
   if(xSemaphoreTBSend == NULL){xSemaphoreTBSend = xSemaphoreCreateMutex();}
+  if(xSemaphoreWSSend == NULL){xSemaphoreWSSend = xSemaphoreCreateMutex();}
 
   // put your setup code here, to run once:
   Serial.begin(115200);
@@ -426,7 +429,7 @@ void processSharedAttributeUpdate(const Shared_Attribute_Data &data){
         if(data["accTkn"] != nullptr){strlcpy(config.accTkn, data["accTkn"].as<const char*>(), sizeof(config.accTkn));}
         if(data["provDK"] != nullptr){strlcpy(config.provDK, data["provDK"].as<const char*>(), sizeof(config.provDK));}
         if(data["provDS"] != nullptr){strlcpy(config.provDS, data["provDS"].as<const char*>(), sizeof(config.provDS));}
-        if(data["logLev"] != nullptr){config.logLev = data["logLev"].as<uint8_t>(); log_manager->set_log_level(PSTR("*"), (LogLevel) config.logLev);;}
+        if(data["logLev"] != nullptr){config.logLev = data["logLev"].as<uint8_t>(); log_manager->set_log_level(PSTR("*"), (LogLevel) config.logLev);}
         if(data["gmtOff"] != nullptr){config.gmtOff = data["gmtOff"].as<int>();}
         if(data["htU"] != nullptr){strlcpy(config.htU, data["htU"].as<const char*>(), sizeof(config.htU));}
         if(data["htP"] != nullptr){strlcpy(config.htP, data["htP"].as<const char*>(), sizeof(config.htP));}
@@ -658,6 +661,8 @@ void TBTR(void *arg){
         tb.Firmware_Send_Info(CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION); 
         tb.Firmware_Send_State(PSTR("updated"));
         tb.Shared_Attributes_Request(fwCheckCb);
+
+        FLAG_SYNC_CLIENT_ATTR_1 = true;
 
         onTbConnectedCb();
         setAlarm(0, 0, 3, 50);
@@ -1178,7 +1183,7 @@ void configLoad()
         if(doc["provDK"] != nullptr){strlcpy(config.provDK, doc["provDK"].as<const char*>(), sizeof(config.provDK));}
         if(doc["provDS"] != nullptr){strlcpy(config.provDS, doc["provDS"].as<const char*>(), sizeof(config.provDS));}
         if(doc["provSent"] != nullptr){config.provSent = doc["provSent"].as<bool>();}
-        if(doc["logLev"] != nullptr){config.logLev = doc["logLev"].as<uint8_t>(); log_manager->set_log_level(PSTR("*"), (LogLevel) config.logLev);;}
+        if(doc["logLev"] != nullptr){config.logLev = doc["logLev"].as<uint8_t>(); log_manager->set_log_level(PSTR("*"), (LogLevel) config.logLev);}
         if(doc["gmtOff"] != nullptr){config.gmtOff = doc["gmtOff"].as<int>();}
         if(doc["fIoT"] != nullptr){config.fIoT = doc["fIoT"].as<bool>();}
         if(doc["htU"] != nullptr){strlcpy(config.htU, doc["htU"].as<const char*>(), sizeof(config.htU));}
@@ -1945,7 +1950,7 @@ void syncClientAttr(uint8_t direction){
     attr[PSTR("dUsed")] = (int)SPIFFS.usedBytes();
     attr[PSTR("sdkVer")] = ESP.getSdkVersion();
     serializeJson(doc, buffer);
-    ws.broadcastTXT(buffer);
+    wsBroadcastTXT(buffer);;;
     doc.clear();
     JsonObject cfg = doc.createNestedObject("cfg");
     cfg[PSTR("name")] = config.name;
@@ -1961,7 +1966,7 @@ void syncClientAttr(uint8_t direction){
     cfg[PSTR("htU")] = config.htU;
     cfg[PSTR("htP")] = config.htP;
     serializeJson(doc, buffer);
-    ws.broadcastTXT(buffer);
+    wsBroadcastTXT(buffer);;;
   }
   #endif
   
@@ -2039,6 +2044,24 @@ void processFwCheckAttributeRequest(const Shared_Attribute_Data &data){
       log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
     }
   }
+}
+
+bool wsBroadcastTXT(const char *buffer){
+  bool res = false;
+  if(config.fIface && config.wsCount > 0){
+    if( xSemaphoreWSSend != NULL && WiFi.isConnected() && config.provSent && tb.connected()){
+      if( xSemaphoreTake( xSemaphoreWSSend, ( TickType_t ) 1000 ) == pdTRUE )
+      {
+        res = ws.broadcastTXT(buffer);
+        xSemaphoreGive( xSemaphoreWSSend );
+      }
+      else
+      {
+        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+      }
+    }
+  }
+  return res;
 }
 
 } // namespace libudawa
