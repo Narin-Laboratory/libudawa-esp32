@@ -74,6 +74,10 @@ const char* configFileCoMCU = "/comcu.json";
 
 struct Config
 {
+  unsigned long ECP;
+  int CC;
+  bool SM;
+
   char hwid[16];
   char name[24];
   char model[16];
@@ -230,6 +234,8 @@ bool FLAG_SYNC_CLIENT_ATTR_0 = false;
 bool FLAG_SYNC_CLIENT_ATTR_1 = false;
 bool FLAG_SYNC_CLIENT_ATTR_2 = false;
 bool FLAG_UPDATE_SPIFFS = false;
+bool FLAG_ECP_UPDATED = false;
+bool FLAG_SM_CLEARED = false;
 
 // Client-side RPC that can be executed from cloud
 const std::array<RPC_Callback, 8U> clientRPCCallbacks = {
@@ -320,6 +326,17 @@ void startup() {
     log_manager->set_log_level(PSTR("*"), (LogLevel) config.logLev);
   }
 
+  if(config.ECP < 60000){
+    config.CC++;
+    if(config.CC >= 10){
+      config.SM = true;
+      setAlarm(0, 1, 1000000, 50);
+    }
+  }
+  log_manager->warn(PSTR(__func__), PSTR("ECP: %d, CC: %d, SM: %s\n"), config.ECP, config.CC, config.SM ? PSTR("ENABLED") : PSTR("DISABLED"));
+
+  config.ECP = 0;
+  configSave();
   
   #ifdef USE_SERIAL2
     log_manager->debug(PSTR(__func__), PSTR("Serial 2 - CoMCU Activated!\n"));
@@ -367,6 +384,22 @@ void udawa(){
   if(FLAG_UPDATE_SPIFFS){
     FLAG_UPDATE_SPIFFS = false;
     updateSpiffs();
+  }
+
+  if(!FLAG_ECP_UPDATED && millis() > 60000){
+    config.ECP = millis();
+    FLAG_SAVE_CONFIG = true;
+    FLAG_ECP_UPDATED = true;
+  }
+
+  if(!FLAG_SM_CLEARED && millis() > 300000){
+    config.ECP = millis();
+    config.CC = 0;
+    FLAG_SAVE_CONFIG = true;
+    FLAG_SM_CLEARED = true;
+    if( config.SM ){
+      reboot();
+    }
   }
 }
 
@@ -549,7 +582,6 @@ void wifiOtaTR(void *arg){
       }
     );
   }
-
   while(true){
     if(config.fWOTA){
       ArduinoOTA.handle();
@@ -754,7 +786,7 @@ void cbWiFiOnGotIp(WiFiEvent_t event, WiFiEventInfo_t info)
   }
   #endif
 
-  if(config.fIoT && xHandleTB == NULL){
+  if(config.fIoT && xHandleTB == NULL && !config.SM){
     xReturnedTB = xTaskCreatePinnedToCore(TBTR, "TB", STACKSIZE_TB, NULL, 1, &xHandleTB, 1);
     if(xReturnedTB == pdPASS){
       log_manager->warn(PSTR(__func__), PSTR("Task TB has been created.\n"));
@@ -762,7 +794,7 @@ void cbWiFiOnGotIp(WiFiEvent_t event, WiFiEventInfo_t info)
   }
 
   #ifdef USE_WEB_IFACE
-  if(config.fIface && xHandleIface == NULL){
+  if(config.fIface && xHandleIface == NULL && !config.SM){
     xReturnedIface = xTaskCreatePinnedToCore(ifaceTR, "iface", STACKSIZE_IFACE, NULL, 1, &xHandleIface, 1);
     if(xReturnedIface == pdPASS){
       log_manager->warn(PSTR(__func__), PSTR("Task iface has been created.\n"));
@@ -1017,6 +1049,8 @@ void configReset()
 
       char dv[16];
       sprintf(dv, "%s", getDeviceId());
+      doc["ECP"] = 0;
+      doc["CC"] = 0;
       doc["name"] = "UDAWA" + String(dv);
       doc["model"] = "Generic";
       doc["group"] = "UDAWA";
@@ -1092,6 +1126,8 @@ void configLoadFailSafe()
       sprintf(dv, "%s", getDeviceId());
       strlcpy(config.hwid, dv, sizeof(config.hwid));
 
+      config.ECP = 0;
+      config.CC = 0;
       String name = "UDAWA" + String(dv);
       strlcpy(config.name, name.c_str(), sizeof(config.name));
       strlcpy(config.model, "Generic", sizeof(config.model));
@@ -1172,6 +1208,8 @@ void configLoad()
         String name = "UDAWA" + String(dv);
         strlcpy(config.name, name.c_str(), sizeof(config.name));
         //strlcpy(config.name, doc["name"].as<const char*>(), sizeof(config.name));
+        if(doc["ECP"] != nullptr){config.ECP = doc["ECP"].as<unsigned long>();}
+        if(doc["CC"] != nullptr){config.CC = doc["CC"].as<int>();}
         if(doc["model"] != nullptr){strlcpy(config.model, doc["model"].as<const char*>(), sizeof(config.model));}
         if(doc["group"] != nullptr){strlcpy(config.group, doc["group"].as<const char*>(), sizeof(config.group));}
         if(doc["broker"] != nullptr){strlcpy(config.broker, doc["broker"].as<const char*>(), sizeof(config.broker));}
@@ -1228,6 +1266,8 @@ void configSave()
       }
 
       StaticJsonDocument<DOCSIZE> doc;
+      doc["ECP"] = config.ECP;
+      doc["CC"] = config.CC;
       doc["name"] = config.name;
       doc["model"] = config.model;
       doc["group"] = config.group;
