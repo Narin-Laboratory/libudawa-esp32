@@ -1,14 +1,12 @@
 /**
  * UDAWA - Universal Digital Agriculture Watering Assistant
- * Firmware for Vanilla UDAWA Board (starter firmware)
+ * Firmware for Vanilla UDAWA Board (Starter Kit)
  * Licensed under aGPLv3
  * Researched and developed by PRITA Research Group & Narin Laboratory
  * prita.undiknas.ac.id | narin.co.id
 **/
 #ifndef main_h
 #define main_h
-
-#define DOCSIZE 1500
 #include <Arduino.h>
 static const char* CA_CERT PROGMEM = R"EOF(
 -----BEGIN CERTIFICATE-----
@@ -48,33 +46,57 @@ vh+RH1AiwshFKw9rxdUXJBGGVgn5F0Ie4alDI8ehelOpmrZgFYMOCpcFSpJ5vbXM
 ny6l9/duT2POAsUN5IwHGDu8b2NT+vCUQRFVHY31
 -----END CERTIFICATE-----
 )EOF";
+#define CURRENT_FIRMWARE_TITLE "Vanilla"
+#define CURRENT_FIRMWARE_VERSION "0.0.1"
+#define DOCSIZE 2048
+#define DOCSIZE_MIN 512
+#define DOCSIZE_SETTINGS 4096
+#define USE_SERIAL2
+#define USE_WEB_IFACE
+#define USE_WIFI_OTA
+#define STACKSIZE_WIFIKEEPER 3000
+#define STACKSIZE_SETALARM 3700
+#define STACKSIZE_WIFIOTA 4096
+#define STACKSIZE_TB 12000
+#define STACKSIZE_IFACE 9000
+#define STACKSIZE_RECSENSORS 4500
+#define STACKSIZE_PUBLISHDEVTEL 6000
+#define STACKSIZE_WSSENDTELEMETRY 2200
 
 #include <libudawa.h>
-#include <TaskManagerIO.h>
+#include <TimeLib.h>
 
-#define CURRENT_FIRMWARE_TITLE "UDAWA-Vanilla"
-#define CURRENT_FIRMWARE_VERSION "0.0.1"
 
 const char* settingsPath = "/settings.json";
-
 struct Settings
 {
-    unsigned long lastUpdated;
-    bool fTeleDev;
-    unsigned long publishInterval;
-    unsigned long myTaskInterval;
+    unsigned long itD = 60;   
 };
 
-callbackResponse processSaveConfig(const callbackData &data);
-callbackResponse processSaveSettings(const callbackData &data);
-callbackResponse processSharedAttributesUpdate(const callbackData &data);
-callbackResponse processSyncClientAttributes(const callbackData &data);
-callbackResponse processReboot(const callbackData &data);
+#ifdef USE_WEB_IFACE
+struct WSPayload
+{
+    float data;
+};
+QueueHandle_t xQueueWsPayloadMessage;
+#endif
 
 void loadSettings();
 void saveSettings();
-void syncClientAttributes();
-void publishDeviceTelemetry();
-void myTask();
-
+void recSensorsTR(void *arg);
+void attUpdateCb(const Shared_Attribute_Data &data);
+void onTbConnected();
+void onTbDisconnected();
+void setPanic(const RPC_Data &data);
+RPC_Response genericClientRPC(const RPC_Data &data);
+void onReboot();
+void onAlarm(int code);
+void onSyncClientAttr(uint8_t direction);
+#ifdef USE_WEB_IFACE
+void onWsEvent(const JsonObject &data);
+void wsSendTelemetryTR(void *arg);
+#endif
+void publishDeviceTelemetryTR(void * arg);
+void onMQTTUpdateStart();
+void onMQTTUpdateEnd();
 #endif

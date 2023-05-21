@@ -349,8 +349,19 @@ void startup() {
   int uBytes = SPIFFS.usedBytes();
   log_manager->verbose(PSTR(__func__), PSTR("SPIFFS total bytes: %d, used bytes: %d, free space: %d.\n"), tBytes, uBytes, tBytes-uBytes);
 
-  xReturnedWifiKeeper = xTaskCreatePinnedToCore(wifiKeeperTR, "wifiKeeper", STACKSIZE_WIFIKEEPER, NULL, 1, &xHandleWifiKeeper, 1);
-  xReturnedAlarm = xTaskCreatePinnedToCore(setAlarmTR, "setAlarm", STACKSIZE_SETALARM, NULL, 1, &xHandleAlarm, 1);
+  if(xHandleWifiKeeper == NULL){
+    xReturnedWifiKeeper = xTaskCreatePinnedToCore(wifiKeeperTR, PSTR("wifiKeeper"), STACKSIZE_WIFIKEEPER, NULL, 1, &xHandleWifiKeeper, 1);
+    if(xReturnedWifiKeeper == pdPASS){
+      log_manager->warn(PSTR(__func__), PSTR("Task wifiKeeper has been created.\n"));
+    }
+  }
+
+  if(xHandleAlarm == NULL){
+    xReturnedAlarm = xTaskCreatePinnedToCore(setAlarmTR, PSTR("setAlarm"), STACKSIZE_SETALARM, NULL, 1, &xHandleAlarm, 1);
+    if(xReturnedAlarm == pdPASS){
+      log_manager->warn(PSTR(__func__), PSTR("Task setAlarm has been created.\n"));
+    }
+  }
 
 
   setAlarm(0, 0, 3, 50);
