@@ -408,9 +408,6 @@ void udawa(){
     config.CC = 0;
     FLAG_SAVE_CONFIG = true;
     FLAG_SM_CLEARED = true;
-    if( config.SM ){
-      reboot();
-    }
   }
 }
 
