@@ -33,8 +33,8 @@
 #include <Update.h>
 #include <HTTPClient.h>
 #ifdef USE_WEB_IFACE
-#include <WebServer.h>
-#include <WebSocketsServer.h>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
 #endif
 
 #define countof(a) (sizeof(a) / sizeof(a[0]))
@@ -171,7 +171,7 @@ void setAlarmTR(void *arg);
 void emitAlarm(int code);
 void (*emitAlarmCb)(const int code);
 #ifdef USE_WEB_IFACE
-void onWsEventCb(uint8_t num, WStype_t type, uint8_t * payload, size_t length);
+void onWsEventCb(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len);
 void (*wsEventCb)(const JsonObject &payload);
 void webSendFile(String path, String type);
 void ifaceTR(void *arg);
@@ -224,8 +224,8 @@ ConfigCoMCU configcomcu;
 ThingsBoardSized<32, TBLogger> tb(ssl, DOCSIZE_MIN);
 ESP32Time rtc(0);
 #ifdef USE_WEB_IFACE
-WebServer web(80);
-WebSocketsServer ws = WebSocketsServer(81);
+AsyncWebServer web(80);
+AsyncWebSocket ws("/ws");
 #endif
 bool FLAG_SAVE_SETTINGS = false;
 bool FLAG_SAVE_CONFIG = false;
@@ -283,6 +283,7 @@ SemaphoreHandle_t xSemaphoreConfig = NULL;
 SemaphoreHandle_t xSemaphoreConfigCoMCU = NULL;
 SemaphoreHandle_t xSemaphoreTBSend = NULL;
 SemaphoreHandle_t xSemaphoreWSSend = NULL;
+SemaphoreHandle_t xSemaphoreAsync = NULL;
 
 struct AlarmMessage
 {
@@ -305,7 +306,7 @@ void startup() {
   if(xSemaphoreConfigCoMCU == NULL){xSemaphoreConfigCoMCU = xSemaphoreCreateMutex();}
   if(xSemaphoreTBSend == NULL){xSemaphoreTBSend = xSemaphoreCreateMutex();}
   if(xSemaphoreWSSend == NULL){xSemaphoreWSSend = xSemaphoreCreateMutex();}
-
+  if(xSemaphoreAsync == NULL){xSemaphoreAsync = xSemaphoreCreateMutex();}
   // put your setup code here, to run once:
   Serial.begin(115200);
 
@@ -533,23 +534,16 @@ void tbOtaProgressCb(const uint32_t& currentChunk, const uint32_t& totalChuncks)
 
 #ifdef USE_WEB_IFACE
 void ifaceTR(void *arg){
-  web.on(PSTR("/"), []() { webSendFile("/www/index.html", "text/html"); });
-  web.on(PSTR("/runtime.js"), []() { webSendFile("/www/runtime.js", "application/javascript"); });
-  web.on(PSTR("/polyfills.js"), []() { webSendFile("/www/polyfills.js", "application/javascript"); });
-  web.on(PSTR("/main.js"), []() { webSendFile("/www/main.js", "application/javascript"); });
-  web.on(PSTR("/styles.css"), []() { webSendFile("/www/styles.css", "text/css"); });
-  web.on(PSTR("/assets/img/udawa.svg"), []() { webSendFile("/www/assets/img/udawa.svg", "image/svg+xml"); });
-  web.on(PSTR("/favicon"), []() { webSendFile("/www/favicon.ico", "image/x-icon"); });
-
   web.begin();
-
-  ws.begin();
+  web.serveStatic("/", SPIFFS, "/www/").setDefaultFile("index.html").setAuthentication(config.htU,config.htP);
   ws.onEvent(onWsEventCb);
+  ws.setAuthentication(config.htU, config.htP);
+  ws.enable(true);
+  web.addHandler(&ws);
 
   while(true){
-    ws.loop();
-    web.handleClient();
-    vTaskDelay((const TickType_t) 3 / portTICK_PERIOD_MS);
+    ws.cleanupClients();
+    vTaskDelay((const TickType_t) 1000 / portTICK_PERIOD_MS);
   }
 }
 #endif
@@ -843,11 +837,11 @@ void wifiKeeperTR(void *arg){
 }
 
 #ifdef USE_WEB_IFACE
-void onWsEventCb(uint8_t num, WStype_t type, uint8_t * data, size_t length){
+void onWsEventCb(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len){
   StaticJsonDocument<DOCSIZE_MIN> root;
   JsonObject doc = root.to<JsonObject>();
   switch(type) {
-    case WStype_DISCONNECTED:
+    case WS_EVT_DISCONNECT:
       {
         if( xSemaphoreConfig != NULL ){
           if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 1000 ) == pdTRUE )
@@ -863,13 +857,13 @@ void onWsEventCb(uint8_t num, WStype_t type, uint8_t * data, size_t length){
           }
         }
         
-        log_manager->debug(PSTR(__func__), PSTR("ws [%u] disconnect. WsCount: %d\n"), num, config.wsCount);
-        doc["evType"] = (int)WStype_DISCONNECTED;
-        doc["num"] = num;
+        log_manager->debug(PSTR(__func__), PSTR("ws [%u] disconnect. WsCount: %d\n"), client->id(), config.wsCount);
+        doc["evType"] = (int)WS_EVT_DISCONNECT;
+        doc["num"] = client->id();
         wsEventCb(doc);
       }
       break;
-    case WStype_CONNECTED:
+    case WS_EVT_CONNECT:
       {
         if( xSemaphoreConfig != NULL ){
           if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 1000 ) == pdTRUE )
@@ -882,20 +876,20 @@ void onWsEventCb(uint8_t num, WStype_t type, uint8_t * data, size_t length){
               log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
           }
         }
-        log_manager->debug(PSTR(__func__), PSTR("ws [%u] connect. WsCount: %d\n"), num, config.wsCount);
-        doc["evType"] = (int)WStype_CONNECTED;
-        doc["num"] = num;
+        log_manager->debug(PSTR(__func__), PSTR("ws [%u] connect. WsCount: %d\n"), client->id(), config.wsCount);
+        doc["evType"] = (int)WS_EVT_CONNECT;
+        doc["num"] = client->id();
         wsEventCb(doc);
       }
       break;
-    case WStype_TEXT:
+    case WS_EVT_DATA:
       {
         DeserializationError err = deserializeJson(root, data);
         if (err == DeserializationError::Ok)
         {
           log_manager->debug(PSTR(__func__), PSTR("WS message parsing %s\n"), err.c_str());
-          doc["evType"] = (int)WStype_TEXT;
-          doc["num"] = num;
+          doc["evType"] = (int)WS_EVT_DATA;
+          doc["num"] = client->id();
           wsEventCb(doc);
         }
         else
@@ -904,11 +898,11 @@ void onWsEventCb(uint8_t num, WStype_t type, uint8_t * data, size_t length){
         }
       }
       break;
-    case WStype_ERROR:
+    case WS_EVT_ERROR:
       {
-        log_manager->warn(PSTR(__func__), PSTR("ws [%u] error\n"), num);
-        doc["evType"] = (int)WStype_ERROR;
-        doc["num"] = num;
+        log_manager->warn(PSTR(__func__), PSTR("ws [%u] error\n"), client->id());
+        doc["evType"] = (int)WS_EVT_ERROR;
+        doc["num"] = client->id();
         wsEventCb(doc);
       }
       break;	
@@ -1670,13 +1664,13 @@ void ESP32UDPLogger::log_message(const char *tag, LogLevel level, const char *fm
 
 #ifdef USE_WEB_IFACE
 void webSendFile(String path, String type){
-  File file = SPIFFS.open(path.c_str(), FILE_READ);
+  /*File file = SPIFFS.open(path.c_str(), FILE_READ);
   if(file){
     web.streamFile(file, type.c_str(), 200);
   }else{
     web.send(503, PSTR("text/plain"), PSTR("Server error."));
   }
-  file.close();
+  file.close();*/
 }
 #endif
 
@@ -2110,7 +2104,8 @@ bool wsBroadcastTXT(const char *buffer){
     if( xSemaphoreWSSend != NULL){
       if( xSemaphoreTake( xSemaphoreWSSend, ( TickType_t ) 1000 ) == pdTRUE )
       {
-        res = ws.broadcastTXT(buffer);
+        ws.textAll(buffer);
+        res = true;
         xSemaphoreGive( xSemaphoreWSSend );
       }
       else
