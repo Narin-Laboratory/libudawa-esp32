@@ -313,7 +313,7 @@ QueueHandle_t xQueueAlarm;
 
 void startup() {
   tbloggerCb = &onTbLogger;
-  xQueueAlarm = xQueueCreate( 1, sizeof( struct AlarmMessage ) );
+  xQueueAlarm = xQueueCreate( 10, sizeof( struct AlarmMessage ) );
 
   if(xSemaphoreSerialCoMCU == NULL){xSemaphoreSerialCoMCU = xSemaphoreCreateMutex();}
   if(xSemaphoreUDPLogger == NULL){xSemaphoreUDPLogger = xSemaphoreCreateMutex();}
@@ -605,6 +605,7 @@ void wifiOtaTR(void *arg){
             SPIFFS.end();
         log_manager->warn(PSTR(__func__),PSTR("Starting OTA %s\n"), type.c_str());
         setAlarm(0, 2, 1000, 50);
+        onMQTTUpdateStartCb();
       })
       .onEnd([]()
       {
@@ -614,7 +615,7 @@ void wifiOtaTR(void *arg){
       })
       .onProgress([](unsigned int progress, unsigned int total)
       {
-        log_manager->warn(PSTR(__func__),PSTR("OTA progress: %d/%d\n"), progress, total);
+        //log_manager->warn(PSTR(__func__),PSTR("OTA progress: %d/%d\n"), progress, total);
       })
       .onError([](ota_error_t error)
       {
@@ -625,9 +626,13 @@ void wifiOtaTR(void *arg){
   }
   while(true){
     if(config.fWOTA){
-      ArduinoOTA.handle();
+      if( xSemaphoreUDPLogger != NULL && xSemaphoreTake( xSemaphoreUDPLogger, ( TickType_t ) 1000 ) == pdTRUE )
+      {
+        ArduinoOTA.handle();
+        xSemaphoreGive( xSemaphoreUDPLogger );
+      }
     }
-    vTaskDelay((const TickType_t) 10 / portTICK_PERIOD_MS);
+    vTaskDelay((const TickType_t) 1000 / portTICK_PERIOD_MS);
   }
 }
 #endif
@@ -647,22 +652,24 @@ void processProvisionResponse(const Provision_Data &data)
       if (strncmp(data["status"], "SUCCESS", strlen("SUCCESS")) != 0) {
         log_manager->warn(PSTR(__func__),PSTR("Provision response contains the error: (%s)\n"), data["errorMsg"].as<const char*>());
       }
+      else
+      {
+        if (strncmp(data[CREDENTIALS_TYPE], ACCESS_TOKEN_CRED_TYPE, strlen(ACCESS_TOKEN_CRED_TYPE)) == 0) {
+          strlcpy(config.accTkn, data[CREDENTIALS_VALUE].as<std::string>().c_str(), sizeof(config.accTkn));
+          config.provSent = true;  
+          FLAG_SAVE_CONFIG = true;
+          log_manager->verbose(PSTR(__func__),PSTR("Access token provision response saved.\n"));
+        }
+        else if (strncmp(data[CREDENTIALS_TYPE], MQTT_BASIC_CRED_TYPE, strlen(MQTT_BASIC_CRED_TYPE)) == 0) {
+          /*auto credentials_value = data[CREDENTIALS_VALUE].as<JsonObjectConst>();
+          credentials.client_id = credentials_value[CLIENT_ID].as<std::string>();
+          credentials.username = credentials_value[CLIENT_USERNAME].as<std::string>();
+          credentials.password = credentials_value[CLIENT_PASSWORD].as<std::string>();*/
+        }
+        else {
+          log_manager->warn(PSTR(__func__),PSTR("Unexpected provision credentialsType: (%s)\n"), data[CREDENTIALS_TYPE].as<const char*>());
 
-      if (strncmp(data[CREDENTIALS_TYPE], ACCESS_TOKEN_CRED_TYPE, strlen(ACCESS_TOKEN_CRED_TYPE)) == 0) {
-        strlcpy(config.accTkn, data[CREDENTIALS_VALUE].as<std::string>().c_str(), sizeof(config.accTkn));
-        config.provSent = true;  
-        FLAG_SAVE_CONFIG = true;
-        log_manager->verbose(PSTR(__func__),PSTR("Access token provision response saved.\n"));
-      }
-      else if (strncmp(data[CREDENTIALS_TYPE], MQTT_BASIC_CRED_TYPE, strlen(MQTT_BASIC_CRED_TYPE)) == 0) {
-        /*auto credentials_value = data[CREDENTIALS_VALUE].as<JsonObjectConst>();
-        credentials.client_id = credentials_value[CLIENT_ID].as<std::string>();
-        credentials.username = credentials_value[CLIENT_USERNAME].as<std::string>();
-        credentials.password = credentials_value[CLIENT_PASSWORD].as<std::string>();*/
-      }
-      else {
-        log_manager->warn(PSTR(__func__),PSTR("Unexpected provision credentialsType: (%s)\n"), data[CREDENTIALS_TYPE].as<const char*>());
-
+        }
       }
 
       // Disconnect from the cloud client connected to the provision account, because it is no longer needed the device has been provisioned
