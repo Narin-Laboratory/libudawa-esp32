@@ -185,6 +185,7 @@ void onWsEventCb(uint8_t num, WStype_t type, uint8_t * payload, size_t length);
 void webSendFile(String path, String type);
 #endif
 void (*wsEventCb)(const JsonObject &payload);
+bool wsSendTXT(uint32_t id, const char *buffer);
 void ifaceTR(void *arg);
 #endif
 #ifdef USE_WIFI_OTA
@@ -425,6 +426,7 @@ void udawa(){
     config.CC = 0;
     FLAG_SAVE_CONFIG = true;
     FLAG_SM_CLEARED = true;
+    log_manager->info(PSTR(__func__),PSTR("Safe mode cleared! Ready to reboot normally.\n"));
   }
 }
 
@@ -551,6 +553,7 @@ void tbOtaProgressCb(const uint32_t& currentChunk, const uint32_t& totalChuncks)
 #ifdef USE_WEB_IFACE
 void ifaceTR(void *arg){
   #ifdef USE_ASYNC_WEB
+  //DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
   web.begin();
   web.serveStatic("/", SPIFFS, "/www/").setDefaultFile("index.html").setAuthentication(config.htU,config.htP);
   ws.onEvent(onWsEventCb);
@@ -694,7 +697,7 @@ void TBTR(void *arg){
         const Provision_Callback provisionCallback(Access_Token(), &processProvisionResponse, config.provDK, config.provDS, config.name);
         if(tb.Provision_Request(provisionCallback))
         {
-          log_manager->info(PSTR(__func__),PSTR("Connected to provisioning server: %s:%d\n"),  config.broker, config.port);
+          //log_manager->info(PSTR(__func__),PSTR("Connected to provisioning server: %s:%d\n"),  config.broker, config.port);
         }
       }
       else
@@ -903,7 +906,6 @@ void onWsEventCb(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEven
               log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
           }
         }
-        
         log_manager->debug(PSTR(__func__), PSTR("ws [%u] disconnect. WsCount: %d\n"), client->id(), config.wsCount);
         doc["evType"] = (int)WS_EVT_DISCONNECT;
         doc["num"] = client->id();
@@ -1126,8 +1128,10 @@ void setAlarmTR(void *arg){
       AlarmMessage alarmMsg;
       if( xQueueReceive( xQueueAlarm,  &( alarmMsg ), ( TickType_t ) 1000 ) == pdPASS )
       {
+        #ifdef USE_SERIAL2
         setLed(alarmMsg.color, 1, alarmMsg.blinkCount, alarmMsg.blinkDelay);
         setBuzzer(alarmMsg.blinkCount, alarmMsg.blinkDelay);
+        #endif
         if(alarmMsg.code > 0){
           emitAlarm(alarmMsg.code);
         }
@@ -2026,8 +2030,6 @@ RPC_Response processGenericClientRPC(const RPC_Data &data){
 }
 
 void syncClientAttr(uint8_t direction){
-  long startMillis = millis();
-
   String ip = WiFi.localIP().toString();
   
   StaticJsonDocument<DOCSIZE_MIN> doc;
@@ -2142,15 +2144,13 @@ void syncClientAttr(uint8_t direction){
     wsBroadcastTXT(buffer);
   }
   #endif
-  
-  log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
 
   onSyncClientAttrCb(direction);
 }
 
 bool tbSendAttribute(const char *buffer){
   bool res = false;
-  if( xSemaphoreTBSend != NULL && WiFi.isConnected() && config.provSent && tb.connected()){
+  if( xSemaphoreTBSend != NULL && WiFi.isConnected() && config.provSent && tb.connected() && config.accTkn != NULL){
     if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
     {
       //log_manager->verbose(PSTR(__func__), PSTR("%s\n"), buffer);
@@ -2167,7 +2167,7 @@ bool tbSendAttribute(const char *buffer){
 
 bool tbSendTelemetry(const char * buffer){
   bool res = false;
-  if( xSemaphoreTBSend != NULL && WiFi.isConnected() && config.provSent && tb.connected()){
+  if( xSemaphoreTBSend != NULL && WiFi.isConnected() && config.provSent && tb.connected() && config.accTkn != NULL){
     if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
     {
       //log_manager->verbose(PSTR(__func__), PSTR("%s\n"), buffer);
@@ -2233,6 +2233,30 @@ bool wsBroadcastTXT(const char *buffer){
         #endif
         #ifndef USE_ASYNC_WEB
         res = ws.broadcastTXT(buffer);
+        #endif
+        xSemaphoreGive( xSemaphoreWSSend );
+      }
+      else
+      {
+        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+      }
+    }
+  }
+  return res;
+}
+
+bool wsSendTXT(uint32_t id, const char *buffer){
+  bool res = false;
+  if(config.fIface && config.wsCount > 0){
+    if( xSemaphoreWSSend != NULL){
+      if( xSemaphoreTake( xSemaphoreWSSend, ( TickType_t ) 1000 ) == pdTRUE )
+      {
+        #ifdef USE_ASYNC_WEB
+        ws.text(id, buffer);
+        res = true;
+        #endif
+        #ifndef USE_ASYNC_WEB
+        res = ws.sendTXT(id, buffer);
         #endif
         xSemaphoreGive( xSemaphoreWSSend );
       }
