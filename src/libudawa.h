@@ -42,6 +42,11 @@
 #include <WebSocketsServer.h>
 #endif
 #endif
+#ifdef USE_SDCARD_LOG
+#include "FS.h"
+#include "SD.h"
+#include "SPI.h"
+#endif
 
 #define countof(a) (sizeof(a) / sizeof(a[0]))
 #define COMPILED __DATE__ " " __TIME__
@@ -218,6 +223,9 @@ void (*tbloggerCb)(const char *error);
 void onTbLogger(const char *error);
 void (*onMQTTUpdateStartCb)();
 void (*onMQTTUpdateEndCb)();
+void setupCardLogger();
+void writeCardLogger(StaticJsonDocument<DOCSIZE_MIN> &doc);
+void wsStreamCardLogger(uint32_t id, String fileName);
 
 class TBLogger {
   public:
@@ -225,6 +233,14 @@ class TBLogger {
       tbloggerCb(error);
     }
 };
+
+#ifdef USE_SDCARD_LOG
+#define SD_MISO     19
+#define SD_MOSI     23
+#define SD_SCLK     18
+#define SD_CS       5
+SPIClass sdSPI(VSPI);
+#endif
 
 ESP32SerialLogger serial_logger;
 ESP32UDPLogger udp_logger;
@@ -254,6 +270,9 @@ bool FLAG_SYNC_CLIENT_ATTR_2 = false;
 bool FLAG_UPDATE_SPIFFS = false;
 bool FLAG_ECP_UPDATED = false;
 bool FLAG_SM_CLEARED = false;
+bool FLAG_WS_STREAM_SDCARD = false;
+uint32_t GLOBAL_TARGET_CLIENT_ID = 0;
+String GLOBAL_LOG_FILE_NAME = "";
 
 // Client-side RPC that can be executed from cloud
 const std::array<RPC_Callback, 8U> clientRPCCallbacks = {
@@ -301,6 +320,7 @@ SemaphoreHandle_t xSemaphoreConfig = NULL;
 SemaphoreHandle_t xSemaphoreConfigCoMCU = NULL;
 SemaphoreHandle_t xSemaphoreTBSend = NULL;
 SemaphoreHandle_t xSemaphoreWSSend = NULL;
+SemaphoreHandle_t xSemaphoreCardLogger = NULL;
 
 struct AlarmMessage
 {
@@ -323,6 +343,7 @@ void startup() {
   if(xSemaphoreConfigCoMCU == NULL){xSemaphoreConfigCoMCU = xSemaphoreCreateMutex();}
   if(xSemaphoreTBSend == NULL){xSemaphoreTBSend = xSemaphoreCreateMutex();}
   if(xSemaphoreWSSend == NULL){xSemaphoreWSSend = xSemaphoreCreateMutex();}
+  if(xSemaphoreCardLogger == NULL){xSemaphoreCardLogger = xSemaphoreCreateMutex();}
 
   // put your setup code here, to run once:
   Serial.begin(115200);
@@ -360,6 +381,13 @@ void startup() {
     log_manager->debug(PSTR(__func__), PSTR("Serial 2 - CoMCU Activated!\n"));
     Serial2.begin(115200, SERIAL_8N1, S2_RX, S2_TX);
   #endif
+
+  if(!config.SM)
+  {
+    #ifdef USE_SDCARD_LOG
+    setupSDCard();
+    #endif
+  }
 
   log_manager->debug(PSTR(__func__), PSTR("Startup time: %s\n"), rtc.getDateTime().c_str());
 
@@ -556,6 +584,11 @@ void ifaceTR(void *arg){
   //DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
   web.begin();
   web.serveStatic("/", SPIFFS, "/www/").setDefaultFile("index.html").setAuthentication(config.htU,config.htP);
+  #ifdef USE_SDCARD_LOG
+  if(!config.SM){
+    web.serveStatic("/log", SD, "/").setDefaultFile("recover.json");
+  }
+  #endif
   ws.onEvent(onWsEventCb);
   ws.setAuthentication(config.htU, config.htP);
   ws.enable(true);
@@ -2267,6 +2300,138 @@ bool wsSendTXT(uint32_t id, const char *buffer){
     }
   }
   return res;
+}
+
+void setupCardLogger()
+{
+  #ifdef USE_SDCARD_LOG
+  sdSPI.begin(SD_SCLK, SD_MISO, SD_MOSI, SD_CS);
+  if(!SD.begin(SD_CS, sdSPI)){
+    log_manager->warn(PSTR(__func__), PSTR("Card Mount Failed.\n"));
+    setAlarm(130, 1, 10, 500);
+    return;
+  }
+  uint8_t cardType = SD.cardType();
+
+  if(cardType == CARD_NONE){
+    log_manager->warn(PSTR(__func__), PSTR("No SD card attached.\n"));
+    setAlarm(131, 1, 10, 500);
+    return;
+  }
+
+  if( xSemaphoreSettings != NULL && xSemaphoreTake( xSemaphoreSettings, ( TickType_t ) 1000 ) == pdTRUE )
+  {
+    mySettings.cardSize = SD.cardSize() / (1024 * 1024);
+    mySettings.cardByte = SD.totalBytes();
+    mySettings.cardUsed = SD.usedBytes();
+    xSemaphoreGive(xSemaphoreSettings);
+  }
+  if(cardType == CARD_MMC){
+    log_manager->debug(PSTR(__func__), PSTR("SD Card Type: NNC, size: %lluMB - byte: %llu - used: %llu\n"), 
+      mySettings.cardSize, mySettings.cardByte, mySettings.cardUsed);
+  } else if(cardType == CARD_SD){
+    log_manager->debug(PSTR(__func__), PSTR("SD Card Type: SDSC, size: %lluMB - byte: %llu - used: %llu\n"), 
+      mySettings.cardSize, mySettings.cardByte, mySettings.cardUsed);
+  } else if(cardType == CARD_SDHC){
+    log_manager->debug(PSTR(__func__), PSTR("SD Card Type: SDHC, size: %lluMB - byte: %llu - used: %llu\n"), 
+      mySettings.cardSize, mySettings.cardByte, mySettings.cardUsed);
+  } else {
+    log_manager->debug(PSTR(__func__), PSTR("SD Card Type: UNKNOWN, size: %lluMB - byte: %llu - used: %llu\n"), 
+      mySettings.cardSize, mySettings.cardByte, mySettings.cardUsed);
+  }
+  #endif
+}
+
+void writeCardLogger(StaticJsonDocument<DOCSIZE_MIN> &doc)
+{
+  if( xSemaphoreCardLogger != NULL && xSemaphoreTake( xSemaphoreCardLogger, ( TickType_t ) 10000 ) == pdTRUE )
+  {
+    unsigned long ts; String fileName;
+    if(rtc.getYear() < 2023)
+    {
+      fileName = "/www/log/recover.json";
+      ts = millis();
+    }
+    else
+    {
+      fileName = "/www/log/" + String(rtc.getYear()) + "-" + String(rtc.getMonth()+1) + "-" + String(rtc.getDay()) + ".json";
+      ts = rtc.getEpoch();
+    }
+    #ifdef USE_SDCARD_LOG
+    File file = SD.open(fileName.c_str(), FILE_APPEND);
+    #endif
+    #ifdef USE_SPIFFS_LOG
+    File file = SPIFFS.open(fileName.c_str(), FILE_APPEND);
+    #endif
+    if (!file) {
+      log_manager->warn(PSTR(__func__), PSTR("Failed to create the log file %s!\n"), fileName.c_str());
+      setAlarm(132, 1, 10, 500);
+      xSemaphoreGive( xSemaphoreCardLogger );
+      return;
+    }
+    doc[PSTR("ts")] = ts;
+    if (serializeJson(doc, file) == 0) {
+      setAlarm(133, 1, 10, 500);
+      log_manager->warn(PSTR(__func__), PSTR("Failed to write to the log file %s!\n"), fileName.c_str());
+    }
+    else
+    {
+      file.println();
+    }
+
+    file.close();
+    xSemaphoreGive( xSemaphoreCardLogger );
+  }
+  else
+  {
+    log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+  }
+}
+
+void wsStreamCardLogger(uint32_t id, String fileName)
+{
+  log_manager->debug(PSTR(__func__), PSTR("Sending log file of %s to %d!\n"), fileName.c_str(), id);
+  if( xSemaphoreCardLogger != NULL && xSemaphoreTake( xSemaphoreCardLogger, ( TickType_t ) 0 ) == pdTRUE )
+  {
+    #ifdef USE_SDCARD_LOG
+    File file = SD.open(fileName.c_str(), FILE_READ);
+    #endif
+    #ifdef USE_SPIFFS_LOG
+    File file = SPIFFS.open(fileName.c_str(), FILE_READ);
+    #endif
+    if (!file) {
+      log_manager->warn(PSTR(__func__), PSTR("Failed to open the log file %s!\n"), fileName.c_str());
+      xSemaphoreGive( xSemaphoreCardLogger );
+      return;
+    }
+
+    while (true) {
+      StaticJsonDocument<DOCSIZE_MIN> doc;
+      char buffer[DOCSIZE_MIN];
+      DeserializationError err = deserializeJson(doc, file);
+      if (err) 
+      {
+        doc[PSTR("src")] = PSTR("card-end");
+        serializeJson(doc, buffer);
+        //wsSendTXT(id, buffer);
+        wsBroadcastTXT(buffer);
+        break;
+      };
+      doc[PSTR("src")] = PSTR("card");
+      serializeJson(doc, buffer);
+      //wsSendTXT(id, buffer);
+      wsBroadcastTXT(buffer);
+      vTaskDelay((const TickType_t) 50 / portTICK_PERIOD_MS);
+    }
+
+    file.close();
+
+    xSemaphoreGive( xSemaphoreCardLogger );
+  }
+  else
+  {
+    log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+  }
 }
 
 } // namespace libudawa
