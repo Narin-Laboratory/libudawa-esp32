@@ -33,8 +33,14 @@
 #include <Update.h>
 #include <HTTPClient.h>
 #ifdef USE_WEB_IFACE
+#ifdef USE_ASYNC_WEB
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#endif
+#ifndef USE_ASYNC_WEB
 #include <WebServer.h>
 #include <WebSocketsServer.h>
+#endif
 #endif
 
 #define countof(a) (sizeof(a) / sizeof(a[0]))
@@ -171,9 +177,15 @@ void setAlarmTR(void *arg);
 void emitAlarm(int code);
 void (*emitAlarmCb)(const int code);
 #ifdef USE_WEB_IFACE
+#ifdef USE_ASYNC_WEB
+void onWsEventCb(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len);
+#endif
+#ifndef USE_ASYNC_WEB
 void onWsEventCb(uint8_t num, WStype_t type, uint8_t * payload, size_t length);
-void (*wsEventCb)(const JsonObject &payload);
 void webSendFile(String path, String type);
+#endif
+void (*wsEventCb)(const JsonObject &payload);
+bool wsSendTXT(uint32_t id, const char *buffer);
 void ifaceTR(void *arg);
 #endif
 #ifdef USE_WIFI_OTA
@@ -224,8 +236,14 @@ ConfigCoMCU configcomcu;
 ThingsBoardSized<32, TBLogger> tb(ssl, DOCSIZE_MIN);
 ESP32Time rtc(0);
 #ifdef USE_WEB_IFACE
+#ifdef USE_ASYNC_WEB
+AsyncWebServer web(80);
+AsyncWebSocket ws("/ws");
+#endif
+#ifndef USE_ASYNC_WEB
 WebServer web(80);
 WebSocketsServer ws = WebSocketsServer(81);
+#endif
 #endif
 bool FLAG_SAVE_SETTINGS = false;
 bool FLAG_SAVE_CONFIG = false;
@@ -296,7 +314,7 @@ QueueHandle_t xQueueAlarm;
 
 void startup() {
   tbloggerCb = &onTbLogger;
-  xQueueAlarm = xQueueCreate( 1, sizeof( struct AlarmMessage ) );
+  xQueueAlarm = xQueueCreate( 10, sizeof( struct AlarmMessage ) );
 
   if(xSemaphoreSerialCoMCU == NULL){xSemaphoreSerialCoMCU = xSemaphoreCreateMutex();}
   if(xSemaphoreUDPLogger == NULL){xSemaphoreUDPLogger = xSemaphoreCreateMutex();}
@@ -408,6 +426,7 @@ void udawa(){
     config.CC = 0;
     FLAG_SAVE_CONFIG = true;
     FLAG_SM_CLEARED = true;
+    log_manager->info(PSTR(__func__),PSTR("Safe mode cleared! Ready to reboot normally.\n"));
   }
 }
 
@@ -533,6 +552,22 @@ void tbOtaProgressCb(const uint32_t& currentChunk, const uint32_t& totalChuncks)
 
 #ifdef USE_WEB_IFACE
 void ifaceTR(void *arg){
+  #ifdef USE_ASYNC_WEB
+  //DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
+  web.begin();
+  web.serveStatic("/", SPIFFS, "/www/").setDefaultFile("index.html").setAuthentication(config.htU,config.htP);
+  ws.onEvent(onWsEventCb);
+  ws.setAuthentication(config.htU, config.htP);
+  ws.enable(true);
+  web.addHandler(&ws);
+
+  while(true){
+    ws.cleanupClients();
+    vTaskDelay((const TickType_t) 1000 / portTICK_PERIOD_MS);
+  }
+  #endif
+
+  #ifndef USE_ASYNC_WEB
   web.on(PSTR("/"), []() { webSendFile("/www/index.html", "text/html"); });
   web.on(PSTR("/runtime.js"), []() { webSendFile("/www/runtime.js", "application/javascript"); });
   web.on(PSTR("/polyfills.js"), []() { webSendFile("/www/polyfills.js", "application/javascript"); });
@@ -551,6 +586,7 @@ void ifaceTR(void *arg){
     web.handleClient();
     vTaskDelay((const TickType_t) 3 / portTICK_PERIOD_MS);
   }
+  #endif
 }
 #endif
 
@@ -572,6 +608,7 @@ void wifiOtaTR(void *arg){
             SPIFFS.end();
         log_manager->warn(PSTR(__func__),PSTR("Starting OTA %s\n"), type.c_str());
         setAlarm(0, 2, 1000, 50);
+        onMQTTUpdateStartCb();
       })
       .onEnd([]()
       {
@@ -581,7 +618,7 @@ void wifiOtaTR(void *arg){
       })
       .onProgress([](unsigned int progress, unsigned int total)
       {
-        log_manager->warn(PSTR(__func__),PSTR("OTA progress: %d/%d\n"), progress, total);
+        //log_manager->warn(PSTR(__func__),PSTR("OTA progress: %d/%d\n"), progress, total);
       })
       .onError([](ota_error_t error)
       {
@@ -592,9 +629,13 @@ void wifiOtaTR(void *arg){
   }
   while(true){
     if(config.fWOTA){
-      ArduinoOTA.handle();
+      if( xSemaphoreUDPLogger != NULL && xSemaphoreTake( xSemaphoreUDPLogger, ( TickType_t ) 1000 ) == pdTRUE )
+      {
+        ArduinoOTA.handle();
+        xSemaphoreGive( xSemaphoreUDPLogger );
+      }
     }
-    vTaskDelay((const TickType_t) 10 / portTICK_PERIOD_MS);
+    vTaskDelay((const TickType_t) 1000 / portTICK_PERIOD_MS);
   }
 }
 #endif
@@ -614,22 +655,24 @@ void processProvisionResponse(const Provision_Data &data)
       if (strncmp(data["status"], "SUCCESS", strlen("SUCCESS")) != 0) {
         log_manager->warn(PSTR(__func__),PSTR("Provision response contains the error: (%s)\n"), data["errorMsg"].as<const char*>());
       }
+      else
+      {
+        if (strncmp(data[CREDENTIALS_TYPE], ACCESS_TOKEN_CRED_TYPE, strlen(ACCESS_TOKEN_CRED_TYPE)) == 0) {
+          strlcpy(config.accTkn, data[CREDENTIALS_VALUE].as<std::string>().c_str(), sizeof(config.accTkn));
+          config.provSent = true;  
+          FLAG_SAVE_CONFIG = true;
+          log_manager->verbose(PSTR(__func__),PSTR("Access token provision response saved.\n"));
+        }
+        else if (strncmp(data[CREDENTIALS_TYPE], MQTT_BASIC_CRED_TYPE, strlen(MQTT_BASIC_CRED_TYPE)) == 0) {
+          /*auto credentials_value = data[CREDENTIALS_VALUE].as<JsonObjectConst>();
+          credentials.client_id = credentials_value[CLIENT_ID].as<std::string>();
+          credentials.username = credentials_value[CLIENT_USERNAME].as<std::string>();
+          credentials.password = credentials_value[CLIENT_PASSWORD].as<std::string>();*/
+        }
+        else {
+          log_manager->warn(PSTR(__func__),PSTR("Unexpected provision credentialsType: (%s)\n"), data[CREDENTIALS_TYPE].as<const char*>());
 
-      if (strncmp(data[CREDENTIALS_TYPE], ACCESS_TOKEN_CRED_TYPE, strlen(ACCESS_TOKEN_CRED_TYPE)) == 0) {
-        strlcpy(config.accTkn, data[CREDENTIALS_VALUE].as<std::string>().c_str(), sizeof(config.accTkn));
-        config.provSent = true;  
-        FLAG_SAVE_CONFIG = true;
-        log_manager->verbose(PSTR(__func__),PSTR("Access token provision response saved.\n"));
-      }
-      else if (strncmp(data[CREDENTIALS_TYPE], MQTT_BASIC_CRED_TYPE, strlen(MQTT_BASIC_CRED_TYPE)) == 0) {
-        /*auto credentials_value = data[CREDENTIALS_VALUE].as<JsonObjectConst>();
-        credentials.client_id = credentials_value[CLIENT_ID].as<std::string>();
-        credentials.username = credentials_value[CLIENT_USERNAME].as<std::string>();
-        credentials.password = credentials_value[CLIENT_PASSWORD].as<std::string>();*/
-      }
-      else {
-        log_manager->warn(PSTR(__func__),PSTR("Unexpected provision credentialsType: (%s)\n"), data[CREDENTIALS_TYPE].as<const char*>());
-
+        }
       }
 
       // Disconnect from the cloud client connected to the provision account, because it is no longer needed the device has been provisioned
@@ -654,7 +697,7 @@ void TBTR(void *arg){
         const Provision_Callback provisionCallback(Access_Token(), &processProvisionResponse, config.provDK, config.provDS, config.name);
         if(tb.Provision_Request(provisionCallback))
         {
-          log_manager->info(PSTR(__func__),PSTR("Connected to provisioning server: %s:%d\n"),  config.broker, config.port);
+          //log_manager->info(PSTR(__func__),PSTR("Connected to provisioning server: %s:%d\n"),  config.broker, config.port);
         }
       }
       else
@@ -843,6 +886,79 @@ void wifiKeeperTR(void *arg){
 }
 
 #ifdef USE_WEB_IFACE
+#ifdef USE_ASYNC_WEB
+void onWsEventCb(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len){
+  StaticJsonDocument<DOCSIZE_MIN> root;
+  JsonObject doc = root.to<JsonObject>();
+  switch(type) {
+    case WS_EVT_DISCONNECT:
+      {
+        if( xSemaphoreConfig != NULL ){
+          if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 1000 ) == pdTRUE )
+          {
+            if(config.wsCount > 0){
+              config.wsCount--;
+            }
+            xSemaphoreGive( xSemaphoreConfig );
+          }
+          else
+          {
+              log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+          }
+        }
+        log_manager->debug(PSTR(__func__), PSTR("ws [%u] disconnect. WsCount: %d\n"), client->id(), config.wsCount);
+        doc["evType"] = (int)WS_EVT_DISCONNECT;
+        doc["num"] = client->id();
+        wsEventCb(doc);
+      }
+      break;
+    case WS_EVT_CONNECT:
+      {
+        if( xSemaphoreConfig != NULL ){
+          if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 1000 ) == pdTRUE )
+          {
+            config.wsCount++;
+            xSemaphoreGive( xSemaphoreConfig );
+          }
+          else
+          {
+              log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+          }
+        }
+        log_manager->debug(PSTR(__func__), PSTR("ws [%u] connect. WsCount: %d\n"), client->id(), config.wsCount);
+        doc["evType"] = (int)WS_EVT_CONNECT;
+        doc["num"] = client->id();
+        wsEventCb(doc);
+      }
+      break;
+    case WS_EVT_DATA:
+      {
+        DeserializationError err = deserializeJson(root, data);
+        if (err == DeserializationError::Ok)
+        {
+          log_manager->debug(PSTR(__func__), PSTR("WS message parsing %s\n"), err.c_str());
+          doc["evType"] = (int)WS_EVT_DATA;
+          doc["num"] = client->id();
+          wsEventCb(doc);
+        }
+        else
+        {
+          log_manager->warn(PSTR(__func__), PSTR("WS message parsing error: %s\n"), err.c_str());
+        }
+      }
+      break;
+    case WS_EVT_ERROR:
+      {
+        log_manager->warn(PSTR(__func__), PSTR("ws [%u] error\n"), client->id());
+        doc["evType"] = (int)WS_EVT_ERROR;
+        doc["num"] = client->id();
+        wsEventCb(doc);
+      }
+      break;	
+  }
+}
+#endif
+#ifndef USE_ASYNC_WEB
 void onWsEventCb(uint8_t num, WStype_t type, uint8_t * data, size_t length){
   StaticJsonDocument<DOCSIZE_MIN> root;
   JsonObject doc = root.to<JsonObject>();
@@ -914,6 +1030,7 @@ void onWsEventCb(uint8_t num, WStype_t type, uint8_t * data, size_t length){
       break;	
   }
 }
+#endif
 #endif
 
 void setBuzzer(int32_t beepCount, uint16_t beepDelay){
@@ -1011,8 +1128,10 @@ void setAlarmTR(void *arg){
       AlarmMessage alarmMsg;
       if( xQueueReceive( xQueueAlarm,  &( alarmMsg ), ( TickType_t ) 1000 ) == pdPASS )
       {
+        #ifdef USE_SERIAL2
         setLed(alarmMsg.color, 1, alarmMsg.blinkCount, alarmMsg.blinkDelay);
         setBuzzer(alarmMsg.blinkCount, alarmMsg.blinkDelay);
+        #endif
         if(alarmMsg.code > 0){
           emitAlarm(alarmMsg.code);
         }
@@ -1669,6 +1788,7 @@ void ESP32UDPLogger::log_message(const char *tag, LogLevel level, const char *fm
 }
 
 #ifdef USE_WEB_IFACE
+#ifndef USE_ASYNC_WEB
 void webSendFile(String path, String type){
   File file = SPIFFS.open(path.c_str(), FILE_READ);
   if(file){
@@ -1678,6 +1798,7 @@ void webSendFile(String path, String type){
   }
   file.close();
 }
+#endif
 #endif
 
 void updateSpiffs()
@@ -1909,8 +2030,6 @@ RPC_Response processGenericClientRPC(const RPC_Data &data){
 }
 
 void syncClientAttr(uint8_t direction){
-  long startMillis = millis();
-
   String ip = WiFi.localIP().toString();
   
   StaticJsonDocument<DOCSIZE_MIN> doc;
@@ -2006,7 +2125,7 @@ void syncClientAttr(uint8_t direction){
     attr[PSTR("dUsed")] = (int)SPIFFS.usedBytes();
     attr[PSTR("sdkVer")] = ESP.getSdkVersion();
     serializeJson(doc, buffer);
-    wsBroadcastTXT(buffer);;;
+    wsBroadcastTXT(buffer);
     doc.clear();
     JsonObject cfg = doc.createNestedObject("cfg");
     cfg[PSTR("name")] = config.name;
@@ -2022,18 +2141,16 @@ void syncClientAttr(uint8_t direction){
     cfg[PSTR("htU")] = config.htU;
     cfg[PSTR("htP")] = config.htP;
     serializeJson(doc, buffer);
-    wsBroadcastTXT(buffer);;;
+    wsBroadcastTXT(buffer);
   }
   #endif
-  
-  log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
 
   onSyncClientAttrCb(direction);
 }
 
 bool tbSendAttribute(const char *buffer){
   bool res = false;
-  if( xSemaphoreTBSend != NULL && WiFi.isConnected() && config.provSent && tb.connected()){
+  if( xSemaphoreTBSend != NULL && WiFi.isConnected() && config.provSent && tb.connected() && config.accTkn != NULL){
     if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
     {
       //log_manager->verbose(PSTR(__func__), PSTR("%s\n"), buffer);
@@ -2050,7 +2167,7 @@ bool tbSendAttribute(const char *buffer){
 
 bool tbSendTelemetry(const char * buffer){
   bool res = false;
-  if( xSemaphoreTBSend != NULL && WiFi.isConnected() && config.provSent && tb.connected()){
+  if( xSemaphoreTBSend != NULL && WiFi.isConnected() && config.provSent && tb.connected() && config.accTkn != NULL){
     if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
     {
       //log_manager->verbose(PSTR(__func__), PSTR("%s\n"), buffer);
@@ -2110,7 +2227,37 @@ bool wsBroadcastTXT(const char *buffer){
     if( xSemaphoreWSSend != NULL){
       if( xSemaphoreTake( xSemaphoreWSSend, ( TickType_t ) 1000 ) == pdTRUE )
       {
+        #ifdef USE_ASYNC_WEB
+        ws.textAll(buffer);
+        res = true;
+        #endif
+        #ifndef USE_ASYNC_WEB
         res = ws.broadcastTXT(buffer);
+        #endif
+        xSemaphoreGive( xSemaphoreWSSend );
+      }
+      else
+      {
+        log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+      }
+    }
+  }
+  return res;
+}
+
+bool wsSendTXT(uint32_t id, const char *buffer){
+  bool res = false;
+  if(config.fIface && config.wsCount > 0){
+    if( xSemaphoreWSSend != NULL){
+      if( xSemaphoreTake( xSemaphoreWSSend, ( TickType_t ) 1000 ) == pdTRUE )
+      {
+        #ifdef USE_ASYNC_WEB
+        ws.text(id, buffer);
+        res = true;
+        #endif
+        #ifndef USE_ASYNC_WEB
+        res = ws.sendTXT(id, buffer);
+        #endif
         xSemaphoreGive( xSemaphoreWSSend );
       }
       else
