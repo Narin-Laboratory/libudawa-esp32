@@ -586,7 +586,7 @@ void ifaceTR(void *arg){
   web.serveStatic("/", SPIFFS, "/www/").setDefaultFile("index.html").setAuthentication(config.htU,config.htP);
   #ifdef USE_SDCARD_LOG
   if(!config.SM){
-    web.serveStatic("/log", SD, "/").setDefaultFile("recover.json");
+    web.serveStatic("/log", SD, "/www/log").setDefaultFile("recover.json");
   }
   #endif
   ws.onEvent(onWsEventCb);
