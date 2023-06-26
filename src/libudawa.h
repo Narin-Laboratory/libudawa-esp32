@@ -8,7 +8,6 @@
 
 #ifndef libudawa_h
 #define libudawa_h
-
 #include <secret.h>
 #include <esp32-hal-log.h>
 #include <esp_int_wdt.h>
@@ -33,6 +32,10 @@
 #include <Update.h>
 #include <HTTPClient.h>
 #ifdef USE_WEB_IFACE
+#include <Crypto.h>
+#include <SHA256.h>
+#include "mbedtls/md.h"
+#include <map>
 #ifdef USE_ASYNC_WEB
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
@@ -116,12 +119,22 @@ struct Config
   char hname[40];
   char htU[24];
   char htP[24];
+  char webApiKey[32];
 
   char logIP[16] = "192.168.18.255";
   uint16_t logPrt = 29514;
 
   #ifdef USE_WEB_IFACE
   uint8_t wsCount = 0;
+  unsigned long rateLimitInterval = 1000; // rate limit interval in milliseconds
+  unsigned long blockInterval = 1; // block interval in milliseconds
+
+  #endif
+
+  #ifdef USE_SDCARD_LOG
+  uint64_t cardSize = 0;
+  uint64_t cardByte = 0;
+  uint64_t cardUsed = 0;
   #endif
 };
 
@@ -142,6 +155,11 @@ class ESP32UDPLogger : public ILogHandler
     public:
         void log_message(const char *tag, const LogLevel level, const char *fmt, va_list args) override;
 };
+
+#ifdef USE_WEB_IFACE
+std::map<uint32_t, bool> clientAuthenticationStatus;
+std::map<IPAddress, unsigned long> clientAuthAttemptTimestamps; 
+#endif
 
 uint32_t micro2milli(uint32_t hi, uint32_t lo);
 double round2(double value);
@@ -183,6 +201,7 @@ void emitAlarm(int code);
 void (*emitAlarmCb)(const int code);
 #ifdef USE_WEB_IFACE
 #ifdef USE_ASYNC_WEB
+void hashApiKeyWithSalt(const char *apiKey, const char *salt, char *hashResultHex);
 void onWsEventCb(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len);
 #endif
 #ifndef USE_ASYNC_WEB
@@ -191,6 +210,7 @@ void webSendFile(String path, String type);
 #endif
 void (*wsEventCb)(const JsonObject &payload);
 bool wsSendTXT(uint32_t id, const char *buffer);
+bool wsBroadcastTXT(const char *buffer);
 void ifaceTR(void *arg);
 #endif
 #ifdef USE_WIFI_OTA
@@ -218,7 +238,6 @@ void syncClientAttr(uint8_t direction);
 void (*onSyncClientAttrCb)(uint8_t);
 bool tbSendAttribute(const char *buffer);
 bool tbSendTelemetry(const char *buffer);
-bool wsBroadcastTXT(const char *buffer);
 void (*tbloggerCb)(const char *error);
 void onTbLogger(const char *error);
 void (*onMQTTUpdateStartCb)();
@@ -385,7 +404,7 @@ void startup() {
   if(!config.SM)
   {
     #ifdef USE_SDCARD_LOG
-    setupSDCard();
+    setupCardLogger();
     #endif
   }
 
@@ -526,6 +545,7 @@ void processSharedAttributeUpdate(const Shared_Attribute_Data &data){
         if(data["fIoT"] != nullptr){config.fIoT = data["fIoT"].as<bool>();}
         if(data["hname"] != nullptr){strlcpy(config.hname, data["hname"].as<const char*>(), sizeof(config.hname));}
         if(data["logIP"] != nullptr){strlcpy(config.logIP, data["logIP"].as<const char*>(), sizeof(config.logIP));}
+        if(data["webApiKey"] != nullptr){strlcpy(config.webApiKey, data["webApiKey"].as<const char*>(), sizeof(config.webApiKey));}
         if(data["logPrt"] != nullptr){config.logPrt = data["logPrt"].as<uint16_t>();}
         xSemaphoreGive( xSemaphoreConfig );
       }
@@ -581,7 +601,7 @@ void tbOtaProgressCb(const uint32_t& currentChunk, const uint32_t& totalChuncks)
 #ifdef USE_WEB_IFACE
 void ifaceTR(void *arg){
   #ifdef USE_ASYNC_WEB
-  //DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
+  DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
   web.begin();
   web.serveStatic("/", SPIFFS, "/www/").setDefaultFile("index.html").setAuthentication(config.htU,config.htP);
   #ifdef USE_SDCARD_LOG
@@ -590,7 +610,6 @@ void ifaceTR(void *arg){
   }
   #endif
   ws.onEvent(onWsEventCb);
-  ws.setAuthentication(config.htU, config.htP);
   ws.enable(true);
   web.addHandler(&ws);
 
@@ -606,7 +625,7 @@ void ifaceTR(void *arg){
   web.on(PSTR("/polyfills.js"), []() { webSendFile("/www/polyfills.js", "application/javascript"); });
   web.on(PSTR("/main.js"), []() { webSendFile("/www/main.js", "application/javascript"); });
   web.on(PSTR("/styles.css"), []() { webSendFile("/www/styles.css", "text/css"); });
-  web.on(PSTR("/assets/img/udawa.svg"), []() { webSendFile("/www/assets/img/udawa.svg", "image/svg+xml"); });
+  web.on(PSTR("/assets/img/logo.svg"), []() { webSendFile("/www/assets/img/logo.svg", "image/svg+xml"); });
   web.on(PSTR("/favicon"), []() { webSendFile("/www/favicon.ico", "image/x-icon"); });
 
   web.begin();
@@ -923,9 +942,15 @@ void wifiKeeperTR(void *arg){
 void onWsEventCb(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len){
   StaticJsonDocument<DOCSIZE_MIN> root;
   JsonObject doc = root.to<JsonObject>();
+  IPAddress clientIP = client->remoteIP();
   switch(type) {
     case WS_EVT_DISCONNECT:
       {
+        log_manager->verbose(PSTR(__func__), PSTR("Client disconnected [%s]\n"), client->remoteIP().toString().c_str());
+        // Remove client from maps
+        clientAuthenticationStatus.erase(client->id());
+        clientAuthAttemptTimestamps.erase(clientIP);
+
         if( xSemaphoreConfig != NULL ){
           if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 1000 ) == pdTRUE )
           {
@@ -947,36 +972,91 @@ void onWsEventCb(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEven
       break;
     case WS_EVT_CONNECT:
       {
-        if( xSemaphoreConfig != NULL ){
-          if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 1000 ) == pdTRUE )
-          {
-            config.wsCount++;
-            xSemaphoreGive( xSemaphoreConfig );
-          }
-          else
-          {
-              log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
-          }
-        }
-        log_manager->debug(PSTR(__func__), PSTR("ws [%u] connect. WsCount: %d\n"), client->id(), config.wsCount);
-        doc["evType"] = (int)WS_EVT_CONNECT;
-        doc["num"] = client->id();
-        wsEventCb(doc);
+        log_manager->verbose(PSTR(__func__), PSTR("New client arrived [%s]\n"), client->remoteIP().toString().c_str());
+        // Initialize client as unauthenticated
+        clientAuthenticationStatus[client->id()] = false;
+        // Initialize timestamp for rate limiting
       }
       break;
     case WS_EVT_DATA:
       {
         DeserializationError err = deserializeJson(root, data);
-        if (err == DeserializationError::Ok)
-        {
-          log_manager->debug(PSTR(__func__), PSTR("WS message parsing %s\n"), err.c_str());
-          doc["evType"] = (int)WS_EVT_DATA;
-          doc["num"] = client->id();
-          wsEventCb(doc);
+
+        // If client is not authenticated, check credentials
+        if(!clientAuthenticationStatus[client->id()]) {
+          unsigned long currentTime = millis();
+          unsigned long lastAttemptTime = clientAuthAttemptTimestamps[clientIP];
+
+          if (currentTime - lastAttemptTime < config.rateLimitInterval) {
+            // Too many attempts in short time, block this IP for blockInterval
+            clientAuthAttemptTimestamps[clientIP] = currentTime + config.blockInterval - config.rateLimitInterval;
+            log_manager->verbose(PSTR(__func__), PSTR("Too many authentication attempts. Blocking for 60 seconds.\n"));
+            client->text(PSTR("{\"status\": {\"code\": 429, \"msg\": \"Too many authentication attempts. Please wait for 60 seconds.\"}}"));
+            client->close();
+            return;
+          }
+          
+          clientAuthAttemptTimestamps[clientIP] = millis();
+
+          if (err) {
+            client->text(PSTR("{\"status\": {\"code\": 400, \"msg\": \"Bad request.\"}}"));
+            client->close();
+            return;
+          }
+
+          if(doc["salt"] == nullptr || doc["auth"] == nullptr){
+            client->text(PSTR("{\"status\": {\"code\": 401, \"msg\": \"Unauthorized.\"}}"));
+            client->close();
+            return;
+          }
+
+          const char* salt = doc["salt"];
+          const char* auth = doc["auth"];
+
+          char hashedApiKey[65];          
+          hashApiKeyWithSalt(config.webApiKey, salt, hashedApiKey);
+        
+          if (strcmp(auth, hashedApiKey) == 0) {
+            // Client authenticated successfully, update the status in the map
+            clientAuthenticationStatus[client->id()] = true;
+            if( xSemaphoreConfig != NULL ){
+              if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 1000 ) == pdTRUE )
+              {
+                config.wsCount++;
+                xSemaphoreGive( xSemaphoreConfig );
+              }
+              else
+              {
+                  log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+              }
+            }
+            client->text(PSTR("{\"status\": {\"code\": 200, \"msg\": \"Authorized.\"}}"));
+            log_manager->debug(PSTR(__func__), PSTR("ws [%u] authenticated. WsCount: %d\n"), client->id(), config.wsCount);
+            doc["evType"] = (int)WS_EVT_CONNECT;
+            doc["num"] = client->id();
+            wsEventCb(doc);
+          } else {
+            // Unauthorized, you can choose to disconnect the client
+            client->text(PSTR("{\"status\": {\"code\": 401, \"msg\": \"Unauthorized.\"}}"));
+            client->close();
+          }
+
+          // Update timestamp for rate limiting
+          clientAuthAttemptTimestamps[clientIP] = currentTime;
         }
-        else
-        {
-          log_manager->warn(PSTR(__func__), PSTR("WS message parsing error: %s\n"), err.c_str());
+        else {
+          // The client is already authenticated, you can process the received data
+          if (err == DeserializationError::Ok)
+          {
+            log_manager->debug(PSTR(__func__), PSTR("WS message parsing %s\n"), err.c_str());
+            doc["evType"] = (int)WS_EVT_DATA;
+            doc["num"] = client->id();
+            wsEventCb(doc);
+          }
+          else
+          {
+            log_manager->warn(PSTR(__func__), PSTR("WS message parsing error: %s\n"), err.c_str());
+          }
         }
       }
       break;
@@ -1240,6 +1320,8 @@ void configReset()
       doc["logIP"] = "192.168.18.255";
       doc["logPrt"] = 29514;
 
+      doc["webApiKey"] = webApiKey;
+
       size_t size = serializeJson(doc, file);
       file.close();
 
@@ -1299,6 +1381,7 @@ void configLoadFailSafe()
       strlcpy(config.dpass, dpass, sizeof(config.dpass));
       strlcpy(config.upass, upass, sizeof(config.upass));
       strlcpy(config.accTkn, accTkn, sizeof(config.accTkn));
+      strlcpy(config.webApiKey, webApiKey, sizeof(config.webApiKey));
       config.provSent = false;
       config.port = port;
       strlcpy(config.provDK, provDK, sizeof(config.provDK));
@@ -1392,6 +1475,7 @@ void configLoad()
         if(doc["fIface"] != nullptr){config.fIface = doc["fIface"].as<bool>();}
         if(doc["hname"] != nullptr){strlcpy(config.hname, doc["hname"].as<const char*>(), sizeof(config.hname));}
         if(doc["logIP"] != nullptr){strlcpy(config.logIP, doc["logIP"].as<const char*>(), sizeof(config.logIP));}
+        if(doc["webApiKey"] != nullptr){strlcpy(config.webApiKey, doc["webApiKey"].as<const char*>(), sizeof(config.webApiKey));}
         if(doc["logPrt"] != nullptr){config.logPrt = doc["logPrt"].as<uint16_t>();}
 
         int jsonSize = JSON_STRING_SIZE(measureJson(doc));
@@ -1438,6 +1522,7 @@ void configSave()
       doc["dssid"] = config.dssid;
       doc["dpass"] = config.dpass;
       doc["upass"] = config.upass;
+      doc["webApiKey"] = config.webApiKey;
       doc["accTkn"] = config.accTkn;
       doc["provSent"] = config.provSent;
       doc["provDK"] = config.provDK;
@@ -2105,6 +2190,10 @@ void syncClientAttr(uint8_t direction){
     doc.clear();
     doc[PSTR("upass")] = config.upass;
     doc[PSTR("accTkn")] = config.accTkn;
+    doc[PSTR("webApiKey")] = config.webApiKey;
+    serializeJson(doc, buffer);
+    tbSendAttribute(buffer);
+    doc.clear();
     doc[PSTR("provDK")] = config.provDK;
     doc[PSTR("provDS")] = config.provDS;
     doc[PSTR("logLev")] = config.logLev;
@@ -2137,6 +2226,11 @@ void syncClientAttr(uint8_t direction){
     doc.clear();
     doc[PSTR("htP")] = config.htP;
     doc[PSTR("lON")] = configcomcu.lON;
+    #ifdef USE_SDCARD_LOG
+    doc[PSTR("crByte")] = config.cardByte;
+    doc[PSTR("crSize")] = config.cardSize;
+    doc[PSTR("crUsed")] = config.cardUsed;
+    #endif
     serializeJson(doc, buffer);
     tbSendAttribute(buffer);
     doc.clear();
@@ -2157,6 +2251,11 @@ void syncClientAttr(uint8_t direction){
     attr[PSTR("dSize")] = (int)SPIFFS.totalBytes(); 
     attr[PSTR("dUsed")] = (int)SPIFFS.usedBytes();
     attr[PSTR("sdkVer")] = ESP.getSdkVersion();
+    #ifdef USE_SDCARD_LOG
+    attr[PSTR("crByte")] = config.cardByte;
+    attr[PSTR("crSize")] = config.cardSize;
+    attr[PSTR("crUsed")] = config.cardUsed;
+    #endif
     serializeJson(doc, buffer);
     wsBroadcastTXT(buffer);
     doc.clear();
@@ -2164,15 +2263,11 @@ void syncClientAttr(uint8_t direction){
     cfg[PSTR("name")] = config.name;
     cfg[PSTR("model")] = config.model;
     cfg[PSTR("group")] = config.group;
-    cfg[PSTR("wssid")] = config.wssid;
-    cfg[PSTR("wpass")] = config.wpass;
     cfg[PSTR("ap")] = WiFi.SSID();
     cfg[PSTR("gmtOff")] = config.gmtOff;
     cfg[PSTR("fP")] = (int)configcomcu.fP;
     cfg[PSTR("fIoT")] = (int)config.fIoT;
     cfg[PSTR("hname")] = config.hname;
-    cfg[PSTR("htU")] = config.htU;
-    cfg[PSTR("htP")] = config.htP;
     serializeJson(doc, buffer);
     wsBroadcastTXT(buffer);
   }
@@ -2254,6 +2349,7 @@ void processFwCheckAttributeRequest(const Shared_Attribute_Data &data){
   }
 }
 
+#ifdef USE_WEB_IFACE
 bool wsBroadcastTXT(const char *buffer){
   bool res = false;
   if(config.fIface && config.wsCount > 0){
@@ -2261,7 +2357,15 @@ bool wsBroadcastTXT(const char *buffer){
       if( xSemaphoreTake( xSemaphoreWSSend, ( TickType_t ) 1000 ) == pdTRUE )
       {
         #ifdef USE_ASYNC_WEB
-        ws.textAll(buffer);
+        ws.cleanupClients(); // remove disconnected clients
+        for(auto& it : clientAuthenticationStatus) {
+            if(it.second) { // if the client is authenticated
+                AsyncWebSocketClient* client = ws.client(it.first); // get the client using the client id
+                if(client != nullptr) {
+                    client->text(buffer);
+                }
+            }
+        }
         res = true;
         #endif
         #ifndef USE_ASYNC_WEB
@@ -2301,6 +2405,7 @@ bool wsSendTXT(uint32_t id, const char *buffer){
   }
   return res;
 }
+#endif
 
 void setupCardLogger()
 {
@@ -2321,23 +2426,23 @@ void setupCardLogger()
 
   if( xSemaphoreSettings != NULL && xSemaphoreTake( xSemaphoreSettings, ( TickType_t ) 1000 ) == pdTRUE )
   {
-    mySettings.cardSize = SD.cardSize() / (1024 * 1024);
-    mySettings.cardByte = SD.totalBytes();
-    mySettings.cardUsed = SD.usedBytes();
+    config.cardSize = SD.cardSize() / (1024 * 1024);
+    config.cardByte = SD.totalBytes();
+    config.cardUsed = SD.usedBytes();
     xSemaphoreGive(xSemaphoreSettings);
   }
   if(cardType == CARD_MMC){
     log_manager->debug(PSTR(__func__), PSTR("SD Card Type: NNC, size: %lluMB - byte: %llu - used: %llu\n"), 
-      mySettings.cardSize, mySettings.cardByte, mySettings.cardUsed);
+      config.cardSize, config.cardByte, config.cardUsed);
   } else if(cardType == CARD_SD){
     log_manager->debug(PSTR(__func__), PSTR("SD Card Type: SDSC, size: %lluMB - byte: %llu - used: %llu\n"), 
-      mySettings.cardSize, mySettings.cardByte, mySettings.cardUsed);
+      config.cardSize, config.cardByte, config.cardUsed);
   } else if(cardType == CARD_SDHC){
     log_manager->debug(PSTR(__func__), PSTR("SD Card Type: SDHC, size: %lluMB - byte: %llu - used: %llu\n"), 
-      mySettings.cardSize, mySettings.cardByte, mySettings.cardUsed);
+      config.cardSize, config.cardByte, config.cardUsed);
   } else {
     log_manager->debug(PSTR(__func__), PSTR("SD Card Type: UNKNOWN, size: %lluMB - byte: %llu - used: %llu\n"), 
-      mySettings.cardSize, mySettings.cardByte, mySettings.cardUsed);
+      config.cardSize, config.cardByte, config.cardUsed);
   }
   #endif
 }
@@ -2388,6 +2493,7 @@ void writeCardLogger(StaticJsonDocument<DOCSIZE_MIN> &doc)
   }
 }
 
+#ifdef USE_WEB_IFACE
 void wsStreamCardLogger(uint32_t id, String fileName)
 {
   log_manager->debug(PSTR(__func__), PSTR("Sending log file of %s to %d!\n"), fileName.c_str(), id);
@@ -2433,6 +2539,36 @@ void wsStreamCardLogger(uint32_t id, String fileName)
     log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
   }
 }
+
+#ifdef USE_ASYNC_WEB
+void hashApiKeyWithSalt(const char* apiKey, const char* salt, char outputBuffer[65]) {
+  // Convert input strings to UTF-8
+  String apiKeyUtf8 = String(apiKey);
+  String saltUtf8 = String(salt);
+
+  // Calculate the HMAC
+  byte hmac[32];
+  const byte* key = (const byte*)apiKeyUtf8.c_str();
+  size_t keyLength = apiKeyUtf8.length();
+  const byte* message = (const byte*)saltUtf8.c_str();
+  size_t messageLength = saltUtf8.length();
+  mbedtls_md_context_t ctx;
+  mbedtls_md_type_t md_type = MBEDTLS_MD_SHA256;
+
+  mbedtls_md_init(&ctx);
+  mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(md_type), 1);
+  mbedtls_md_hmac_starts(&ctx, key, keyLength);
+  mbedtls_md_hmac_update(&ctx, message, messageLength);
+  mbedtls_md_hmac_finish(&ctx, hmac);
+  mbedtls_md_free(&ctx);
+
+  // Convert the hash to a hex string
+  for (int i = 0; i < 32; i++) {
+    sprintf(&outputBuffer[i*2], "%02x", (unsigned int)hmac[i]);
+  }
+}
+#endif
+#endif
 
 } // namespace libudawa
 #endif
