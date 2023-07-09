@@ -177,6 +177,7 @@ void configCoMCULoad();
 void configCoMCUSave();
 void configCoMCUReset();
 void (*onSaveSettings)();
+void (*onSaveStates)();
 bool loadFile(const char* filePath, char* buffer);
 void processProvisionResponse(const Provision_Data &data);
 void processSharedAttributeRequest(const Shared_Attribute_Data &data);
@@ -188,8 +189,8 @@ void wifiKeeperTR(void *arg);
 void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc);
 void serialReadFromCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc);
 void syncConfigCoMCU();
-void readSettings(StaticJsonDocument<DOCSIZE> &doc,const char* path);
-void writeSettings(StaticJsonDocument<DOCSIZE> &doc, const char* path);
+void readSettings(StaticJsonDocument<DOCSIZE_SETTINGS> &doc,const char* path);
+void writeSettings(StaticJsonDocument<DOCSIZE_SETTINGS> &doc, const char* path);
 void setCoMCUPin(uint8_t pin, uint8_t op, uint8_t mode, uint16_t aval, uint8_t state);
 void rtcUpdate(long ts = 0);
 void setBuzzer(int32_t beepCount, uint16_t beepDelay);
@@ -283,6 +284,7 @@ WebSocketsServer ws = WebSocketsServer(81);
 bool FLAG_SAVE_SETTINGS = false;
 bool FLAG_SAVE_CONFIG = false;
 bool FLAG_SAVE_CONFIGCOMCU = false;
+bool FLAG_SAVE_STATES = false;
 bool FLAG_SYNC_CLIENT_ATTR_0 = false;
 bool FLAG_SYNC_CLIENT_ATTR_1 = false;
 bool FLAG_SYNC_CLIENT_ATTR_2 = false;
@@ -445,6 +447,10 @@ void udawa(){
     FLAG_SAVE_SETTINGS = false;
     onSaveSettings();
   }
+  if(FLAG_SAVE_STATES){
+    FLAG_SAVE_STATES = false;
+    onSaveStates();
+  }
   if(FLAG_SYNC_CLIENT_ATTR_0){
     FLAG_SYNC_CLIENT_ATTR_0 = false;
     syncClientAttr(0);
@@ -603,7 +609,7 @@ void ifaceTR(void *arg){
   #ifdef USE_ASYNC_WEB
   DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
   web.begin();
-  web.serveStatic("/", SPIFFS, "/www/").setDefaultFile("index.html").setAuthentication(config.htU,config.htP);
+  web.serveStatic("/", SPIFFS, "/www/").setDefaultFile("index.html");//.setAuthentication(config.htU,config.htP);
   #ifdef USE_SDCARD_LOG
   if(!config.SM){
     web.serveStatic("/log", SD, "/www/log").setDefaultFile("recover.json");
@@ -976,6 +982,9 @@ void onWsEventCb(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEven
         // Initialize client as unauthenticated
         clientAuthenticationStatus[client->id()] = false;
         // Initialize timestamp for rate limiting
+        char broadcastModel[128];
+        sprintf(broadcastModel, ("{\"status\": {\"code\": 100, \"msg\": %s\".\"}}"), config.model);
+        client->text(broadcastModel);
       }
       break;
     case WS_EVT_DATA:
@@ -2363,6 +2372,7 @@ bool wsBroadcastTXT(const char *buffer){
                 AsyncWebSocketClient* client = ws.client(it.first); // get the client using the client id
                 if(client != nullptr) {
                     client->text(buffer);
+                    log_manager->verbose(PSTR(__func__),PSTR("%s\n"), buffer);
                 }
             }
         }
@@ -2390,6 +2400,7 @@ bool wsSendTXT(uint32_t id, const char *buffer){
       {
         #ifdef USE_ASYNC_WEB
         ws.text(id, buffer);
+        log_manager->verbose(PSTR(__func__),PSTR("%s\n"), buffer);
         res = true;
         #endif
         #ifndef USE_ASYNC_WEB
