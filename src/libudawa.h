@@ -608,6 +608,8 @@ void tbOtaProgressCb(const uint32_t& currentChunk, const uint32_t& totalChuncks)
 void ifaceTR(void *arg){
   #ifdef USE_ASYNC_WEB
   DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
+  DefaultHeaders::Instance().addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "Content-Type");
   web.begin();
   web.serveStatic("/", SPIFFS, "/www/").setDefaultFile("index.html");//.setAuthentication(config.htU,config.htP);
   #ifdef USE_SDCARD_LOG
@@ -982,9 +984,6 @@ void onWsEventCb(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEven
         // Initialize client as unauthenticated
         clientAuthenticationStatus[client->id()] = false;
         // Initialize timestamp for rate limiting
-        char broadcastModel[128];
-        sprintf(broadcastModel, ("{\"status\": {\"code\": 100, \"msg\": %s\".\"}}"), config.model);
-        client->text(broadcastModel);
       }
       break;
     case WS_EVT_DATA:
@@ -1039,6 +1038,9 @@ void onWsEventCb(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEven
                   log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
               }
             }
+            char broadcastModel[128];
+            sprintf(broadcastModel, PSTR("{\"status\": {\"code\": 200, \"msg\": \"Authorized.\", \"model\": \"%s\"}}"), config.model);
+            client->text(broadcastModel);
             client->text(PSTR("{\"status\": {\"code\": 200, \"msg\": \"Authorized.\"}}"));
             log_manager->debug(PSTR(__func__), PSTR("ws [%u] authenticated. WsCount: %d\n"), client->id(), config.wsCount);
             doc["evType"] = (int)WS_EVT_CONNECT;
@@ -2287,6 +2289,11 @@ void syncClientAttr(uint8_t direction){
 
 bool tbSendAttribute(const char *buffer){
   bool res = false;
+  int length = strlen(buffer);
+  if (buffer[length - 1] != '}') {
+      log_manager->verbose(PSTR(__func__),PSTR("The buffer is not JSON formatted!\n"));
+      return false;
+  }
   if( xSemaphoreTBSend != NULL && WiFi.isConnected() && config.provSent && tb.connected() && config.accTkn != NULL){
     if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
     {
@@ -2304,6 +2311,11 @@ bool tbSendAttribute(const char *buffer){
 
 bool tbSendTelemetry(const char * buffer){
   bool res = false;
+  int length = strlen(buffer);
+  if (buffer[length - 1] != '}') {
+      log_manager->verbose(PSTR(__func__),PSTR("The buffer is not JSON formatted!\n"));
+      return false;
+  }
   if( xSemaphoreTBSend != NULL && WiFi.isConnected() && config.provSent && tb.connected() && config.accTkn != NULL){
     if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
     {
@@ -2362,6 +2374,11 @@ void processFwCheckAttributeRequest(const Shared_Attribute_Data &data){
 bool wsBroadcastTXT(const char *buffer){
   bool res = false;
   if(config.fIface && config.wsCount > 0){
+    int length = strlen(buffer);
+    if (buffer[length - 1] != '}') {
+        log_manager->verbose(PSTR(__func__),PSTR("The buffer is not JSON formatted!\n"));
+        return false;
+    }
     if( xSemaphoreWSSend != NULL){
       if( xSemaphoreTake( xSemaphoreWSSend, ( TickType_t ) 1000 ) == pdTRUE )
       {
@@ -2372,7 +2389,7 @@ bool wsBroadcastTXT(const char *buffer){
                 AsyncWebSocketClient* client = ws.client(it.first); // get the client using the client id
                 if(client != nullptr) {
                     client->text(buffer);
-                    log_manager->verbose(PSTR(__func__),PSTR("%s\n"), buffer);
+                    //log_manager->verbose(PSTR(__func__),PSTR("%s\n"), buffer);
                 }
             }
         }
@@ -2395,12 +2412,17 @@ bool wsBroadcastTXT(const char *buffer){
 bool wsSendTXT(uint32_t id, const char *buffer){
   bool res = false;
   if(config.fIface && config.wsCount > 0){
+    int length = strlen(buffer);
+    if (buffer[length - 1] != '}') {
+        log_manager->verbose(PSTR(__func__),PSTR("The buffer is not JSON formatted!\n"));
+        return false;
+    }
     if( xSemaphoreWSSend != NULL){
       if( xSemaphoreTake( xSemaphoreWSSend, ( TickType_t ) 1000 ) == pdTRUE )
       {
         #ifdef USE_ASYNC_WEB
         ws.text(id, buffer);
-        log_manager->verbose(PSTR(__func__),PSTR("%s\n"), buffer);
+        //log_manager->verbose(PSTR(__func__),PSTR("%s\n"), buffer);
         res = true;
         #endif
         #ifndef USE_ASYNC_WEB
