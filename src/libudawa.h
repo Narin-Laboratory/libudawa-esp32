@@ -610,8 +610,21 @@ void ifaceTR(void *arg){
   DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
   DefaultHeaders::Instance().addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
   DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "Content-Type");
+  web.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+    DynamicJsonDocument jsonDoc(128);
+    jsonDoc[PSTR("model")] = config.model;
+    jsonDoc[PSTR("name")] = config.name;
+    jsonDoc[PSTR("host")] = String(config.hname) + PSTR(".local");
+    jsonDoc[PSTR("ipad")] = WiFi.localIP().toString();
+    jsonDoc[PSTR("fwVer")] = CURRENT_FIRMWARE_VERSION;
+    String jsonResponse = "";
+    serializeJson(jsonDoc, jsonResponse);
+    request->send(200, "application/json", jsonResponse);
+  });
   web.begin();
-  web.serveStatic("/", SPIFFS, "/www/").setDefaultFile("index.html");//.setAuthentication(config.htU,config.htP);
+  #ifdef USE_SPIFFS_LOG
+  web.serveStatic("/log", SPIFFS, "/www/log").setDefaultFile("index.html");//.setAuthentication(config.htU,config.htP);
+  #endif
   #ifdef USE_SDCARD_LOG
   if(!config.SM){
     web.serveStatic("/log", SD, "/www/log").setDefaultFile("recover.json");
@@ -874,11 +887,8 @@ void cbWiFiOnDisconnected(WiFiEvent_t event, WiFiEventInfo_t info)
 
 void cbWiFiOnGotIp(WiFiEvent_t event, WiFiEventInfo_t info)
 {
-  long startMillis = millis();
-  IPAddress ip = WiFi.localIP();
-  char ipa[25];
-  sprintf(ipa, "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
-  log_manager->warn(PSTR(__func__),PSTR("WiFi (%s) IP Assigned: %s!\n"), WiFi.SSID().c_str(), ipa);
+  String ip = WiFi.localIP().toString();
+  log_manager->warn(PSTR(__func__),PSTR("WiFi (%s) IP Assigned: %s!\n"), WiFi.SSID().c_str(), ip.c_str());
 
   ssl.setCACert(CA_CERT);
 
@@ -918,7 +928,6 @@ void cbWiFiOnGotIp(WiFiEvent_t event, WiFiEventInfo_t info)
   }
 
   setAlarm(0, 0, 3, 50);
-  log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
 }
 
 
