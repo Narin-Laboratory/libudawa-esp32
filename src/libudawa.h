@@ -243,9 +243,11 @@ void (*tbloggerCb)(const char *error);
 void onTbLogger(const char *error);
 void (*onMQTTUpdateStartCb)();
 void (*onMQTTUpdateEndCb)();
+#ifdef USE_DISK_LOG
 void setupCardLogger();
 void writeCardLogger(StaticJsonDocument<DOCSIZE_MIN> &doc);
 void wsStreamCardLogger(uint32_t id, String fileName);
+#endif
 
 class TBLogger {
   public:
@@ -405,8 +407,10 @@ void startup() {
 
   if(!config.SM)
   {
+    #ifdef USE_DISK_LOG
     #ifdef USE_SDCARD_LOG
     setupCardLogger();
+    #endif
     #endif
   }
 
@@ -2449,6 +2453,7 @@ bool wsSendTXT(uint32_t id, const char *buffer){
 }
 #endif
 
+#ifdef USE_DISK_LOG
 void setupCardLogger()
 {
   #ifdef USE_SDCARD_LOG
@@ -2488,7 +2493,9 @@ void setupCardLogger()
   }
   #endif
 }
+#endif
 
+#ifdef USE_DISK_LOG
 void writeCardLogger(StaticJsonDocument<DOCSIZE_MIN> &doc)
 {
   if( xSemaphoreCardLogger != NULL && xSemaphoreTake( xSemaphoreCardLogger, ( TickType_t ) 10000 ) == pdTRUE )
@@ -2534,8 +2541,10 @@ void writeCardLogger(StaticJsonDocument<DOCSIZE_MIN> &doc)
     log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
   }
 }
+#endif
 
 #ifdef USE_WEB_IFACE
+#ifdef USE_DISK_LOG
 void wsStreamCardLogger(uint32_t id, String fileName)
 {
   log_manager->debug(PSTR(__func__), PSTR("Sending log file of %s to %d!\n"), fileName.c_str(), id);
@@ -2581,6 +2590,7 @@ void wsStreamCardLogger(uint32_t id, String fileName)
     log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
   }
 }
+#endif
 
 #ifdef USE_ASYNC_WEB
 void hashApiKeyWithSalt(const char* apiKey, const char* salt, char outputBuffer[65]) {
