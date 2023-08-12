@@ -283,9 +283,11 @@ WebServer web(80);
 WebSocketsServer ws = WebSocketsServer(81);
 #endif
 #endif
+unsigned long LAST_TB_CONNECTED = 0;
 bool FLAG_SAVE_SETTINGS = false;
 bool FLAG_SAVE_CONFIG = false;
 bool FLAG_SAVE_CONFIGCOMCU = false;
+bool FLAG_SYNC_CONFIGCOMCU = false;
 bool FLAG_SAVE_STATES = false;
 bool FLAG_SYNC_CLIENT_ATTR_0 = false;
 bool FLAG_SYNC_CLIENT_ATTR_1 = false;
@@ -447,6 +449,10 @@ void udawa(){
     FLAG_SAVE_CONFIGCOMCU = false;
     configCoMCUSave();
   }
+  if(FLAG_SYNC_CONFIGCOMCU){
+    FLAG_SYNC_CONFIGCOMCU = false;
+    syncConfigCoMCU();
+  }
   if(FLAG_SAVE_SETTINGS){
     FLAG_SAVE_SETTINGS = false;
     onSaveSettings();
@@ -484,6 +490,18 @@ void udawa(){
     FLAG_SAVE_CONFIG = true;
     FLAG_SM_CLEARED = true;
     log_manager->info(PSTR(__func__),PSTR("Safe mode cleared! Ready to reboot normally.\n"));
+  }
+
+  if(LAST_TB_CONNECTED != 0 && config.fIoT && tb.connected() && (millis() - LAST_TB_CONNECTED) > 10000 && 
+    (millis() - LAST_TB_CONNECTED) < 11000  ){
+    FLAG_SYNC_CLIENT_ATTR_1 = true;
+    LAST_TB_CONNECTED = 0;
+  }
+
+  if(LAST_TB_CONNECTED != 0 && config.fIoT && tb.connected() && (millis() - LAST_TB_CONNECTED) > 20000 &&
+    (millis() - LAST_TB_CONNECTED) < 21000 ){
+    onTbConnectedCb();
+    LAST_TB_CONNECTED = 0;
   }
 }
 
@@ -529,8 +547,12 @@ void processClientAttributeRequest(const Shared_Attribute_Data &data) {
 void processSharedAttributeUpdate(const Shared_Attribute_Data &data){
   if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
   {
-    log_manager->verbose(PSTR(__func__), PSTR("Received shared attribute(s) update.\n"));
-    if(config.logLev == 5){serializeJson(data, Serial); Serial.println();}
+    log_manager->verbose(PSTR(__func__), PSTR("Received shared attribute(s) update: \n"));
+    if(config.logLev >= 5){
+      String buffer;
+      serializeJson(data, buffer); 
+      log_manager->verbose(PSTR(__func__), PSTR("%s \n"), buffer.c_str());
+    }
     if( xSemaphoreConfig != NULL ){
       if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 1000 ) == pdTRUE )
       {
@@ -823,9 +845,8 @@ void TBTR(void *arg){
           tb.Firmware_Send_State(PSTR("updated"));
           tb.Shared_Attributes_Request(fwCheckCb);
 
-          FLAG_SYNC_CLIENT_ATTR_1 = true;
+          LAST_TB_CONNECTED = millis();
 
-          onTbConnectedCb();
           setAlarm(0, 0, 3, 50);
           log_manager->info(PSTR(__func__),PSTR("IoT Connected!\n"));
         }
@@ -1263,7 +1284,7 @@ void setAlarmTR(void *arg){
   while(true){
     if( xQueueAlarm != NULL ){
       AlarmMessage alarmMsg;
-      if( xQueueReceive( xQueueAlarm,  &( alarmMsg ), ( TickType_t ) 1000 ) == pdPASS )
+      if( xQueueReceive( xQueueAlarm,  &( alarmMsg ), ( TickType_t ) 100 ) == pdPASS )
       {
         #ifdef USE_SERIAL2
         setLed(alarmMsg.color, 1, alarmMsg.blinkCount, alarmMsg.blinkDelay);
@@ -1275,7 +1296,7 @@ void setAlarmTR(void *arg){
         vTaskDelay((const TickType_t) (alarmMsg.blinkCount * alarmMsg.blinkDelay) / portTICK_PERIOD_MS);
       }
     }
-    vTaskDelay((const TickType_t) 500 / portTICK_PERIOD_MS);
+    vTaskDelay((const TickType_t) 100 / portTICK_PERIOD_MS);
   }
 }
 
@@ -2168,6 +2189,9 @@ RPC_Response processReboot(const RPC_Data &data){
 }
 
 RPC_Response processGenericClientRPC(const RPC_Data &data){
+  String buffer;
+  serializeJson(data, buffer);
+  log_manager->verbose(PSTR(__func__), PSTR("Received generic client rpc: %s.\n"), buffer.c_str());
   return processGenericClientRPCCb(data);
 }
 
