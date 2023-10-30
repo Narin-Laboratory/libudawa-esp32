@@ -127,7 +127,7 @@ struct Config
   #ifdef USE_WEB_IFACE
   uint8_t wsCount = 0;
   unsigned long rateLimitInterval = 1000; // rate limit interval in milliseconds
-  unsigned long blockInterval = 1; // block interval in milliseconds
+  unsigned long blockInterval = 1000; // block interval in milliseconds
 
   #endif
 
@@ -392,7 +392,7 @@ void startup() {
 
   if(config.ECP < 60000){
     config.CC++;
-    if(config.CC >= 10){
+    if(config.CC >= 60){
       config.SM = true;
       setAlarm(0, 1, 1000000, 50);
     }
@@ -1023,7 +1023,10 @@ void onWsEventCb(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEven
     case WS_EVT_DATA:
       {
         DeserializationError err = deserializeJson(root, data);
-
+        String dataLog;
+        serializeJson(root, dataLog);
+        log_manager->verbose(PSTR(__func__), PSTR("WS Data (%s): %s\n"), err.c_str(), dataLog.c_str());
+        
         // If client is not authenticated, check credentials
         if(!clientAuthenticationStatus[client->id()]) {
           unsigned long currentTime = millis();
@@ -1032,7 +1035,7 @@ void onWsEventCb(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEven
           if (currentTime - lastAttemptTime < config.rateLimitInterval) {
             // Too many attempts in short time, block this IP for blockInterval
             clientAuthAttemptTimestamps[clientIP] = currentTime + config.blockInterval - config.rateLimitInterval;
-            log_manager->verbose(PSTR(__func__), PSTR("Too many authentication attempts. Blocking for 60 seconds.\n"));
+            log_manager->verbose(PSTR(__func__), PSTR("Too many authentication attempts. Blocking for %d seconds. Rate limit %d.\n"), config.blockInterval / 1000, config.rateLimitInterval);
             client->text(PSTR("{\"status\": {\"code\": 429, \"msg\": \"Too many authentication attempts. Please wait for 60 seconds.\"}}"));
             client->close();
             return;
@@ -1042,52 +1045,52 @@ void onWsEventCb(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEven
 
           if (err) {
             client->text(PSTR("{\"status\": {\"code\": 400, \"msg\": \"Bad request.\"}}"));
-            client->close();
+            //client->close();
             return;
           }
-
-          if(doc["salt"] == nullptr || doc["auth"] == nullptr){
-            client->text(PSTR("{\"status\": {\"code\": 401, \"msg\": \"Unauthorized.\"}}"));
-            client->close();
-            return;
-          }
-
-          const char* salt = doc["salt"];
-          const char* auth = doc["auth"];
-
-          char hashedApiKey[65];          
-          hashApiKeyWithSalt(config.webApiKey, salt, hashedApiKey);
-        
-          if (strcmp(auth, hashedApiKey) == 0) {
-            // Client authenticated successfully, update the status in the map
-            clientAuthenticationStatus[client->id()] = true;
-            if( xSemaphoreConfig != NULL ){
-              if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 1000 ) == pdTRUE )
-              {
-                config.wsCount++;
-                xSemaphoreGive( xSemaphoreConfig );
-              }
-              else
-              {
-                  log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
-              }
+          else{
+            if(doc["salt"] == nullptr || doc["auth"] == nullptr){
+              client->text(PSTR("{\"status\": {\"code\": 401, \"msg\": \"Unauthorized.\"}}"));
+              client->close();
+              return;
             }
-            char broadcastModel[128];
-            sprintf(broadcastModel, PSTR("{\"status\": {\"code\": 200, \"msg\": \"Authorized.\", \"model\": \"%s\"}}"), config.model);
-            client->text(broadcastModel);
-            client->text(PSTR("{\"status\": {\"code\": 200, \"msg\": \"Authorized.\"}}"));
-            log_manager->debug(PSTR(__func__), PSTR("ws [%u] authenticated. WsCount: %d\n"), client->id(), config.wsCount);
-            doc["evType"] = (int)WS_EVT_CONNECT;
-            doc["num"] = client->id();
-            wsEventCb(doc);
-          } else {
-            // Unauthorized, you can choose to disconnect the client
-            client->text(PSTR("{\"status\": {\"code\": 401, \"msg\": \"Unauthorized.\"}}"));
-            client->close();
-          }
 
-          // Update timestamp for rate limiting
-          clientAuthAttemptTimestamps[clientIP] = currentTime;
+            const char* salt = doc["salt"];
+            const char* auth = doc["auth"];
+
+            char hashedApiKey[65];          
+            hashApiKeyWithSalt(config.webApiKey, salt, hashedApiKey);
+          
+            if (strcmp(auth, hashedApiKey) == 0) {
+              // Client authenticated successfully, update the status in the map
+              clientAuthenticationStatus[client->id()] = true;
+              if( xSemaphoreConfig != NULL ){
+                if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 1000 ) == pdTRUE )
+                {
+                  config.wsCount++;
+                  xSemaphoreGive( xSemaphoreConfig );
+                }
+                else
+                {
+                    log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+                }
+              }
+              char broadcastModel[128];
+              sprintf(broadcastModel, PSTR("{\"status\": {\"code\": 200, \"msg\": \"Authorized.\", \"model\": \"%s\"}}"), config.model);
+              client->text(broadcastModel);
+              log_manager->debug(PSTR(__func__), PSTR("ws [%u] authenticated. WsCount: %d\n"), client->id(), config.wsCount);
+              doc["evType"] = (int)WS_EVT_CONNECT;
+              doc["num"] = client->id();
+              wsEventCb(doc);
+            } else {
+              // Unauthorized, you can choose to disconnect the client
+              client->text(PSTR("{\"status\": {\"code\": 401, \"msg\": \"Unauthorized.\"}}"));
+              client->close();
+            }
+
+            // Update timestamp for rate limiting
+            clientAuthAttemptTimestamps[clientIP] = currentTime;
+          }
         }
         else {
           // The client is already authenticated, you can process the received data
