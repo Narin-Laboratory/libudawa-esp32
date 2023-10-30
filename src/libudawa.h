@@ -292,6 +292,7 @@ bool FLAG_SAVE_STATES = false;
 bool FLAG_SYNC_CLIENT_ATTR_0 = false;
 bool FLAG_SYNC_CLIENT_ATTR_1 = false;
 bool FLAG_SYNC_CLIENT_ATTR_2 = false;
+bool FLAG_TB_OTA_ACTIVATED = false;
 bool FLAG_UPDATE_SPIFFS = false;
 bool FLAG_ECP_UPDATED = false;
 bool FLAG_SM_CLEARED = false;
@@ -494,7 +495,13 @@ void udawa(){
 
   if(LAST_TB_CONNECTED != 0 && config.fIoT && tb.connected() && (millis() - LAST_TB_CONNECTED) > 10000 && 
     (millis() - LAST_TB_CONNECTED) < 11000  ){
-    FLAG_SYNC_CLIENT_ATTR_1 = true;
+    if(FLAG_TB_OTA_ACTIVATED){
+      FLAG_TB_OTA_ACTIVATED = false;
+    }
+    else
+    {
+      FLAG_SYNC_CLIENT_ATTR_1 = true;
+    }
     LAST_TB_CONNECTED = 0;
   }
 
@@ -2375,6 +2382,9 @@ RPC_Response processUpdateApp(const RPC_Data &data){
   if( xSemaphoreTBSend != NULL && WiFi.isConnected() && config.provSent && tb.connected()){
     if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
     {
+      if(xHandleAlarm != NULL){vTaskSuspend(xHandleAlarm);}
+      if(xHandleWifiOta != NULL){vTaskSuspend(xHandleWifiOta);}
+      FLAG_TB_OTA_ACTIVATED = true;
       onMQTTUpdateStartCb();
       setAlarm(0, 3, 65000, 50);
       tb.Start_Firmware_Update(tbOtaCb);
@@ -2396,6 +2406,9 @@ void processFwCheckAttributeRequest(const Shared_Attribute_Data &data){
     {
       if(data["fw_version"] != nullptr){
         if(strcmp(data["fw_version"].as<const char*>(), CURRENT_FIRMWARE_VERSION)){
+          if(xHandleAlarm != NULL){vTaskSuspend(xHandleAlarm);}
+          if(xHandleWifiOta != NULL){vTaskSuspend(xHandleWifiOta);}
+          FLAG_TB_OTA_ACTIVATED = true;
           onMQTTUpdateStartCb();
           setAlarm(0, 3, 65000, 50);
           tb.Start_Firmware_Update(tbOtaCb);
