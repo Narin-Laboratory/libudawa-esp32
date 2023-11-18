@@ -50,6 +50,7 @@
 #include "SD.h"
 #include "SPI.h"
 #endif
+#include <ErriezDS3231.h>
 
 #define countof(a) (sizeof(a) / sizeof(a[0]))
 #define COMPILED __DATE__ " " __TIME__
@@ -100,8 +101,8 @@ struct Config
 
   char broker[48];
   uint16_t port;
-  char wssid[24];
-  char wpass[24];
+  char wssid[48];
+  char wpass[48];
   char dssid[24];
   char dpass[24];
   char upass[64];
@@ -273,6 +274,7 @@ Config config;
 ConfigCoMCU configcomcu;
 ThingsBoardSized<32, TBLogger> tb(ssl, DOCSIZE_MIN);
 ESP32Time rtc(0);
+ErriezDS3231 rtcHw;
 #ifdef USE_WEB_IFACE
 #ifdef USE_ASYNC_WEB
 AsyncWebServer web(80);
@@ -479,13 +481,13 @@ void udawa(){
     updateSpiffs();
   }
 
-  if(!FLAG_ECP_UPDATED && millis() > 60000){
+  if(!FLAG_ECP_UPDATED && millis() > 30000){
     config.ECP = millis();
     FLAG_SAVE_CONFIG = true;
     FLAG_ECP_UPDATED = true;
   }
 
-  if(!FLAG_SM_CLEARED && millis() > 300000){
+  if(!FLAG_SM_CLEARED && millis() > 60000){
     config.ECP = millis();
     config.CC = 0;
     FLAG_SAVE_CONFIG = true;
@@ -879,42 +881,37 @@ void emitAlarm(int code){
 }
 
 void rtcUpdate(long ts){
-  long startMillis = millis();
+  bool rtcHwDetected = 0;
+  if(!rtcHw.begin()){
+    setAlarm(151, 1, 1, 5000);
+    log_manager->debug(PSTR(__func__), PSTR("RTC Hardware not found; please update the device time manually. Any function that requires precise timing will malfunction! \n"));
+  }
+  else{
+    rtcHwDetected = 1;
+    rtcHw.setSquareWave(SquareWaveDisable);
+  }
   if(ts == 0){
     configTime(config.gmtOff, 0, "pool.ntp.org");
     struct tm timeinfo;
     if (getLocalTime(&timeinfo)){
       rtc.setTimeStruct(timeinfo);
+      rtcHw.setDateTime(rtc.getHour(), rtc.getMinute(), rtc.getSecond(), rtc.getDay(), rtc.getMonth(), rtc.getYear(), rtc.getDayofWeek());
       log_manager->debug(PSTR(__func__), PSTR("Updated time via NTP: %s GMT Offset:%d (%d) \n"), rtc.getDateTime().c_str(), config.gmtOff, config.gmtOff / 3600);
+    }else{
+      if(rtcHwDetected){
+        rtc.setTime(rtcHw.getEpoch());
+        log_manager->debug(PSTR(__func__), PSTR("Updated time via HW RTC: %s GMT Offset:%d (%d) \n"), rtc.getDateTime().c_str(), config.gmtOff, config.gmtOff / 3600);
+      }
     }
   }else{
       rtc.setTime(ts);
       log_manager->debug(PSTR(__func__), PSTR("Updated time via timestamp: %s\n"), rtc.getDateTime().c_str());
   }
-  log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
 }
 
 void cbWiFiOnDisconnected(WiFiEvent_t event, WiFiEventInfo_t info)
 {
   log_manager->warn(PSTR(__func__),PSTR("WiFi (%s and %s) Disconnected!\n"), config.wssid, config.dssid);
-  if(config.fIoT && xHandleTB != NULL){
-    vTaskDelete(xHandleTB);
-    log_manager->warn(PSTR(__func__), PSTR("Task TB has been deleted.\n"));
-  }
-
-  #ifdef USE_WIFI_OTA
-  if(config.fWOTA && xHandleWifiOta != NULL){
-    vTaskDelete(xHandleWifiOta);
-    log_manager->warn(PSTR(__func__), PSTR("Task WifiOta has been deleted.\n"));
-  }
-  #endif
-
-  #ifdef USE_WEB_IFACE
-  if(config.fIface && xHandleIface != NULL){
-    vTaskDelete(xHandleIface);
-    log_manager->warn(PSTR(__func__), PSTR("Task iface has been deleted.\n"));
-  }
-  #endif
 }
 
 void cbWiFiOnGotIp(WiFiEvent_t event, WiFiEventInfo_t info)
@@ -968,7 +965,7 @@ void wifiKeeperTR(void *arg){
   WiFi.mode(WIFI_STA);
   WiFi.setHostname(config.hname);
   WiFi.setAutoReconnect(true);
-  if(!config.wssid || *config.wssid == 0x00 || strlen(config.wssid) > 32)
+  if(!config.wssid || *config.wssid == 0x00 || strlen(config.wssid) > 48)
   {
     configLoadFailSafe();
     log_manager->warn(PSTR(__func__), PSTR("SSID too long or missing! Failsafe config was loaded.\n"));
