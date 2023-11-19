@@ -50,8 +50,9 @@
 #include "SD.h"
 #include "SPI.h"
 #endif
+#ifdef USE_HW_RTC
 #include <ErriezDS3231.h>
-
+#endif
 #define countof(a) (sizeof(a) / sizeof(a[0]))
 #define COMPILED __DATE__ " " __TIME__
 #define S2_RX 16
@@ -122,7 +123,7 @@ struct Config
   char htP[24];
   char webApiKey[32];
 
-  char logIP[16] = "192.168.18.255";
+  char logIP[16] = "255.255.255.255";
   uint16_t logPrt = 29514;
 
   #ifdef USE_WEB_IFACE
@@ -151,11 +152,13 @@ struct ConfigCoMCU
   uint8_t lON;
 };
 
+#ifdef USE_WIFI_LOGGER
 class ESP32UDPLogger : public ILogHandler
 {
     public:
         void log_message(const char *tag, const LogLevel level, const char *fmt, va_list args) override;
 };
+#endif
 
 #ifdef USE_WEB_IFACE
 std::map<uint32_t, bool> clientAuthenticationStatus;
@@ -165,7 +168,7 @@ std::map<IPAddress, unsigned long> clientAuthAttemptTimestamps;
 uint32_t micro2milli(uint32_t hi, uint32_t lo);
 double round2(double value);
 void udawa();
-void reboot();
+void reboot(int countdown);
 char* getDeviceId();
 void cbWiFiOnDisconnected(WiFiEvent_t event, WiFiEventInfo_t info);
 void cbWiFiOnGotIp(WiFiEvent_t event, WiFiEventInfo_t info);
@@ -266,7 +269,10 @@ SPIClass sdSPI(VSPI);
 #endif
 
 ESP32SerialLogger serial_logger;
+#ifdef USE_WIFI_LOGGER
 ESP32UDPLogger udp_logger;
+WiFiUDP udp;
+#endif
 LogManager *log_manager = LogManager::GetInstance(LogLevel::VERBOSE);
 WiFiClientSecure ssl = WiFiClientSecure();
 WiFiMulti wifiMulti;
@@ -274,7 +280,9 @@ Config config;
 ConfigCoMCU configcomcu;
 ThingsBoardSized<32, TBLogger> tb(ssl, DOCSIZE_MIN);
 ESP32Time rtc(0);
+#ifdef USE_HW_RTC
 ErriezDS3231 rtcHw;
+#endif
 #ifdef USE_WEB_IFACE
 #ifdef USE_ASYNC_WEB
 AsyncWebServer web(80);
@@ -299,8 +307,11 @@ bool FLAG_UPDATE_SPIFFS = false;
 bool FLAG_ECP_UPDATED = false;
 bool FLAG_SM_CLEARED = false;
 bool FLAG_WS_STREAM_SDCARD = false;
+bool FLAG_REBOOT_COUNTDOWN = false;
 uint32_t GLOBAL_TARGET_CLIENT_ID = 0;
 String GLOBAL_LOG_FILE_NAME = "";
+unsigned long TIMER_FLAG_REBOOT_COUNTDOWN;
+int REBOOT_COUNTDOWN = 10;
 
 // Client-side RPC that can be executed from cloud
 const std::array<RPC_Callback, 8U> clientRPCCallbacks = {
@@ -320,7 +331,7 @@ constexpr std::array<const char*, 1U> REQUESTED_FW_CHECK_SHARED_ATTRIBUTES = {
 };
 const Attribute_Request_Callback fwCheckCb(REQUESTED_FW_CHECK_SHARED_ATTRIBUTES.cbegin(), REQUESTED_FW_CHECK_SHARED_ATTRIBUTES.cend(), &processFwCheckAttributeRequest);
 
-const OTA_Update_Callback tbOtaCb(&tbOtaProgressCb, &tbOtaFinishedCb, CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION, 20, 4096);
+const OTA_Update_Callback tbOtaCb(&tbOtaProgressCb, &tbOtaFinishedCb, CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION, 40, 4096);
 const Shared_Attribute_Callback tbSharedAttrUpdateCb(&processSharedAttributeUpdate);
 
 BaseType_t xReturnedWifiKeeper;
@@ -361,6 +372,9 @@ QueueHandle_t xQueueAlarm;
 
 
 void startup() {
+  ssl.setCACert(CA_CERT);
+  const char *ssl_protos[] = {"mqtt"};
+  ssl.setAlpnProtocols(ssl_protos);
   tbloggerCb = &onTbLogger;
   xQueueAlarm = xQueueCreate( 10, sizeof( struct AlarmMessage ) );
 
@@ -378,7 +392,9 @@ void startup() {
 
   config.logLev = 5;
   log_manager->add_logger(&serial_logger);
+  #ifdef USE_WIFI_LOGGER
   log_manager->add_logger(&udp_logger);
+  #endif
   log_manager->set_log_level(PSTR("*"), (LogLevel) config.logLev);
   if(!SPIFFS.begin(true))
   {
@@ -392,6 +408,8 @@ void startup() {
     configLoad();
     log_manager->set_log_level(PSTR("*"), (LogLevel) config.logLev);
   }
+
+  log_manager->info(PSTR(__func__), PSTR("Firmware version %s compiled on %s.\n"), CURRENT_FIRMWARE_VERSION, COMPILED);
 
   if(config.ECP < 60000){
     config.CC++;
@@ -417,6 +435,8 @@ void startup() {
     setupCardLogger();
     #endif
     #endif
+
+    rtcUpdate(0);
   }
 
   log_manager->debug(PSTR(__func__), PSTR("Startup time: %s\n"), rtc.getDateTime().c_str());
@@ -443,7 +463,19 @@ void startup() {
   setAlarm(0, 0, 3, 50);
 }
 
+
 void udawa(){
+  if(FLAG_REBOOT_COUNTDOWN){
+    if( (millis() - TIMER_FLAG_REBOOT_COUNTDOWN) >= (REBOOT_COUNTDOWN * 1000)){
+      log_manager->warn(PSTR(__func__),PSTR("Device rebooting...\n"));
+      ESP.restart();
+    }
+    else{
+      long countdown = ((REBOOT_COUNTDOWN * 1000) - (millis() - TIMER_FLAG_REBOOT_COUNTDOWN)) / 1000;
+      log_manager->warn(PSTR(__func__), PSTR("Reboot countdown: %ds\n"), countdown);
+    }
+  }
+
   if(FLAG_SAVE_CONFIG){
     FLAG_SAVE_CONFIG = false;
     configSave();
@@ -628,11 +660,11 @@ void processSharedAttributeUpdate(const Shared_Attribute_Data &data){
 void tbOtaFinishedCb(const bool& success){
   onMQTTUpdateEndCb();
   if(success){
-    log_manager->info(PSTR(__func__), PSTR("IoT OTA update ended.!\n"));
+    log_manager->info(PSTR(__func__), PSTR("IoT OTA update success!\n"));
   }else{
     log_manager->warn(PSTR(__func__), PSTR("IoT OTA update failed!\n"));
   }
-  reboot();
+  reboot(10);
 }
 
 void tbOtaProgressCb(const uint32_t& currentChunk, const uint32_t& totalChuncks){
@@ -881,6 +913,7 @@ void emitAlarm(int code){
 }
 
 void rtcUpdate(long ts){
+  #ifdef USE_HW_RTC
   bool rtcHwDetected = 0;
   if(!rtcHw.begin()){
     setAlarm(151, 1, 1, 5000);
@@ -890,18 +923,26 @@ void rtcUpdate(long ts){
     rtcHwDetected = 1;
     rtcHw.setSquareWave(SquareWaveDisable);
   }
+  #endif
   if(ts == 0){
     configTime(config.gmtOff, 0, "pool.ntp.org");
     struct tm timeinfo;
     if (getLocalTime(&timeinfo)){
       rtc.setTimeStruct(timeinfo);
+      #ifdef USE_HW_RTC
+      log_manager->debug(PSTR(__func__), PSTR("Updating RTC HW from NTP...\n"));
       rtcHw.setDateTime(rtc.getHour(), rtc.getMinute(), rtc.getSecond(), rtc.getDay(), rtc.getMonth(), rtc.getYear(), rtc.getDayofWeek());
+      log_manager->debug(PSTR(__func__), PSTR("Updated RTC HW from NTP with epoch %d.\n"), rtcHw.getEpoch());
+      #endif
       log_manager->debug(PSTR(__func__), PSTR("Updated time via NTP: %s GMT Offset:%d (%d) \n"), rtc.getDateTime().c_str(), config.gmtOff, config.gmtOff / 3600);
     }else{
+      #ifdef USE_HW_RTC
       if(rtcHwDetected){
+        log_manager->debug(PSTR(__func__), PSTR("Updating RTC from RTCHW with epoch %d.\n"), rtcHw.getEpoch());
         rtc.setTime(rtcHw.getEpoch());
         log_manager->debug(PSTR(__func__), PSTR("Updated time via HW RTC: %s GMT Offset:%d (%d) \n"), rtc.getDateTime().c_str(), config.gmtOff, config.gmtOff / 3600);
       }
+      #endif
     }
   }else{
       rtc.setTime(ts);
@@ -911,7 +952,7 @@ void rtcUpdate(long ts){
 
 void cbWiFiOnDisconnected(WiFiEvent_t event, WiFiEventInfo_t info)
 {
-  log_manager->warn(PSTR(__func__),PSTR("WiFi (%s and %s) Disconnected!\n"), config.wssid, config.dssid);
+  log_manager->warn(PSTR(__func__),PSTR("WiFi %s disconnected!\n"), WiFi.SSID().c_str());
 }
 
 void cbWiFiOnGotIp(WiFiEvent_t event, WiFiEventInfo_t info)
@@ -919,13 +960,17 @@ void cbWiFiOnGotIp(WiFiEvent_t event, WiFiEventInfo_t info)
   String ip = WiFi.localIP().toString();
   log_manager->warn(PSTR(__func__),PSTR("WiFi (%s) IP Assigned: %s!\n"), WiFi.SSID().c_str(), ip.c_str());
 
-  ssl.setCACert(CA_CERT);
-
   MDNS.begin(config.hname);
   MDNS.addService("http", "tcp", 80);
   log_manager->info(PSTR(__func__),PSTR("Started MDNS on %s\n"), config.hname);
 
   rtcUpdate(0);
+
+  #ifdef USE_WIFI_LOGGER  
+  if(!config.SM){
+    udp.begin(config.logPrt);
+  }
+  #endif
 
   #ifdef USE_WIFI_OTA
   if(config.fWOTA && xHandleWifiOta == NULL){
@@ -1307,12 +1352,21 @@ void setAlarmTR(void *arg){
   }
 }
 
-void reboot()
+void reboot(int countdown = 0)
 {
-  log_manager->info(PSTR(__func__),PSTR("Device rebooting...\n"));
-  esp_task_wdt_init(1,true);
-  esp_task_wdt_add(NULL);
-  while(true);
+  log_manager->info(PSTR(__func__),PSTR("Device rebot scheduled in %ds\n"), countdown);
+  if(countdown > 0){
+    TIMER_FLAG_REBOOT_COUNTDOWN = millis();
+    REBOOT_COUNTDOWN = countdown;
+    FLAG_REBOOT_COUNTDOWN = true;
+  }
+  else{
+    log_manager->warn(PSTR(__func__),PSTR("Device rebooting...\n"));
+    /*esp_task_wdt_init(1,true);
+    esp_task_wdt_add(NULL);
+    while(true);*/
+    ESP.restart();
+  }
 }
 
 char* getDeviceId()
@@ -1369,7 +1423,7 @@ void configReset()
       doc["htU"] = "UDAWA";
       doc["htP"] = "defaultkey";
 
-      doc["logIP"] = "192.168.18.255";
+      doc["logIP"] = "255.255.255.255";
       doc["logPrt"] = 29514;
 
       doc["webApiKey"] = webApiKey;
@@ -1448,7 +1502,7 @@ void configLoadFailSafe()
       strlcpy(config.hname, hname.c_str(), sizeof(config.hname));
       strlcpy(config.htU, "UDAWA", sizeof(config.htU));
       strlcpy(config.htP, "defaultkey", sizeof(config.htP));
-      strlcpy(config.logIP, "192.168.18.255", sizeof(config.logIP));
+      strlcpy(config.logIP, "255.255.255.255", sizeof(config.logIP));
       config.logPrt = 29514;
 
       xSemaphoreGive( xSemaphoreConfig );
@@ -1932,30 +1986,32 @@ uint32_t micro2milli(uint32_t hi, uint32_t lo)
   return ans;
 }
 
-void ESP32UDPLogger::log_message(const char *tag, LogLevel level, const char *fmt, va_list args)
-{
-    if((int)level > config.logLev || !WiFi.isConnected()){
-      return;
+#ifdef USE_WIFI_LOGGER
+void ESP32UDPLogger::log_message(const char *tag, LogLevel level, const char *fmt, va_list args) {
+    if ((int)level > config.logLev || !WiFi.isConnected()) {
+        return;
     }
 
-    if(xSemaphoreUDPLogger != NULL && xSemaphoreTake(xSemaphoreUDPLogger, (TickType_t) 20))
-    {
-        int size = 1024;
-        WiFiUDP udp;
-        char data[size];
-        vsnprintf(data, size, fmt, args);
-        String msg = String(get_error_char(level)) + "~[" + config.name + "] " + String(tag) + "~" + String(data);
-        
-        udp.beginPacket(config.logIP, config.logPrt);
-        udp.write((uint8_t*)msg.c_str(), msg.length());
+    const int bufferSize = 256; // Adjust this size based on your requirements
+    char data[bufferSize];
+    int len = vsnprintf(data, bufferSize, fmt, args);
+    if (len >= bufferSize) {
+        // The message is larger than the buffer size; handle accordingly
+        len = bufferSize - 1; // Limit length to buffer size
+    }
+    
+    char logMessage[bufferSize + 64]; // Adjust extra space based on your concatenated string length
+    snprintf(logMessage, sizeof(logMessage), "%c~[%s] %s~%s",
+             get_error_char(level), config.name, tag, data);
+
+    if (udp.beginPacket(config.logIP, config.logPrt)) {
+        udp.write((uint8_t*)logMessage, strlen(logMessage));
         udp.endPacket();
-
-        xSemaphoreGive(xSemaphoreUDPLogger);
-    }
-    else{
-        printf("Could not get UDP semaphore.\n");
+    } else {
+        log_manager->warn(PSTR(__func__), PSTR("Could not begin UDP packet.\n"));
     }
 }
+#endif
 
 #ifdef USE_WEB_IFACE
 #ifndef USE_ASYNC_WEB
@@ -2380,7 +2436,9 @@ RPC_Response processUpdateApp(const RPC_Data &data){
     if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
     {
       if(xHandleAlarm != NULL){vTaskSuspend(xHandleAlarm);}
+      #ifdef USE_WIFI_OTA
       if(xHandleWifiOta != NULL){vTaskSuspend(xHandleWifiOta);}
+      #endif
       FLAG_TB_OTA_ACTIVATED = true;
       onMQTTUpdateStartCb();
       setAlarm(0, 3, 65000, 50);
@@ -2402,9 +2460,12 @@ void processFwCheckAttributeRequest(const Shared_Attribute_Data &data){
     if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
     {
       if(data["fw_version"] != nullptr){
+        log_manager->info(PSTR(__func__), PSTR("Firmware check local: %s vs cloud: %s\n"), CURRENT_FIRMWARE_VERSION, data["fw_version"].as<const char*>());
         if(strcmp(data["fw_version"].as<const char*>(), CURRENT_FIRMWARE_VERSION)){
           if(xHandleAlarm != NULL){vTaskSuspend(xHandleAlarm);}
+          #ifdef USE_WIFI_OTA
           if(xHandleWifiOta != NULL){vTaskSuspend(xHandleWifiOta);}
+          #endif
           FLAG_TB_OTA_ACTIVATED = true;
           onMQTTUpdateStartCb();
           setAlarm(0, 3, 65000, 50);
