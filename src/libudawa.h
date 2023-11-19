@@ -476,50 +476,50 @@ void udawa(){
     }
   }
 
-  if(FLAG_SAVE_CONFIG){
+  if(FLAG_SAVE_CONFIG && !FLAG_TB_OTA_ACTIVATED){
     FLAG_SAVE_CONFIG = false;
     configSave();
   }
-  if(FLAG_SAVE_CONFIGCOMCU){
+  if(FLAG_SAVE_CONFIGCOMCU && !FLAG_TB_OTA_ACTIVATED){
     FLAG_SAVE_CONFIGCOMCU = false;
     configCoMCUSave();
   }
-  if(FLAG_SYNC_CONFIGCOMCU){
+  if(FLAG_SYNC_CONFIGCOMCU && !FLAG_TB_OTA_ACTIVATED){
     FLAG_SYNC_CONFIGCOMCU = false;
     syncConfigCoMCU();
   }
-  if(FLAG_SAVE_SETTINGS){
+  if(FLAG_SAVE_SETTINGS && !FLAG_TB_OTA_ACTIVATED){
     FLAG_SAVE_SETTINGS = false;
     onSaveSettings();
   }
-  if(FLAG_SAVE_STATES){
+  if(FLAG_SAVE_STATES && !FLAG_TB_OTA_ACTIVATED){
     FLAG_SAVE_STATES = false;
     onSaveStates();
   }
-  if(FLAG_SYNC_CLIENT_ATTR_0){
+  if(FLAG_SYNC_CLIENT_ATTR_0 && !FLAG_TB_OTA_ACTIVATED){
     FLAG_SYNC_CLIENT_ATTR_0 = false;
     syncClientAttr(0);
   }
-  if(FLAG_SYNC_CLIENT_ATTR_1){
+  if(FLAG_SYNC_CLIENT_ATTR_1 && !FLAG_TB_OTA_ACTIVATED){
     FLAG_SYNC_CLIENT_ATTR_1 = false;
     syncClientAttr(1);
   }
-  if(FLAG_SYNC_CLIENT_ATTR_2){
+  if(FLAG_SYNC_CLIENT_ATTR_2 && !FLAG_TB_OTA_ACTIVATED){
     FLAG_SYNC_CLIENT_ATTR_2 = false;
     syncClientAttr(2);
   }
-  if(FLAG_UPDATE_SPIFFS){
+  if(FLAG_UPDATE_SPIFFS && !FLAG_TB_OTA_ACTIVATED){
     FLAG_UPDATE_SPIFFS = false;
     updateSpiffs();
   }
 
-  if(!FLAG_ECP_UPDATED && millis() > 30000){
+  if(!FLAG_ECP_UPDATED && millis() > 30000 && !FLAG_TB_OTA_ACTIVATED){
     config.ECP = millis();
     FLAG_SAVE_CONFIG = true;
     FLAG_ECP_UPDATED = true;
   }
 
-  if(!FLAG_SM_CLEARED && millis() > 60000){
+  if(!FLAG_SM_CLEARED && millis() > 60000 && !FLAG_TB_OTA_ACTIVATED){
     config.ECP = millis();
     config.CC = 0;
     FLAG_SAVE_CONFIG = true;
@@ -528,19 +528,13 @@ void udawa(){
   }
 
   if(LAST_TB_CONNECTED != 0 && config.fIoT && tb.connected() && (millis() - LAST_TB_CONNECTED) > 10000 && 
-    (millis() - LAST_TB_CONNECTED) < 11000  ){
-    if(FLAG_TB_OTA_ACTIVATED){
-      FLAG_TB_OTA_ACTIVATED = false;
-    }
-    else
-    {
-      FLAG_SYNC_CLIENT_ATTR_1 = true;
-    }
+    (millis() - LAST_TB_CONNECTED) < 11000  && !FLAG_TB_OTA_ACTIVATED){
+    FLAG_SYNC_CLIENT_ATTR_1 = true;
     LAST_TB_CONNECTED = 0;
   }
 
   if(LAST_TB_CONNECTED != 0 && config.fIoT && tb.connected() && (millis() - LAST_TB_CONNECTED) > 20000 &&
-    (millis() - LAST_TB_CONNECTED) < 21000 ){
+    (millis() - LAST_TB_CONNECTED) < 21000 && !FLAG_TB_OTA_ACTIVATED){
     onTbConnectedCb();
     LAST_TB_CONNECTED = 0;
   }
@@ -664,7 +658,7 @@ void tbOtaFinishedCb(const bool& success){
   }else{
     log_manager->warn(PSTR(__func__), PSTR("IoT OTA update failed!\n"));
   }
-  reboot(10);
+  reboot(3);
 }
 
 void tbOtaProgressCb(const uint32_t& currentChunk, const uint32_t& totalChuncks){
