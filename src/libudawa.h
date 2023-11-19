@@ -938,9 +938,9 @@ void rtcUpdate(long ts){
     }else{
       #ifdef USE_HW_RTC
       if(rtcHwDetected){
-        log_manager->debug(PSTR(__func__), PSTR("Updating RTC from RTCHW with epoch %d.\n"), rtcHw.getEpoch());
+        log_manager->debug(PSTR(__func__), PSTR("Updating RTC from RTC HW with epoch %d.\n"), rtcHw.getEpoch());
         rtc.setTime(rtcHw.getEpoch());
-        log_manager->debug(PSTR(__func__), PSTR("Updated time via HW RTC: %s GMT Offset:%d (%d) \n"), rtc.getDateTime().c_str(), config.gmtOff, config.gmtOff / 3600);
+        log_manager->debug(PSTR(__func__), PSTR("Updated time via RTC HW: %s GMT Offset:%d (%d) \n"), rtc.getDateTime().c_str(), config.gmtOff, config.gmtOff / 3600);
       }
       #endif
     }
