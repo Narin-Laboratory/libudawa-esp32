@@ -831,7 +831,8 @@ void TBTR(void *arg){
         const Provision_Callback provisionCallback(Access_Token(), &processProvisionResponse, config.provDK, config.provDS, config.name);
         if(tb.Provision_Request(provisionCallback))
         {
-          //log_manager->info(PSTR(__func__),PSTR("Connected to provisioning server: %s:%d\n"),  config.broker, config.port);
+          log_manager->info(PSTR(__func__),PSTR("Connected to provisioning server: %s:%d. Sending provisioning response: DK: %s, DS: %s, Name: %s \n"),  
+            config.broker, config.port, config.provDK, config.provDS, config.name);
         }
       }
       else
@@ -924,9 +925,11 @@ void rtcUpdate(long ts){
     if (getLocalTime(&timeinfo)){
       rtc.setTimeStruct(timeinfo);
       #ifdef USE_HW_RTC
-      log_manager->debug(PSTR(__func__), PSTR("Updating RTC HW from NTP...\n"));
-      rtcHw.setDateTime(rtc.getHour(), rtc.getMinute(), rtc.getSecond(), rtc.getDay(), rtc.getMonth(), rtc.getYear(), rtc.getDayofWeek());
-      log_manager->debug(PSTR(__func__), PSTR("Updated RTC HW from NTP with epoch %d.\n"), rtcHw.getEpoch());
+      if(rtcHwDetected){
+        log_manager->debug(PSTR(__func__), PSTR("Updating RTC HW from NTP...\n"));
+        rtcHw.setDateTime(rtc.getHour(), rtc.getMinute(), rtc.getSecond(), rtc.getDay(), rtc.getMonth(), rtc.getYear(), rtc.getDayofWeek());
+        log_manager->debug(PSTR(__func__), PSTR("Updated RTC HW from NTP with epoch %d.\n"), rtcHw.getEpoch());
+      }
       #endif
       log_manager->debug(PSTR(__func__), PSTR("Updated time via NTP: %s GMT Offset:%d (%d) \n"), rtc.getDateTime().c_str(), config.gmtOff, config.gmtOff / 3600);
     }else{
@@ -2391,7 +2394,7 @@ bool tbSendAttribute(const char *buffer){
   if( xSemaphoreTBSend != NULL && WiFi.isConnected() && config.provSent && tb.connected() && config.accTkn != NULL){
     if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
     {
-      //log_manager->verbose(PSTR(__func__), PSTR("%s\n"), buffer);
+      log_manager->verbose(PSTR(__func__), PSTR("Sending attribute to broker: %s\n"), buffer);
       res = tb.sendAttributeJSON(buffer);
       xSemaphoreGive( xSemaphoreTBSend );
     }
@@ -2413,7 +2416,7 @@ bool tbSendTelemetry(const char * buffer){
   if( xSemaphoreTBSend != NULL && WiFi.isConnected() && config.provSent && tb.connected() && config.accTkn != NULL){
     if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 1000 ) == pdTRUE )
     {
-      //log_manager->verbose(PSTR(__func__), PSTR("%s\n"), buffer);
+      log_manager->verbose(PSTR(__func__), PSTR("Sending telemetry to broker: %s\n"), buffer);
       res = tb.sendTelemetryJson(buffer); 
       xSemaphoreGive( xSemaphoreTBSend );
     }
