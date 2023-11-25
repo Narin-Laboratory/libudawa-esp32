@@ -26,6 +26,7 @@
 #include "logging.h"
 #include "serialLogger.h"
 #include <ESP32Time.h>
+#include <NTPClient.h>
 #include <ESPmDNS.h>
 #include <WiFiUdp.h>
 #include <ThingsBoard.h>
@@ -280,6 +281,8 @@ Config config;
 ConfigCoMCU configcomcu;
 ThingsBoardSized<32, TBLogger> tb(ssl, DOCSIZE_MIN);
 ESP32Time rtc(0);
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "pool.ntp.org");
 #ifdef USE_HW_RTC
 ErriezDS3231 rtcHw;
 #endif
@@ -748,7 +751,7 @@ void wifiOtaTR(void *arg){
       {
         log_manager->warn(PSTR(__func__),PSTR("Device rebooting...\n"));
         setAlarm(0, 0, 0, 1000);
-        reboot();
+        reboot(3);
       })
       .onProgress([](unsigned int progress, unsigned int total)
       {
@@ -757,7 +760,7 @@ void wifiOtaTR(void *arg){
       .onError([](ota_error_t error)
       {
         log_manager->warn(PSTR(__func__),PSTR("OTA Failed: %d\n"), error);
-        reboot();
+        reboot(3);
       }
     );
   }
@@ -921,17 +924,19 @@ void rtcUpdate(long ts){
   #endif
   if(ts == 0){
     configTime(config.gmtOff, 0, "pool.ntp.org");
-    struct tm timeinfo;
-    if (getLocalTime(&timeinfo)){
-      rtc.setTimeStruct(timeinfo);
+    bool ntpSuccess = timeClient.update();
+    if (ntpSuccess){
+      long epochTime = timeClient.getEpochTime();
+      rtc.setTime(epochTime);
+      log_manager->debug(PSTR(__func__), PSTR("Updated time via NTP: %s GMT Offset:%d (%d) \n"), rtc.getDateTime().c_str(), config.gmtOff, config.gmtOff / 3600);
       #ifdef USE_HW_RTC
       if(rtcHwDetected){
         log_manager->debug(PSTR(__func__), PSTR("Updating RTC HW from NTP...\n"));
-        rtcHw.setDateTime(rtc.getHour(), rtc.getMinute(), rtc.getSecond(), rtc.getDay(), rtc.getMonth(), rtc.getYear(), rtc.getDayofWeek());
-        log_manager->debug(PSTR(__func__), PSTR("Updated RTC HW from NTP with epoch %d.\n"), rtcHw.getEpoch());
+        rtcHw.setDateTime(rtc.getHour(), rtc.getMinute(), rtc.getSecond(), rtc.getDay(), rtc.getMonth()+1, rtc.getYear(), rtc.getDayofWeek());
+        log_manager->debug(PSTR(__func__), PSTR("Updated RTC HW from NTP with epoch %d | H:I:S W D-M-Y. -> %d:%d:%d %d %d-%d-%d\n"), 
+        rtcHw.getEpoch(), rtc.getHour(), rtc.getMinute(), rtc.getSecond(), rtc.getDayofWeek(), rtc.getDay(), rtc.getMonth()+1, rtc.getYear());
       }
       #endif
-      log_manager->debug(PSTR(__func__), PSTR("Updated time via NTP: %s GMT Offset:%d (%d) \n"), rtc.getDateTime().c_str(), config.gmtOff, config.gmtOff / 3600);
     }else{
       #ifdef USE_HW_RTC
       if(rtcHwDetected){
@@ -960,6 +965,8 @@ void cbWiFiOnGotIp(WiFiEvent_t event, WiFiEventInfo_t info)
   MDNS.begin(config.hname);
   MDNS.addService("http", "tcp", 80);
   log_manager->info(PSTR(__func__),PSTR("Started MDNS on %s\n"), config.hname);
+
+  timeClient.begin();
 
   rtcUpdate(0);
 
