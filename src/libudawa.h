@@ -661,7 +661,7 @@ void tbOtaFinishedCb(const bool& success){
   }else{
     log_manager->warn(PSTR(__func__), PSTR("IoT OTA update failed!\n"));
   }
-  reboot(3);
+  reboot(0);
 }
 
 void tbOtaProgressCb(const uint32_t& currentChunk, const uint32_t& totalChuncks){
@@ -751,7 +751,7 @@ void wifiOtaTR(void *arg){
       {
         log_manager->warn(PSTR(__func__),PSTR("Device rebooting...\n"));
         setAlarm(0, 0, 0, 1000);
-        reboot(3);
+        reboot(0);
       })
       .onProgress([](unsigned int progress, unsigned int total)
       {
@@ -760,7 +760,7 @@ void wifiOtaTR(void *arg){
       .onError([](ota_error_t error)
       {
         log_manager->warn(PSTR(__func__),PSTR("OTA Failed: %d\n"), error);
-        reboot(3);
+        reboot(0);
       }
     );
   }
