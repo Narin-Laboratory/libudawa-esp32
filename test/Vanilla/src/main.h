@@ -46,6 +46,7 @@ vh+RH1AiwshFKw9rxdUXJBGGVgn5F0Ie4alDI8ehelOpmrZgFYMOCpcFSpJ5vbXM
 ny6l9/duT2POAsUN5IwHGDu8b2NT+vCUQRFVHY31
 -----END CERTIFICATE-----
 )EOF";
+
 #define CURRENT_FIRMWARE_TITLE "Vanilla"
 #define CURRENT_FIRMWARE_VERSION "0.0.1"
 #define DOCSIZE 2048
@@ -53,41 +54,54 @@ ny6l9/duT2POAsUN5IwHGDu8b2NT+vCUQRFVHY31
 #define DOCSIZE_SETTINGS 4096
 #define USE_SERIAL2
 #define USE_WEB_IFACE
+#define USE_ASYNC_WEB
+#define USE_HW_RTC
 #define USE_WIFI_OTA
+//#define USE_WIFI_LOGGER
+//#define USE_SDCARD_LOG
+//#define USE_SPIFFS_LOG
+//#define USE_DISK_LOG
 #define STACKSIZE_WIFIKEEPER 3000
 #define STACKSIZE_SETALARM 3700
 #define STACKSIZE_WIFIOTA 4096
-#define STACKSIZE_TB 12000
-#define STACKSIZE_IFACE 9000
-#define STACKSIZE_RECSENSORS 4500
-#define STACKSIZE_PUBLISHDEVTEL 6000
-#define STACKSIZE_WSSENDTELEMETRY 2200
+#define STACKSIZE_TB 6000
+#define STACKSIZE_IFACE 3000
+#define STACKSIZE_PUBLISHDEVTEL 4500 //6000
+#define STACKSIZE_WSSENDTELEMETRY 4500 //6000
+
 
 #include <libudawa.h>
 #include <TimeLib.h>
 
 
-const char* settingsPath = "/settings.json";
+const char* settingsPath = PSTR("/settings.json");
 struct Settings
 {
-    unsigned long itD = 60;   
+    uint16_t itD = 60;
+    uint16_t itDc = 1;
+
+    uint8_t s1tx = 33; //V3.1 33, V3 32
+    uint8_t s1rx = 32; //V3.1 32, V3 4
+
 };
 
-#ifdef USE_WEB_IFACE
-struct WSPayload
-{
-    float data;
-};
-QueueHandle_t xQueueWsPayloadMessage;
-#endif
+
+using namespace libudawa;
+Settings mySettings;
+
+BaseType_t xReturnedWsSendTelemetry;
+BaseType_t xReturnedPublishDevTel;
+
+TaskHandle_t xHandleWsSendTelemetry = NULL;
+TaskHandle_t xHandlePublisevTel = NULL;
 
 void loadSettings();
 void saveSettings();
-void recSensorsTR(void *arg);
+void loadStates();
+void saveStates();
 void attUpdateCb(const Shared_Attribute_Data &data);
 void onTbConnected();
 void onTbDisconnected();
-void setPanic(const RPC_Data &data);
 RPC_Response genericClientRPC(const RPC_Data &data);
 void onReboot();
 void onAlarm(int code);
@@ -99,4 +113,53 @@ void wsSendTelemetryTR(void *arg);
 void publishDeviceTelemetryTR(void * arg);
 void onMQTTUpdateStart();
 void onMQTTUpdateEnd();
+
+/**
+ * @brief UDAWA Common Alarm Code Definition
+ *   110 Light sensor
+ *      110 = The light sensor failed to initialize; please check the module integration and wiring.
+ *      111 = The light sensor measurement is abnormal; please check the module integrity.
+ *      112 = The light sensor measurement is showing an extreme value; please monitor the device's operation closey.
+ *
+ *   120 Weather sensor
+ *      120 = The weather sensor failed to initialize; please check the module integration and wiring.
+ *      121 = The weather sensor measurement is abnormal; The ambient temperature is out of range.
+ *      122 = The weather sensor measurement is showing an extreme value; The ambient temperature is exceeding safe threshold; please monitor the device's operation closely.
+ *      123 = The weather sensor measurement is showing an extreme value; The ambient temperature is less than safe threshold; please monitor the device's operation closely.
+ *      124 = The weather sensor measurement is abnormal; The ambient humidity is out of range.
+ *      125 = The weather sensor measurement is showing an extreme value; The ambient humidity is exceeding safe threshold; please monitor the device's operation closely.
+ *      126 = The weather sensor measurement is showing an extreme value; The ambient humidity is below safe threshold; please monitor the device's operation closely.
+ *      127 = The weather sensor measurement is abnormal; The barometric pressure is out of range.
+ *      128 = The weather sensor measurement is showing an extreme value; The barometric pressure is more than safe threshold; please monitor the device's operation closely.
+ *      129 = The weather sensor measurement is showing an extreme value; The barometric pressure is less than safe threshold; please monitor the device's operation closely.
+ *
+ *   130 SD Card
+ *      130 = The SD Card failed to initialize; please check the module integration and wiring.
+ *      131 = The SD Card failed to attatch; please check if the card is inserted properly.
+ *      132 = The SD Card failed to create log file; please check if the card is ok.
+ *      133 = The SD Card failed to write to the log file; please check if the card is ok.
+ * 
+ *   140 AC Power sensor
+ *      140 = The power sensor failed to initialize; please check the module integration and wiring.
+ *      141 = The power sensor measurement is abnormal; The voltage reading is out of range.
+ *      142 = The power sensor measurement is abnormal; The current reading is out of range.
+ *      143 = The power sensor measurement is abnormal; The power reading is out of range.
+ *      144 = The power sensor measurement is abnormal; The power factor and frequency reading is out of range.
+ *      145 = The power sensor measurement is showing an overlimit; Please check the connected instruments.
+ * 
+ *   150 Real Time Clock
+ *      150 = The device timing information is incorrect; please update the device time manually. Any function that requires precise timing will malfunction!
+ * 
+ *   210 Switch Relay
+ *      211 = Switch number one is active, but the power sensor detects no power utilization. Please check the connected instrument to prevent failures.
+ *      212 = Switch number two is active, but the power sensor detects no power utilization. Please check the connected instrument to prevent failures.
+ *      213 = Switch number three is active, but the power sensor detects no power utilization. Please check the connected instrument to prevent failures.
+ *      214 = Switch number four is active, but the power sensor detects no power utilization. Please check the connected instrument to prevent failures.
+ *      215 = All switches are inactive, but the power sensor detects large power utilization. Please check the device relay module to prevent relay malfunction.
+ *      216 = Switch numner one is active for more than safe duration!
+ *      217 = Switch number two is active for more than safe duration!
+ *      218 = Switch number three is active for more than safe duration!
+ *      219 = Switch number four is active for more than safe duration! 
+ * 
+ */
 #endif
