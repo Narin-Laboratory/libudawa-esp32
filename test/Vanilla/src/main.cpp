@@ -6,22 +6,10 @@
  * prita.undiknas.ac.id | narin.co.id
 **/
 #include "main.h"
-#define S1_TX 32
-#define S1_RX 4
-
-using namespace libudawa;
-Settings mySettings;
-
-BaseType_t xReturnedWsSendTelemetry;
-BaseType_t xReturnedRecSensors;
-BaseType_t xReturnedPublishDevTel;
-
-TaskHandle_t xHandleWsSendTelemetry = NULL;
-TaskHandle_t xHandleRecSensors = NULL;
-TaskHandle_t xHandlePublishDevTel = NULL;
 
 void setup()
 {
+  Wire.begin();
   processSharedAttributeUpdateCb = &attUpdateCb;
   onTbDisconnectedCb = &onTbDisconnected;
   onTbConnectedCb = &onTbConnected;
@@ -30,14 +18,18 @@ void setup()
   emitAlarmCb = &onAlarm;
   onSyncClientAttrCb = &onSyncClientAttr;
   onSaveSettings = &saveSettings;
+  onSaveStates = &saveStates;
   #ifdef USE_WEB_IFACE
   wsEventCb = &onWsEvent;
   #endif
   onMQTTUpdateStartCb = &onMQTTUpdateStart;
   onMQTTUpdateEndCb = &onMQTTUpdateEnd;
+  
+  
   startup();
-  loadSettings();
   if(!config.SM){
+    loadSettings();
+    loadStates();
     syncConfigCoMCU();
   }
   if(String(config.model) == String("Generic")){
@@ -46,16 +38,6 @@ void setup()
 
   tb.setBufferSize(1024);
 
-  #ifdef USE_WEB_IFACE
-  xQueueWsPayloadMessage = xQueueCreate( 1, sizeof( struct WSPayload ) );
-  #endif
-
-  if(xHandleRecSensors == NULL && !config.SM){
-    xReturnedRecSensors = xTaskCreatePinnedToCore(recSensorsTR, PSTR("recSensors"), STACKSIZE_RECSENSORS, NULL, 1, &xHandleRecSensors, 1);
-    if(xReturnedRecSensors == pdPASS){
-      log_manager->warn(PSTR(__func__), PSTR("Task recSensors has been created.\n"));
-    }
-  }
 
   if(xHandlePublishDevTel == NULL && !config.SM){
     xReturnedPublishDevTel = xTaskCreatePinnedToCore(publishDeviceTelemetryTR, PSTR("publishDevTel"), STACKSIZE_PUBLISHDEVTEL, NULL, 1, &xHandlePublishDevTel, 1);
@@ -82,52 +64,56 @@ void loop(){
   vTaskDelay((const TickType_t) 1000 / portTICK_PERIOD_MS);
 }
 
-void recSensorsTR(void *arg){
-  while (true)
-  {
-    #ifdef USE_WEB_IFACE
-    if( xQueueWsPayloadMessage != NULL && (config.wsCount > 0))
-    {
-      WSPayload payload;
-      payload.data = 0;
-      if( xQueueSend( xQueueWsPayloadMessage, &payload, ( TickType_t ) 1000 ) != pdPASS )
-      {
-          log_manager->debug(PSTR(__func__), PSTR("Failed to fill WSPayload. Queue is full. \n"));
-      }
-    }
-    #endif
-    vTaskDelay((const TickType_t) 1000 / portTICK_PERIOD_MS);
-  }
-}
-
 void loadSettings()
 {
-  long startMillis = millis();
-
   StaticJsonDocument<DOCSIZE_SETTINGS> doc;
   readSettings(doc, settingsPath);
+  if(config.logLev == 5){
+    log_manager->debug(PSTR(__func__), PSTR(": "));
+    serializeJson(doc, Serial);
+    Serial.println();
+  }
 
-  log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
+  if(doc["itD"] != nullptr){mySettings.itD = doc["itD"].as<uint16_t>();}
+  else{mySettings.itD = 15;}
+
+  if(doc["s1rx"] != nullptr){mySettings.s1rx = doc["s1rx"].as<uint8_t>();}
+  else{mySettings.s1rx = 32;}
+
+  if(doc["s1tx"] != nullptr){mySettings.s1tx = doc["s1tx"].as<uint8_t>();}
+  else{mySettings.s1tx = 33;}
 }
 
 void saveSettings()
 {
-  long startMillis = millis();
   StaticJsonDocument<DOCSIZE_SETTINGS> doc;
+
+  doc["itD"] = mySettings.itD;
+
+  doc["s1tx"] = mySettings.s1tx;
+  doc["s1rx"] = mySettings.s1rx;
 
   writeSettings(doc, settingsPath);
 
-  log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
+  if(config.logLev == 5){
+    log_manager->debug(PSTR(__func__), PSTR(": "));
+    serializeJson(doc, Serial);
+    Serial.println();
+  }
+  log_manager->verbose(PSTR(__func__), PSTR("Settings saved.\n"));
 }
 
-void attUpdateCb(const Shared_Attribute_Data &data)
-{
-  long startMillis = millis();
 
+void attUpdateCb(const Shared_Attribute_Data &ldata)
+{
   if( xSemaphoreSettings != NULL ){
     if( xSemaphoreTake( xSemaphoreSettings, ( TickType_t ) 1000 ) == pdTRUE )
     {
-      //...code
+      if(data["itD"] != nullptr){mySettings.itD = data["itD"].as<uint16_t>();}
+      
+      if(data["s1tx"] != nullptr){mySettings.s1tx = data["s1tx"].as<uint8_t>();}
+      if(data["s1rx"] != nullptr){mySettings.s1rx = data["s1rx"].as<uint8_t>();}
+
       xSemaphoreGive( xSemaphoreSettings );
     }
     else
@@ -140,53 +126,45 @@ void attUpdateCb(const Shared_Attribute_Data &data)
 }
 
 void onTbConnected(){
- 
+  
 }
 
 void onTbDisconnected(){
  
 }
 
-void setPanic(const RPC_Data &data){
-    long startMillis = millis();
 
-    if(data[PSTR("st")] != nullptr){
-        StaticJsonDocument<DOCSIZE_MIN> doc;
-        doc[PSTR("method")] = PSTR("sCfg");
-        if(strcmp(data[PSTR("st")], PSTR("ON")) == 0){
-            doc[PSTR("fP")] = 1;
-            configcomcu.fP = 1;
-            //setAlarm(666, 1, 1, 10000);
-        }
-        else{
-            doc[PSTR("fP")] = 0;
-            configcomcu.fP = 0;
-        }
-        serialWriteToCoMcu(doc, 0);
-    }
-
-    log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
-}
 
 RPC_Response genericClientRPC(const RPC_Data &data){
-  if( xSemaphoreTBSend != NULL){
-    if( xSemaphoreTake( xSemaphoreTBSend, ( TickType_t ) 0 ) == pdTRUE )
-    {
-      if(data[PSTR("cmd")] != nullptr){
-          const char * cmd = data["cmd"].as<const char *>();
-          log_manager->verbose(PSTR(__func__), PSTR("Received command: %s\n"), cmd);
+  if(data[PSTR("cmd")] != nullptr){
+      const char * cmd = data["cmd"].as<const char *>();
+      log_manager->verbose(PSTR(__func__), PSTR("Received command: %s\n"), cmd);
 
-          if(strcmp(cmd, PSTR("command")) == 0){
-            
+      if(strcmp(cmd, PSTR("commandExample")) == 0){
+        
+      }
+      else if(strcmp(cmd, PSTR("dlCfg")) == 0){
+        if(data[PSTR("dlCfg")] != nullptr){
+          if(data[PSTR("dlCfg")].as<uint8_t>() == 1){
+            processSharedAttributeUpdate(data);
+
+            if(data[PSTR("sav")] != nullptr){
+              if(data[PSTR("sav")].as<uint8_t>() == 1){
+                FLAG_SAVE_CONFIGCOMCU = 1;
+                FLAG_SYNC_CONFIGCOMCU = 1;
+              }
+              else if(data[PSTR("sav")].as<uint8_t>() == 2){
+                FLAG_SAVE_CONFIG = 1;
+              }
+              else if(data[PSTR("sav")].as<uint8_t>() == 3){
+                FLAG_SAVE_SETTINGS = 1;
+              }
+            }
           }
-      }  
-      xSemaphoreGive( xSemaphoreTBSend );
-    }
-    else
-    {
-      log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
-    }
-  }
+        }
+      }
+  }  
+    
   return RPC_Response(PSTR("generic"), 1);
 }
 
@@ -216,6 +194,8 @@ void onAlarm(int code){
 void publishDeviceTelemetryTR(void * arg){
   unsigned long timerDeviceTelemetry = millis();
   while(true){
+    publishSwitch();
+    
     unsigned long now = millis();
     if( (now - timerDeviceTelemetry) > mySettings.itD * 1000 ){
       deviceTelemetry();
@@ -232,7 +212,11 @@ void onSyncClientAttr(uint8_t direction){
     StaticJsonDocument<1024> doc;
     char buffer[1024];
     
-    /*if(tb.connected() && (direction == 0 || direction == 1)){
+
+    if(tb.connected() && (direction == 0 || direction == 1)){
+      doc[PSTR("itD")] = mySettings.itD;
+      doc[PSTR("s1rx")] = mySettings.s1rx;
+      doc[PSTR("s1tx")] = mySettings.s1tx;
       serializeJson(doc, buffer);
       tbSendAttribute(buffer);
       doc.clear();
@@ -240,55 +224,84 @@ void onSyncClientAttr(uint8_t direction){
 
     #ifdef USE_WEB_IFACE
     if(config.wsCount > 0 && (direction == 0 || direction == 2)){
+      //doc[] = x;
       serializeJson(doc, buffer);
       wsBroadcastTXT(buffer);
-      doc.clear();
     }
     #endif
-    */
+    
     log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
 }
 
 #ifdef USE_WEB_IFACE
 void onWsEvent(const JsonObject &doc){
   if(doc["evType"] == nullptr){
-    log_manager->debug(PSTR(__func__), "Event type not found.\n");
+    log_manager->debug(PSTR(__func__), PSTR("Event type not found.\n"));
     return;
   }
   int evType = doc["evType"].as<int>();
 
 
+  #ifdef USE_ASYNC_WEB
+  if(evType == (int)WS_EVT_CONNECT){
+  #endif
+  #ifndef USE_ASYNC_WEB
   if(evType == (int)WStype_CONNECTED){
+  #endif
     FLAG_SYNC_CLIENT_ATTR_2 = true;
   }
-  if(evType == (int)WStype_DISCONNECTED){
+  #ifdef USE_ASYNC_WEB
+  if(evType == (int)WS_EVT_DISCONNECT){
+  #endif
+  #ifndef USE_ASYNC_WEB
+  else if(evType == (int)WStype_DISCONNECTED){
+  #endif
       if(config.wsCount < 1){
           log_manager->debug(PSTR(__func__),PSTR("No WS client is active. \n"));
       }
   }
+  #ifdef USE_ASYNC_WEB
+  if(evType == (int)WS_EVT_DATA){
+  #endif
+  #ifndef USE_ASYNC_WEB
   else if(evType == (int)WStype_TEXT){
-      if(doc["cmd"] == nullptr){
-          log_manager->debug(PSTR(__func__), "Command not found.\n");
-          return;
-      }
-      const char* cmd = doc["cmd"].as<const char*>();
-      if(strcmp(cmd, (const char*) "attr") == 0){
-        processSharedAttributeUpdate(doc);
-        FLAG_SYNC_CLIENT_ATTR_1 = true;
-      }
-      else if(strcmp(cmd, (const char*) "saveSettings") == 0){
-        FLAG_SAVE_SETTINGS = true;
-      }
-      else if(strcmp(cmd, (const char*) "configSave") == 0){
-        FLAG_SAVE_CONFIG = true;
-      }
-      else if(strcmp(cmd, (const char*) "setPanic") == 0){
-        doc[PSTR("st")] = configcomcu.fP ? "OFF" : "ON";
-        processSetPanic(doc);
-      }
-      else if(strcmp(cmd, (const char*) "reboot") == 0){
-        reboot();
-      }
+  #endif
+    if(doc["cmd"] == nullptr){
+        log_manager->debug(PSTR(__func__), "Command not found.\n");
+        return;
+    }
+    const char* cmd = doc["cmd"].as<const char*>();
+    if(strcmp(cmd, (const char*) "attr") == 0){
+      processSharedAttributeUpdate(doc);
+      FLAG_SYNC_CLIENT_ATTR_1 = true;
+    }
+    else if(strcmp(cmd, (const char*) "saveSettings") == 0){
+      FLAG_SAVE_SETTINGS = true;
+    }
+    else if(strcmp(cmd, (const char*) "configSave") == 0){
+      FLAG_SAVE_CONFIG = true;
+    }
+    else if(strcmp(cmd, (const char*) "saveState") == 0){
+      FLAG_SAVE_STATES = true;
+      log_manager->debug(PSTR(__func__), PSTR("FLAG_SAVE_STATES set to TRUE\n"));
+    }
+    else if(strcmp(cmd, (const char*) "setPanic") == 0){
+      doc[PSTR("st")] = configcomcu.fP ? "OFF" : "ON";
+      processSetPanic(doc);
+    }
+    else if(strcmp(cmd, (const char*) "reboot") == 0){
+      reboot();
+    }
+    else if(strcmp(cmd, (const char*) "setSwitch") == 0){
+      setSwitch(doc["ch"].as<String>(), doc["state"].as<int>() == 1 ? "ON" : "OFF");
+    }
+    #ifdef USE_DISK_LOG
+    else if(strcmp(cmd, (const char*) PSTR("wsStreamCardLogger")) == 0){
+      GLOBAL_TARGET_CLIENT_ID = doc[PSTR("num")].as<uint32_t>(); 
+      GLOBAL_LOG_FILE_NAME = doc[PSTR("fileName")].as<String>();
+      FLAG_WS_STREAM_SDCARD = true;
+    }
+    #endif
   }
 }
 
@@ -307,27 +320,32 @@ void wsSendTelemetryTR(void *arg){
       wsBroadcastTXT(buffer);
       doc.clear();
   
-      if( xQueueWsPayloadMessage != NULL ){
-        WSPayload payload;
-        if( xQueueReceive( xQueueWsPayloadMessage,  &( payload ), ( TickType_t ) 1000 ) == pdPASS )
-        {
-          JsonObject sensors = doc.createNestedObject("sensors");
-          sensors[PSTR("data")] = round2(payload.data);
-          serializeJson(doc, buffer);
-          wsBroadcastTXT(buffer);
-          doc.clear();
-        }
-      } 
+      
+
+      #ifdef USE_DISK_LOG
+      if(FLAG_WS_STREAM_SDCARD)
+      {
+        wsStreamCardLogger(GLOBAL_TARGET_CLIENT_ID, GLOBAL_LOG_FILE_NAME);
+        FLAG_WS_STREAM_SDCARD = false;
+        GLOBAL_TARGET_CLIENT_ID = 0;
+        GLOBAL_LOG_FILE_NAME = "";
+      }
+      #endif
     }
     vTaskDelay((const TickType_t) 1000 / portTICK_PERIOD_MS);
   }
 }
 
 void onMQTTUpdateStart(){
-  vTaskSuspend(xHandleRecSensors);
-  vTaskSuspend(xHandleWsSendTelemetry);
-  vTaskSuspend(xHandleIface);
-  vTaskSuspend(xHandlePublishDevTel);
+  if(xHandleWeatherSensor != NULL){vTaskSuspend(xHandleWeatherSensor);}
+  if(xHandlePowerSensor != NULL){vTaskSuspend(xHandlePowerSensor);}
+  if(xHandleRelayControl != NULL){vTaskSuspend(xHandleRelayControl);}
+
+  #ifdef USE_WEB_IFACE
+  if(xHandleWsSendTelemetry != NULL){vTaskSuspend(xHandleWsSendTelemetry);}
+  if(xHandleIface != NULL){vTaskSuspend(xHandleIface);}
+  #endif
+  if(xHandlePublishDevTel != NULL){vTaskSuspend(xHandlePublishDevTel);}
 }
 
 void onMQTTUpdateEnd(){
