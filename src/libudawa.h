@@ -679,6 +679,9 @@ void ifaceTR(void *arg){
   DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
   DefaultHeaders::Instance().addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
   DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "Content-Type");
+  #ifdef USE_INTERNAL_UI
+  web.serveStatic("/", SPIFFS, "/ui").setDefaultFile("index.html").setAuthentication(config.htU,config.htP);
+  #else
   web.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
     DynamicJsonDocument jsonDoc(128);
     jsonDoc[PSTR("model")] = config.model;
@@ -690,6 +693,7 @@ void ifaceTR(void *arg){
     serializeJson(jsonDoc, jsonResponse);
     request->send(200, "application/json", jsonResponse);
   });
+  #endif
   web.begin();
   #ifdef USE_SPIFFS_LOG
   web.serveStatic("/log", SPIFFS, "/www/log").setDefaultFile("index.html");//.setAuthentication(config.htU,config.htP);
