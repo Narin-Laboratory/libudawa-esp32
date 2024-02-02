@@ -55,6 +55,7 @@
 #ifdef USE_HW_RTC
 #include <ErriezDS3231.h>
 #endif
+#include <HTTPClient.h>
 #define countof(a) (sizeof(a) / sizeof(a[0]))
 #define COMPILED __DATE__ " " __TIME__
 #define S2_RX 16
