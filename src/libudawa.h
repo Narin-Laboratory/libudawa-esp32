@@ -8,6 +8,7 @@
 
 #ifndef libudawa_h
 #define libudawa_h
+
 #include <secret.h>
 #include <esp32-hal-log.h>
 #include <esp_int_wdt.h>
@@ -55,7 +56,7 @@
 #ifdef USE_HW_RTC
 #include <ErriezDS3231.h>
 #endif
-#include <HTTPClient.h>
+#include "BinDownloader.h"
 #define countof(a) (sizeof(a) / sizeof(a[0]))
 #define COMPILED __DATE__ " " __TIME__
 #define S2_RX 16
@@ -2039,7 +2040,7 @@ void updateSpiffs()
 {
     long startMillis = millis();
 
-    HTTPClient _http;
+    BinDownloader _http;
     Serial.printf("Opening item %s\n", spiffsBinUrl );
     log_manager->info(PSTR(__func__), PSTR("Downloading SPIFFS: %s.\n"), spiffsBinUrl);
 
