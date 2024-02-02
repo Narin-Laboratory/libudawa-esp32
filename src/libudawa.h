@@ -33,7 +33,7 @@
 #include <ThingsBoard.h>
 #include <Update.h>
 #include <Espressif_Updater.h>
-#include <HTTPClient.h>
+#include "HTTPClientHelper.h"
 #ifdef USE_WEB_IFACE
 #include <Crypto.h>
 #include <SHA256.h>
@@ -2035,8 +2035,7 @@ void webSendFile(String path, String type){
 #endif
 #endif
 
-void updateSpiffs(){}
-/*void updateSpiffs()
+void updateSpiffs()
 {
     long startMillis = millis();
 
@@ -2151,7 +2150,7 @@ void updateSpiffs(){}
     }
 
     log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);    
-}*/
+}
 
 RPC_Response processConfigSave(const RPC_Data &data){
   if( xSemaphoreTBSend != NULL && WiFi.isConnected() && config.provSent && tb.connected()){
