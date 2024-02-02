@@ -33,7 +33,6 @@
 #include <ThingsBoard.h>
 #include <Update.h>
 #include <Espressif_Updater.h>
-#include "HTTPClientHelper.h"
 #ifdef USE_WEB_IFACE
 #include <Crypto.h>
 #include <SHA256.h>
