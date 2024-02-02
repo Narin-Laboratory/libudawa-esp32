@@ -8,7 +8,7 @@
 ; Please visit documentation for the other options and examples
 ; https://docs.platformio.org/page/projectconf.html
 
-[env:vanilla_ESP32]
+[env:vanilla_esp32]
 platform = espressif32
 board = esp32doit-devkit-v1
 board_build.partitions = partitions_custom.csv
@@ -29,15 +29,17 @@ build_flags =
 	-D=${PIOENV}
 	-DCORE_DEBUG_LEVEL=0
 lib_deps =
-	arduino-libraries/NTPClient@^3.1.0
-	bblanchon/ArduinoJson@^6.18.4
-	bblanchon/StreamUtils@^1.6.1
+	https://github.com/arduino-libraries/NTPClient.git
+	https://github.com/bblanchon/ArduinoJson.git
+	https://github.com/bblanchon/ArduinoStreamUtils.git
 	https://github.com/Narin-Laboratory/libudawa-esp32.git
-	fbiego/ESP32Time@^2.0.0
+	https://github.com/fbiego/ESP32Time.git
 	https://github.com/PaulStoffregen/Time
 	https://github.com/me-no-dev/ESPAsyncWebServer.git
 	https://github.com/thingsboard/pubsubclient.git
 	https://github.com/Narin-Laboratory/thingsboard-arduino-sdk.git
 	https://github.com/akkoyun/Statistical.git
 	https://github.com/Links2004/arduinoWebSockets.git
+	https://github.com/rweather/arduinolibs.git
 	https://github.com/Erriez/ErriezDS3231.git
+	https://github.com/arduino-libraries/ArduinoHttpClient.git

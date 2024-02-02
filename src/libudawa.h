@@ -29,8 +29,10 @@
 #include <NTPClient.h>
 #include <ESPmDNS.h>
 #include <WiFiUdp.h>
+#include <Arduino_MQTT_Client.h>
 #include <ThingsBoard.h>
 #include <Update.h>
+#include <Espressif_Updater.h>
 #include <HTTPClient.h>
 #ifdef USE_WEB_IFACE
 #include <Crypto.h>
@@ -279,7 +281,9 @@ WiFiClientSecure ssl = WiFiClientSecure();
 WiFiMulti wifiMulti;
 Config config;
 ConfigCoMCU configcomcu;
-ThingsBoardSized<32, TBLogger> tb(ssl, DOCSIZE_MIN);
+Espressif_Updater updater;
+Arduino_MQTT_Client mqttClient(ssl);
+ThingsBoardSized<32, TBLogger> tb(mqttClient, DOCSIZE_MIN);
 ESP32Time rtc(0);
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org");
@@ -332,9 +336,9 @@ const std::array<RPC_Callback, 8U> clientRPCCallbacks = {
 constexpr std::array<const char*, 1U> REQUESTED_FW_CHECK_SHARED_ATTRIBUTES = {
   FW_VER_KEY
 };
-const Attribute_Request_Callback fwCheckCb(REQUESTED_FW_CHECK_SHARED_ATTRIBUTES.cbegin(), REQUESTED_FW_CHECK_SHARED_ATTRIBUTES.cend(), &processFwCheckAttributeRequest);
+const Attribute_Request_Callback fwCheckCb(&processFwCheckAttributeRequest, REQUESTED_FW_CHECK_SHARED_ATTRIBUTES.cbegin(), REQUESTED_FW_CHECK_SHARED_ATTRIBUTES.cend());
 
-const OTA_Update_Callback tbOtaCb(&tbOtaProgressCb, &tbOtaFinishedCb, CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION, 40, 4096);
+const OTA_Update_Callback tbOtaCb(&tbOtaProgressCb, &tbOtaFinishedCb, CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION, &updater, 40, 4096);
 const Shared_Attribute_Callback tbSharedAttrUpdateCb(&processSharedAttributeUpdate);
 
 BaseType_t xReturnedWifiKeeper;
@@ -794,13 +798,13 @@ void processProvisionResponse(const Provision_Data &data)
       }
       else
       {
-        if (strncmp(data[CREDENTIALS_TYPE], ACCESS_TOKEN_CRED_TYPE, strlen(ACCESS_TOKEN_CRED_TYPE)) == 0) {
+        if (strncmp(data[CREDENTIALS_TYPE], PSTR("ACCESS_TOKEN"), strlen(PSTR("ACCESS_TOKEN"))) == 0) {
           strlcpy(config.accTkn, data[CREDENTIALS_VALUE].as<std::string>().c_str(), sizeof(config.accTkn));
           config.provSent = true;  
           FLAG_SAVE_CONFIG = true;
           log_manager->verbose(PSTR(__func__),PSTR("Access token provision response saved.\n"));
         }
-        else if (strncmp(data[CREDENTIALS_TYPE], MQTT_BASIC_CRED_TYPE, strlen(MQTT_BASIC_CRED_TYPE)) == 0) {
+        else if (strncmp(data[CREDENTIALS_TYPE], PSTR("MQTT_BASIC"), strlen(PSTR("MQTT_BASIC"))) == 0) {
           /*auto credentials_value = data[CREDENTIALS_VALUE].as<JsonObjectConst>();
           credentials.client_id = credentials_value[CLIENT_ID].as<std::string>();
           credentials.username = credentials_value[CLIENT_USERNAME].as<std::string>();
@@ -2031,7 +2035,8 @@ void webSendFile(String path, String type){
 #endif
 #endif
 
-void updateSpiffs()
+void updateSpiffs(){}
+/*void updateSpiffs()
 {
     long startMillis = millis();
 
@@ -2146,7 +2151,7 @@ void updateSpiffs()
     }
 
     log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);    
-}
+}*/
 
 RPC_Response processConfigSave(const RPC_Data &data){
   if( xSemaphoreTBSend != NULL && WiFi.isConnected() && config.provSent && tb.connected()){
