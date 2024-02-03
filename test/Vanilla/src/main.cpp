@@ -9,7 +9,6 @@
 
 void setup()
 {
-  Wire.begin();
   processSharedAttributeUpdateCb = &attUpdateCb;
   onTbDisconnectedCb = &onTbDisconnected;
   onTbConnectedCb = &onTbConnected;
@@ -18,7 +17,6 @@ void setup()
   emitAlarmCb = &onAlarm;
   onSyncClientAttrCb = &onSyncClientAttr;
   onSaveSettings = &saveSettings;
-  onSaveStates = &saveStates;
   #ifdef USE_WEB_IFACE
   wsEventCb = &onWsEvent;
   #endif
@@ -29,7 +27,6 @@ void setup()
   startup();
   if(!config.SM){
     loadSettings();
-    loadStates();
     syncConfigCoMCU();
   }
   if(String(config.model) == String("Generic")){
@@ -54,6 +51,13 @@ void setup()
     }
   }
   #endif
+
+  if(xHandleSensors == NULL && !config.SM){
+    xReturnedSensors = xTaskCreatePinnedToCore(sensorsTR, PSTR("sensors"), STACKSIZE_SENSORS, NULL, 1, &xHandleSensors, 1);
+    if(xReturnedPublishDevTel == pdPASS){
+      log_manager->warn(PSTR(__func__), PSTR("Task sensors has been created.\n"));
+    }
+  }
 }
 
 void loop(){
@@ -64,6 +68,10 @@ void loop(){
   vTaskDelay((const TickType_t) 1000 / portTICK_PERIOD_MS);
 }
 
+void setPanic(const RPC_Data &data){
+  
+}
+
 void loadSettings()
 {
   StaticJsonDocument<DOCSIZE_SETTINGS> doc;
@@ -71,7 +79,7 @@ void loadSettings()
   if(config.logLev == 5){
     log_manager->debug(PSTR(__func__), PSTR(": "));
     serializeJson(doc, Serial);
-    Serial.println();
+    Serial.println("\n");
   }
 
   if(doc["itD"] != nullptr){mySettings.itD = doc["itD"].as<uint16_t>();}
@@ -98,13 +106,13 @@ void saveSettings()
   if(config.logLev == 5){
     log_manager->debug(PSTR(__func__), PSTR(": "));
     serializeJson(doc, Serial);
-    Serial.println();
+    Serial.println("\n");
   }
   log_manager->verbose(PSTR(__func__), PSTR("Settings saved.\n"));
 }
 
 
-void attUpdateCb(const Shared_Attribute_Data &ldata)
+void attUpdateCb(const Shared_Attribute_Data &data)
 {
   if( xSemaphoreSettings != NULL ){
     if( xSemaphoreTake( xSemaphoreSettings, ( TickType_t ) 1000 ) == pdTRUE )
@@ -121,8 +129,6 @@ void attUpdateCb(const Shared_Attribute_Data &ldata)
       log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
     }
   }
-
-  log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
 }
 
 void onTbConnected(){
@@ -188,13 +194,15 @@ void onAlarm(int code){
   StaticJsonDocument<32> doc;
   doc[PSTR("alarm")] = code;
   serializeJson(doc, buffer);
+  #ifdef USE_WEB_IFACE
   wsBroadcastTXT(buffer);
+  #endif
 }
 
 void publishDeviceTelemetryTR(void * arg){
   unsigned long timerDeviceTelemetry = millis();
   while(true){
-    publishSwitch();
+
     
     unsigned long now = millis();
     if( (now - timerDeviceTelemetry) > mySettings.itD * 1000 ){
@@ -292,9 +300,6 @@ void onWsEvent(const JsonObject &doc){
     else if(strcmp(cmd, (const char*) "reboot") == 0){
       reboot();
     }
-    else if(strcmp(cmd, (const char*) "setSwitch") == 0){
-      setSwitch(doc["ch"].as<String>(), doc["state"].as<int>() == 1 ? "ON" : "OFF");
-    }
     #ifdef USE_DISK_LOG
     else if(strcmp(cmd, (const char*) PSTR("wsStreamCardLogger")) == 0){
       GLOBAL_TARGET_CLIENT_ID = doc[PSTR("num")].as<uint32_t>(); 
@@ -304,6 +309,7 @@ void onWsEvent(const JsonObject &doc){
     #endif
   }
 }
+
 
 void wsSendTelemetryTR(void *arg){
   while(true){
@@ -320,7 +326,18 @@ void wsSendTelemetryTR(void *arg){
       wsBroadcastTXT(buffer);
       doc.clear();
   
-      
+      if( xQueueWsPayloadSensors != NULL ){
+        WSPayloadSensors payload;
+        if( xQueueReceive( xQueueWsPayloadSensors,  &( payload ), ( TickType_t ) 0 ) == pdPASS )
+        {
+          JsonObject sensors = doc.createNestedObject("sensors");
+          sensors[PSTR("data1")] = payload.data1;
+          sensors[PSTR("data2")] = payload.data2;
+          serializeJson(doc, buffer);
+          wsBroadcastTXT(buffer);
+          doc.clear();
+        }
+      }
 
       #ifdef USE_DISK_LOG
       if(FLAG_WS_STREAM_SDCARD)
@@ -335,12 +352,9 @@ void wsSendTelemetryTR(void *arg){
     vTaskDelay((const TickType_t) 1000 / portTICK_PERIOD_MS);
   }
 }
+#endif
 
 void onMQTTUpdateStart(){
-  if(xHandleWeatherSensor != NULL){vTaskSuspend(xHandleWeatherSensor);}
-  if(xHandlePowerSensor != NULL){vTaskSuspend(xHandlePowerSensor);}
-  if(xHandleRelayControl != NULL){vTaskSuspend(xHandleRelayControl);}
-
   #ifdef USE_WEB_IFACE
   if(xHandleWsSendTelemetry != NULL){vTaskSuspend(xHandleWsSendTelemetry);}
   if(xHandleIface != NULL){vTaskSuspend(xHandleIface);}
@@ -351,4 +365,29 @@ void onMQTTUpdateStart(){
 void onMQTTUpdateEnd(){
   
 }
-#endif
+
+void sensorsTR(void *arg){
+  while (true)
+  {
+    bool flag_failure_readings = false;
+    myStates.flag_sensors = true;
+
+    float data1 = (float)random(17, 40);
+    float data2 = (float)random(0, 100);
+
+    #ifdef USE_WEB_IFACE
+      if( xQueueWsPayloadSensors != NULL && (config.wsCount > 0) && myStates.flag_sensors && !flag_failure_readings)
+      {
+        WSPayloadSensors payload;
+        payload.data1 = data1;
+        payload.data2 = data2;
+        if( xQueueSend( xQueueWsPayloadSensors, &payload, ( TickType_t ) 1000 ) != pdPASS )
+        {
+          log_manager->debug(PSTR(__func__), PSTR("Failed to fill WSPayloadSensors. Queue is full. \n"));
+        }
+      }
+    #endif
+    
+    vTaskDelay((const TickType_t) 1000 / portTICK_PERIOD_MS);
+  }
+}

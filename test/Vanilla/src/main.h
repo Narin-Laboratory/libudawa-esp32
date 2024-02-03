@@ -49,13 +49,14 @@ ny6l9/duT2POAsUN5IwHGDu8b2NT+vCUQRFVHY31
 
 #define CURRENT_FIRMWARE_TITLE "Vanilla"
 #define CURRENT_FIRMWARE_VERSION "0.0.1"
-#define DOCSIZE 2048
+#define DOCSIZE 1024
 #define DOCSIZE_MIN 512
-#define DOCSIZE_SETTINGS 4096
+#define DOCSIZE_SETTINGS 2048
 #define USE_SERIAL2
 #define USE_WEB_IFACE
 #define USE_ASYNC_WEB
-#define USE_HW_RTC
+#define USE_INTERNAL_UI
+//#define USE_HW_RTC
 #define USE_WIFI_OTA
 //#define USE_WIFI_LOGGER
 //#define USE_SDCARD_LOG
@@ -68,12 +69,13 @@ ny6l9/duT2POAsUN5IwHGDu8b2NT+vCUQRFVHY31
 #define STACKSIZE_IFACE 3000
 #define STACKSIZE_PUBLISHDEVTEL 4500 //6000
 #define STACKSIZE_WSSENDTELEMETRY 4500 //6000
+#define STACKSIZE_SENSORS 2048
 
 
 #include <libudawa.h>
 #include <TimeLib.h>
 
-
+using namespace libudawa;
 const char* settingsPath = PSTR("/settings.json");
 struct Settings
 {
@@ -82,23 +84,37 @@ struct Settings
 
     uint8_t s1tx = 33; //V3.1 33, V3 32
     uint8_t s1rx = 32; //V3.1 32, V3 4
-
 };
 
+struct States
+{
+    bool flag_sensors = false;
+};
+States myStates;
 
-using namespace libudawa;
+#ifdef USE_WEB_IFACE
+struct WSPayloadSensors
+{
+    float data1;
+    float data2;
+};
+QueueHandle_t xQueueWsPayloadSensors;
+#endif
+
 Settings mySettings;
 
 BaseType_t xReturnedWsSendTelemetry;
 BaseType_t xReturnedPublishDevTel;
+BaseType_t xReturnedSensors;
 
 TaskHandle_t xHandleWsSendTelemetry = NULL;
-TaskHandle_t xHandlePublisevTel = NULL;
+TaskHandle_t xHandlePublishDevTel = NULL;
+TaskHandle_t xHandleSensors = NULL;
+
+SemaphoreHandle_t xSemaphoreSensors = NULL;
 
 void loadSettings();
 void saveSettings();
-void loadStates();
-void saveStates();
 void attUpdateCb(const Shared_Attribute_Data &data);
 void onTbConnected();
 void onTbDisconnected();
@@ -113,6 +129,8 @@ void wsSendTelemetryTR(void *arg);
 void publishDeviceTelemetryTR(void * arg);
 void onMQTTUpdateStart();
 void onMQTTUpdateEnd();
+void setPanic(const RPC_Data &data);
+void sensorsTR(void *arg);
 
 /**
  * @brief UDAWA Common Alarm Code Definition
