@@ -1845,7 +1845,7 @@ void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc)
   if( xSemaphoreSerialCoMCU != NULL ){
       /* See if we can obtain the semaphore.  If the semaphore is not
       available wait 10 ticks to see if it becomes free. */
-      if( xSemaphoreTake( xSemaphoreSerialCoMCU, ( TickType_t ) 10000 ) == pdTRUE )
+      if( xSemaphoreTake( xSemaphoreSerialCoMCU, ( TickType_t ) 30000 ) == pdTRUE )
       {
           /* We were able to obtain the semaphore and can now access the
           shared resource. */
@@ -1854,8 +1854,8 @@ void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc)
           serializeJson(doc, Serial2);
           StringPrint stream;
           serializeJson(doc, stream);
-          //String result = stream.str();
-          //log_manager->verbose(PSTR(__func__),PSTR("Sent to CoMCU: %s\n"), result.c_str());
+          String result = stream.str();
+          log_manager->verbose(PSTR(__func__),PSTR("Sent to CoMCU: %s\n"), result.c_str());
           if(isRpc)
           {
             vTaskDelay((const TickType_t) 50 / portTICK_PERIOD_MS);
@@ -1892,14 +1892,14 @@ void serialReadFromCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc)
           String result;
           ReadLoggingStream loggingStream(Serial2, stream);
           DeserializationError err = deserializeJson(doc, loggingStream);
-          //result = stream.str();
+          result = stream.str();
           if (err == DeserializationError::Ok)
           {
-            //log_manager->verbose(PSTR(__func__),PSTR("Received from CoMCU: %s\n"), result.c_str());
+            log_manager->verbose(PSTR(__func__),PSTR("Received from CoMCU: %s\n"), result.c_str());
           }
           else
           {
-            //log_manager->verbose(PSTR(__func__),PSTR("Serial2CoMCU DeserializeJson() returned: %s, content: %s\n"), err.c_str(), result.c_str());
+            log_manager->verbose(PSTR(__func__),PSTR("Serial2CoMCU DeserializeJson() returned: %s, content: %s\n"), err.c_str(), result.c_str());
             return;
           }
           //log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
