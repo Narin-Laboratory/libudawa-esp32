@@ -360,7 +360,8 @@ TaskHandle_t xHandleTB;
 TaskHandle_t xHandleIface;
 #endif
 
-SemaphoreHandle_t xSemaphoreSerialCoMCU = NULL;
+SemaphoreHandle_t xSemaphoreSerialCoMCUWrite = NULL;
+SemaphoreHandle_t xSemaphoreSerialCoMCURead = NULL;
 SemaphoreHandle_t xSemaphoreUDPLogger = NULL;
 SemaphoreHandle_t xSemaphoreSettings = NULL;
 SemaphoreHandle_t xSemaphoreConfig = NULL;
@@ -386,7 +387,8 @@ void startup() {
   tbloggerCb = &onTbLogger;
   xQueueAlarm = xQueueCreate( 10, sizeof( struct AlarmMessage ) );
 
-  if(xSemaphoreSerialCoMCU == NULL){xSemaphoreSerialCoMCU = xSemaphoreCreateMutex();}
+  if(xSemaphoreSerialCoMCUWrite == NULL){xSemaphoreSerialCoMCUWrite = xSemaphoreCreateMutex();}
+  if(xSemaphoreSerialCoMCURead == NULL){xSemaphoreSerialCoMCURead = xSemaphoreCreateMutex();}
   if(xSemaphoreUDPLogger == NULL){xSemaphoreUDPLogger = xSemaphoreCreateMutex();}
   if(xSemaphoreSettings == NULL){xSemaphoreSettings = xSemaphoreCreateMutex();}
   if(xSemaphoreConfig == NULL){xSemaphoreConfig = xSemaphoreCreateMutex();}
@@ -1842,10 +1844,10 @@ bool loadFile(const char* filePath, char *buffer)
 
 void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc)
 {
-  if( xSemaphoreSerialCoMCU != NULL ){
+  if( xSemaphoreSerialCoMCUWrite != NULL ){
       /* See if we can obtain the semaphore.  If the semaphore is not
       available wait 10 ticks to see if it becomes free. */
-      if( xSemaphoreTake( xSemaphoreSerialCoMCU, ( TickType_t ) 30000 ) == pdTRUE )
+      if( xSemaphoreTake( xSemaphoreSerialCoMCUWrite, ( TickType_t ) 30000 ) == pdTRUE )
       {
           /* We were able to obtain the semaphore and can now access the
           shared resource. */
@@ -1858,7 +1860,7 @@ void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc)
           log_manager->verbose(PSTR(__func__),PSTR("Sent to CoMCU: %s\n"), result.c_str());
           if(isRpc)
           {
-            vTaskDelay((const TickType_t) 50 / portTICK_PERIOD_MS);
+            vTaskDelay((const TickType_t) 500 / portTICK_PERIOD_MS);
             doc.clear();
             serialReadFromCoMcu(doc);
           }
@@ -1866,7 +1868,7 @@ void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc)
 
           /* We have finished accessing the shared resource.  Release the
           semaphore. */
-          xSemaphoreGive( xSemaphoreSerialCoMCU );
+          xSemaphoreGive( xSemaphoreSerialCoMCUWrite );
       }
       else
       {
@@ -1879,10 +1881,10 @@ void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc)
 
 void serialReadFromCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc)
 {
-  if( xSemaphoreSerialCoMCU != NULL ){
+  if( xSemaphoreSerialCoMCURead != NULL ){
       /* See if we can obtain the semaphore.  If the semaphore is not
       available wait 10 ticks to see if it becomes free. */
-      if( xSemaphoreTake( xSemaphoreSerialCoMCU, ( TickType_t ) 10000 ) == pdTRUE )
+      if( xSemaphoreTake( xSemaphoreSerialCoMCURead, ( TickType_t ) 10000 ) == pdTRUE )
       {
           /* We were able to obtain the semaphore and can now access the
           shared resource. */
@@ -1906,7 +1908,7 @@ void serialReadFromCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc)
 
           /* We have finished accessing the shared resource.  Release the
           semaphore. */
-          xSemaphoreGive( xSemaphoreSerialCoMCU );
+          xSemaphoreGive( xSemaphoreSerialCoMCURead );
       }
       else
       {
