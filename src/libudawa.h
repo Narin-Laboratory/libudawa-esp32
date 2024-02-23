@@ -1860,7 +1860,7 @@ void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc)
           log_manager->verbose(PSTR(__func__),PSTR("Sent to CoMCU: %s\n"), result.c_str());
           if(isRpc)
           {
-            vTaskDelay((const TickType_t) 500 / portTICK_PERIOD_MS);
+            vTaskDelay((const TickType_t) 50 / portTICK_PERIOD_MS);
             doc.clear();
             serialReadFromCoMcu(doc);
           }
