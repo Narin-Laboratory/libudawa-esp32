@@ -1842,7 +1842,7 @@ bool loadFile(const char* filePath, char *buffer)
   return true;
 }
 
-void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc, int wait = 50)
+void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc, int wait)
 {
   if( xSemaphoreSerialCoMCUWrite != NULL ){
       /* See if we can obtain the semaphore.  If the semaphore is not
