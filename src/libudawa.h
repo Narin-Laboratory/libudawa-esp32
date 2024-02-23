@@ -194,7 +194,7 @@ void processSharedAttributeUpdate(const Shared_Attribute_Data &data);
 void (*processSharedAttributeUpdateCb)(const Shared_Attribute_Data &data);
 void startup();
 void wifiKeeperTR(void *arg);
-void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc);
+void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc, int wait = 50);
 void serialReadFromCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc);
 void syncConfigCoMCU();
 void readSettings(StaticJsonDocument<DOCSIZE_SETTINGS> &doc,const char* path);
@@ -1842,7 +1842,7 @@ bool loadFile(const char* filePath, char *buffer)
   return true;
 }
 
-void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc)
+void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc, int wait = 50)
 {
   if( xSemaphoreSerialCoMCUWrite != NULL ){
       /* See if we can obtain the semaphore.  If the semaphore is not
@@ -1860,7 +1860,7 @@ void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc)
           log_manager->verbose(PSTR(__func__),PSTR("Sent to CoMCU: %s\n"), result.c_str());
           if(isRpc)
           {
-            vTaskDelay((const TickType_t) 50 / portTICK_PERIOD_MS);
+            vTaskDelay((const TickType_t) wait / portTICK_PERIOD_MS);
             doc.clear();
             serialReadFromCoMcu(doc);
           }
