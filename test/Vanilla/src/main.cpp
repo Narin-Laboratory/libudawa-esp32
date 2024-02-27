@@ -35,6 +35,10 @@ void setup()
 
   tb.setBufferSize(1024);
 
+  #ifdef USE_WEB_IFACE
+  xQueueWsPayloadSensors= xQueueCreate( 1, sizeof( struct WSPayloadSensors ) );
+  #endif
+
 
   if(xHandlePublishDevTel == NULL && !config.SM){
     xReturnedPublishDevTel = xTaskCreatePinnedToCore(publishDeviceTelemetryTR, PSTR("publishDevTel"), STACKSIZE_PUBLISHDEVTEL, NULL, 1, &xHandlePublishDevTel, 1);

@@ -133,7 +133,7 @@ struct Config
   #ifdef USE_WEB_IFACE
   uint8_t wsCount = 0;
   unsigned long rateLimitInterval = 1000; // rate limit interval in milliseconds
-  unsigned long blockInterval = 1000; // block interval in milliseconds
+  unsigned long blockInterval = 60000; // block interval in milliseconds
 
   #endif
 
@@ -1087,9 +1087,14 @@ void onWsEventCb(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEven
     case WS_EVT_DATA:
       {
         DeserializationError err = deserializeJson(root, data);
+        if(err != DeserializationError::Ok){
+          return;
+        }
+
         String dataLog;
         serializeJson(root, dataLog);
         log_manager->verbose(PSTR(__func__), PSTR("WS Data (%s): %s\n"), err.c_str(), dataLog.c_str());
+
         
         // If client is not authenticated, check credentials
         if(!clientAuthenticationStatus[client->id()]) {
@@ -1107,15 +1112,15 @@ void onWsEventCb(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEven
           
           clientAuthAttemptTimestamps[clientIP] = millis();
 
-          if (err) {
+          if (err != deserializeJson::Ok) {
             client->text(PSTR("{\"status\": {\"code\": 400, \"msg\": \"Bad request.\"}}"));
             //client->close();
             return;
           }
           else{
             if(doc["salt"] == nullptr || doc["auth"] == nullptr){
-              client->text(PSTR("{\"status\": {\"code\": 401, \"msg\": \"Unauthorized.\"}}"));
-              client->close();
+              //client->text(PSTR("{\"status\": {\"code\": 401, \"msg\": \"Unauthorized.\"}}"));
+              //client->close();
               return;
             }
 
