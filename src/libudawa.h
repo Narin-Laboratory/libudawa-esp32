@@ -1112,7 +1112,7 @@ void onWsEventCb(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEven
           
           clientAuthAttemptTimestamps[clientIP] = millis();
 
-          if (err != deserializeJson::Ok) {
+          if (err != DeserializationError::Ok) {
             client->text(PSTR("{\"status\": {\"code\": 400, \"msg\": \"Bad request.\"}}"));
             //client->close();
             return;
