@@ -255,6 +255,7 @@ void (*onMQTTUpdateEndCb)();
 void setupCardLogger();
 void writeCardLogger(StaticJsonDocument<DOCSIZE_MIN> &doc);
 void wsStreamCardLogger(uint32_t id, String fileName);
+void deleteLogFile(String fileName);
 #endif
 
 class TBLogger {
@@ -682,7 +683,11 @@ void ifaceTR(void *arg){
   DefaultHeaders::Instance().addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
   DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "Content-Type");
   #ifdef USE_INTERNAL_UI
-  web.serveStatic("/", SPIFFS, "/ui").setDefaultFile("index.html").setAuthentication(config.htU,config.htP);
+    #ifdef USE_INTERNAL_UI_DIGEST
+      web.serveStatic("/", SPIFFS, "/ui").setDefaultFile("index.html").setAuthentication(config.htU,config.htP).setAuthentication(config.htU,config.htP);
+    #else
+      web.serveStatic("/", SPIFFS, "/ui").setDefaultFile("index.html").setAuthentication(config.htU,config.htP);
+    #endif
   #else
   web.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
     DynamicJsonDocument jsonDoc(128);
@@ -698,11 +703,19 @@ void ifaceTR(void *arg){
   #endif
   web.begin();
   #ifdef USE_SPIFFS_LOG
-  web.serveStatic("/log", SPIFFS, "/www/log").setDefaultFile("index.html");//.setAuthentication(config.htU,config.htP);
+    #ifdef USE_INTERNAL_UI_DIGEST
+      web.serveStatic("/log", SPIFFS, "/www/log").setDefaultFile("recover.json").setAuthentication(config.htU,config.htP);
+    #else
+      web.serveStatic("/log", SPIFFS, "/www/log").setDefaultFile("recover.json");
+    #endif
   #endif
   #ifdef USE_SDCARD_LOG
   if(!config.SM){
-    web.serveStatic("/log", SD, "/www/log").setDefaultFile("recover.json");
+    #ifdef USE_INTERNAL_UI_DIGEST
+      web.serveStatic("/log", SD, "/www/log").setDefaultFile("recover.json").setAuthentication(config.htU,config.htP);
+    #else
+      web.serveStatic("/log", SD, "/www/log").setDefaultFile("recover.json");
+    #endif
   }
   #endif
   ws.onEvent(onWsEventCb);
@@ -2659,6 +2672,85 @@ void writeCardLogger(StaticJsonDocument<DOCSIZE_MIN> &doc)
     log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
   }
 }
+
+void deleteAllLogFiles() {
+  log_manager->debug(PSTR(__func__), PSTR("Deleting all log files in /www/log\n"));
+
+  if( xSemaphoreCardLogger != NULL && xSemaphoreTake( xSemaphoreCardLogger, ( TickType_t ) 0 ) == pdTRUE )
+  {
+    const String logDirectory = "/www/log/";
+
+    #ifdef USE_SDCARD_LOG 
+    File root = SD.open(logDirectory);
+    #endif
+    #ifdef USE_SPIFFS_LOG
+    File root = SPIFFS.open(logDirectory.c_str());
+    #endif
+    if (!root || !root.isDirectory()){
+      log_manager->error(PSTR(__func__), PSTR("Failed to open log directory %s"), logDirectory.c_str());
+      xSemaphoreGive( xSemaphoreCardLogger );
+      return; 
+    }
+
+    while (File file = root.openNextFile()) {
+      if (file.path() != nullptr) {
+        #ifdef USE_SDCARD_LOG 
+        if(SD.remove(file.path)){
+          log_manager->verbose(PSTR(__func__), PSTR("File %s deleted"), file.path());
+        } else {
+          log_manager->error(PSTR(__func__), PSTR("Failed to delete file %s"), file.path());
+        }
+        #endif
+        #ifdef USE_SPIFFS_LOG
+        if(SPIFFS.remove(file.path())){
+          log_manager->verbose(PSTR(__func__), PSTR("File %s deleted"), file.path());
+        } else {
+          log_manager->error(PSTR(__func__), PSTR("Failed to delete file %s"), file.path());
+        }
+        #endif
+        
+      }
+      file.close();
+    }
+
+    xSemaphoreGive( xSemaphoreCardLogger );
+  }
+  else
+  {
+    log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+  }
+}
+
+
+void deleteLogFile(String fileName){
+  log_manager->debug(PSTR(__func__), PSTR("Deleting log file: %s\n"), fileName.c_str());
+  if( xSemaphoreCardLogger != NULL && xSemaphoreTake( xSemaphoreCardLogger, ( TickType_t ) 0 ) == pdTRUE )
+  {
+    String filePath = "/www/log/" + fileName;
+
+    #ifdef USE_SDCARD_LOG
+    if(SD.remove(filePath.c_str())){
+      log_manager->verbose(PSTR(__func__), PSTR("File %s has been removed."), filePath.c_str());
+    }
+    else{
+      log_manager->verbose(PSTR(__func__), PSTR("Failed to remove file %s."), filePath.c_str());
+    }
+    #endif
+    #ifdef USE_SPIFFS_LOG
+    if(SPIFFS.remove(filePath.c_str())){
+      log_manager->verbose(PSTR(__func__), PSTR("File %s has been removed."), filePath.c_str());
+    }else{
+      log_manager->verbose(PSTR(__func__), PSTR("Failed to remove file %s."), filePath.c_str());
+    }
+    #endif
+
+    xSemaphoreGive( xSemaphoreCardLogger );
+  }
+  else
+  {
+    log_manager->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+  }
+}
 #endif
 
 #ifdef USE_WEB_IFACE
@@ -2668,14 +2760,16 @@ void wsStreamCardLogger(uint32_t id, String fileName)
   log_manager->debug(PSTR(__func__), PSTR("Sending log file of %s to %d!\n"), fileName.c_str(), id);
   if( xSemaphoreCardLogger != NULL && xSemaphoreTake( xSemaphoreCardLogger, ( TickType_t ) 0 ) == pdTRUE )
   {
+    String filePath = "/www/log/" + fileName;
+
     #ifdef USE_SDCARD_LOG
     File file = SD.open(fileName.c_str(), FILE_READ);
     #endif
     #ifdef USE_SPIFFS_LOG
-    File file = SPIFFS.open(fileName.c_str(), FILE_READ);
+    File file = SPIFFS.open(filePath.c_str(), FILE_READ);
     #endif
     if (!file) {
-      log_manager->warn(PSTR(__func__), PSTR("Failed to open the log file %s!\n"), fileName.c_str());
+      log_manager->warn(PSTR(__func__), PSTR("Failed to open the log file %s!\n"), filePath.c_str());
       xSemaphoreGive( xSemaphoreCardLogger );
       return;
     }
