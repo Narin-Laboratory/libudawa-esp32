@@ -86,8 +86,8 @@ void loadSettings()
     Serial.println("\n");
   }
 
-  if(doc["itD"] != nullptr){mySettings.itD = doc["itD"].as<uint16_t>();}
-  else{mySettings.itD = 15;}
+  if(doc["itDt"] != nullptr){mySettings.itDt = doc["itDt"].as<uint16_t>();}
+  else{mySettings.itDt = 15;}
 
   if(doc["s1rx"] != nullptr){mySettings.s1rx = doc["s1rx"].as<uint8_t>();}
   else{mySettings.s1rx = 32;}
@@ -100,7 +100,7 @@ void saveSettings()
 {
   StaticJsonDocument<DOCSIZE_SETTINGS> doc;
 
-  doc["itD"] = mySettings.itD;
+  doc["itDt"] = mySettings.itDt;
 
   doc["s1tx"] = mySettings.s1tx;
   doc["s1rx"] = mySettings.s1rx;
@@ -121,7 +121,7 @@ void attUpdateCb(const Shared_Attribute_Data &data)
   if( xSemaphoreSettings != NULL ){
     if( xSemaphoreTake( xSemaphoreSettings, ( TickType_t ) 1000 ) == pdTRUE )
     {
-      if(data["itD"] != nullptr){mySettings.itD = data["itD"].as<uint16_t>();}
+      if(data["itDt"] != nullptr){mySettings.itDt = data["itDt"].as<uint16_t>();}
       
       if(data["s1tx"] != nullptr){mySettings.s1tx = data["s1tx"].as<uint8_t>();}
       if(data["s1rx"] != nullptr){mySettings.s1rx = data["s1rx"].as<uint8_t>();}
@@ -209,7 +209,7 @@ void publishDeviceTelemetryTR(void * arg){
 
     
     unsigned long now = millis();
-    if( (now - timerDeviceTelemetry) > mySettings.itD * 1000 ){
+    if( (now - timerDeviceTelemetry) > mySettings.itDt * 1000 ){
       deviceTelemetry();
       timerDeviceTelemetry = now;
     }
@@ -226,7 +226,7 @@ void onSyncClientAttr(uint8_t direction){
     
 
     if(tb.connected() && (direction == 0 || direction == 1)){
-      doc[PSTR("itD")] = mySettings.itD;
+      doc[PSTR("itDt")] = mySettings.itDt;
       doc[PSTR("s1rx")] = mySettings.s1rx;
       doc[PSTR("s1tx")] = mySettings.s1tx;
       serializeJson(doc, buffer);

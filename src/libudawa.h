@@ -195,7 +195,7 @@ void (*processSharedAttributeUpdateCb)(const Shared_Attribute_Data &data);
 void startup();
 void wifiKeeperTR(void *arg);
 void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc, int wait = 50);
-void serialReadFromCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc);
+void serialReadFromCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, int wait = 50);
 void syncConfigCoMCU();
 void readSettings(StaticJsonDocument<DOCSIZE_SETTINGS> &doc,const char* path);
 void writeSettings(StaticJsonDocument<DOCSIZE_SETTINGS> &doc, const char* path);
@@ -684,9 +684,9 @@ void ifaceTR(void *arg){
   DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "Content-Type");
   #ifdef USE_INTERNAL_UI
     #ifdef USE_INTERNAL_UI_DIGEST
-      web.serveStatic("/", SPIFFS, "/ui").setDefaultFile("index.html").setAuthentication(config.htU,config.htP).setAuthentication(config.htU,config.htP);
+      web.serveStatic("/ui", SPIFFS, "/ui").setDefaultFile("index.html").setAuthentication(config.htU,config.htP).setAuthentication(config.htU,config.htP);
     #else
-      web.serveStatic("/", SPIFFS, "/ui").setDefaultFile("index.html").setAuthentication(config.htU,config.htP);
+      web.serveStatic("/ui", SPIFFS, "/ui").setDefaultFile("index.html").setAuthentication(config.htU,config.htP);
     #endif
   #else
   web.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -1865,7 +1865,7 @@ void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc, int wa
   if( xSemaphoreSerialCoMCUWrite != NULL ){
       /* See if we can obtain the semaphore.  If the semaphore is not
       available wait 10 ticks to see if it becomes free. */
-      if( xSemaphoreTake( xSemaphoreSerialCoMCUWrite, ( TickType_t ) 30000 ) == pdTRUE )
+      if( xSemaphoreTake( xSemaphoreSerialCoMCUWrite, ( TickType_t ) wait ) == pdTRUE )
       {
           /* We were able to obtain the semaphore and can now access the
           shared resource. */
@@ -1875,12 +1875,15 @@ void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc, int wa
           StringPrint stream;
           serializeJson(doc, stream);
           String result = stream.str();
-          log_manager->verbose(PSTR(__func__),PSTR("Sent to CoMCU: %s\n"), result.c_str());
+          if(config.logLev == 6){
+            log_manager->verbose(PSTR(__func__),PSTR("Sent to CoMCU: %s\n"), result.c_str());
+          }
+          
           if(isRpc)
           {
             vTaskDelay((const TickType_t) wait / portTICK_PERIOD_MS);
             doc.clear();
-            serialReadFromCoMcu(doc);
+            serialReadFromCoMcu(doc, wait);
           }
           //log_manager->verbose(PSTR(__func__), PSTR("Executed (%dms).\n"), millis() - startMillis);
 
@@ -1892,12 +1895,12 @@ void serialWriteToCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, bool isRpc, int wa
       {
           /* We could not obtain the semaphore and can therefore not access
           the shared resource safely. */
-          log_manager->debug(PSTR(__func__), PSTR("Undable to get semaphore.\n"));
+          log_manager->debug(PSTR(__func__), PSTR("Unable to get semaphore.\n"));
       }
   }
 }
 
-void serialReadFromCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc)
+void serialReadFromCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc, int wait)
 {
   if( xSemaphoreSerialCoMCURead != NULL ){
       /* See if we can obtain the semaphore.  If the semaphore is not
@@ -1915,7 +1918,9 @@ void serialReadFromCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc)
           result = stream.str();
           if (err == DeserializationError::Ok)
           {
-            log_manager->verbose(PSTR(__func__),PSTR("Received from CoMCU: %s\n"), result.c_str());
+            if(config.logLev == 6){
+              log_manager->verbose(PSTR(__func__),PSTR("Received from CoMCU: %s\n"), result.c_str());
+            }
           }
           else
           {
@@ -1932,7 +1937,7 @@ void serialReadFromCoMcu(StaticJsonDocument<DOCSIZE_MIN> &doc)
       {
           /* We could not obtain the semaphore and can therefore not access
           the shared resource safely. */
-          log_manager->debug(PSTR(__func__), PSTR("Undable to get semaphore.\n"));
+          log_manager->debug(PSTR(__func__), PSTR("Unable to get semaphore.\n"));
       }
   }
 }
@@ -2533,7 +2538,9 @@ bool wsBroadcastTXT(const char *buffer){
                 AsyncWebSocketClient* client = ws.client(it.first); // get the client using the client id
                 if(client != nullptr) {
                     client->text(buffer);
-                    //log_manager->verbose(PSTR(__func__),PSTR("%s\n"), buffer);
+                    if(config.logLev == 6){
+                      log_manager->verbose(PSTR(__func__),PSTR("Broadcasted to websocket: %s\n"), buffer);
+                    }
                 }
             }
         }
@@ -2566,7 +2573,9 @@ bool wsSendTXT(uint32_t id, const char *buffer){
       {
         #ifdef USE_ASYNC_WEB
         ws.text(id, buffer);
-        //log_manager->verbose(PSTR(__func__),PSTR("%s\n"), buffer);
+        if(config.logLev == 6){
+          log_manager->verbose(PSTR(__func__),PSTR("Sent to websocket client %d: %s\n"), id, buffer);
+        }
         res = true;
         #endif
         #ifndef USE_ASYNC_WEB

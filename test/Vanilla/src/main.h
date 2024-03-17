@@ -79,8 +79,8 @@ using namespace libudawa;
 const char* settingsPath = PSTR("/settings.json");
 struct Settings
 {
-    uint16_t itD = 60;
-    uint16_t itDc = 1;
+    uint16_t itDt = 60;
+    uint16_t itDa = 1;
 
     uint8_t s1tx = 33; //V3.1 33, V3 32
     uint8_t s1rx = 32; //V3.1 32, V3 4
