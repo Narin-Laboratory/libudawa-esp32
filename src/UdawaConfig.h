@@ -2,8 +2,6 @@
 #define UDAWACONFIG_H
 
 #include <ArduinoJson.h>
-#include "params.h"
-#include "secret.h"
 
 struct GenericConfig{
   char hwid[16];
