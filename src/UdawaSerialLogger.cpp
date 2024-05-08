@@ -1,26 +1,25 @@
-/**
- * UDAWA - Universal Digital Agriculture Watering Assistant
- * Function helper library for ESP32 based UDAWA multi-device firmware development
- * Licensed under aGPLv3
- * Researched and developed by PRITA Research Group & Narin Laboratory
- * prita.undiknas.ac.id | narin.co.id
-**/
-
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "esp_log.h"
-#include "serialLogger.h"
+#include "UdawaSerialLogger.h"
+#include <Arduino.h>
 
-#define RED_COLOR_CODE 31
-#define GREEN_COLOR_CODE 32
-#define YELLOW_COLOR_CODE 33
-#define MAGENTA_COLOR_CODE 35
-#define CYAN_COLOR_CODE 34
-#define WHITE_COLOR_CODE 37
+UdawaSerialLogger *UdawaSerialLogger::_serialLogger = nullptr;
 
-static SemaphoreHandle_t xSemaphoreSerialLogger = NULL;
+UdawaSerialLogger::UdawaSerialLogger(u_int32_t baudRate) : _baudRate(baudRate) {
+    Serial.begin(_baudRate);
+}
 
-char get_error_char(const LogLevel level)
+UdawaSerialLogger *UdawaSerialLogger::getInstance(const uint32_t baudRate)
+{
+    if(_serialLogger == nullptr)
+    {
+        _serialLogger = new UdawaSerialLogger(baudRate);
+    }
+    return _serialLogger;
+}
+
+char UdawaSerialLogger::_getErrorChar(const LogLevel level)
 {
     switch(level)
     {
@@ -39,7 +38,7 @@ char get_error_char(const LogLevel level)
     }
 }
 
-int get_console_color_code(const LogLevel level)
+int UdawaSerialLogger::_getConsoleColorCode(const LogLevel level)
 {
     switch(level)
     {
@@ -58,7 +57,7 @@ int get_console_color_code(const LogLevel level)
     }
 }
 
-int map_log_level(const LogLevel level)
+int UdawaSerialLogger::_mapLogLevel(const LogLevel level)
 {
     switch(level)
     {
@@ -79,21 +78,21 @@ int map_log_level(const LogLevel level)
     }
 }
 
-void ESP32SerialLogger::log_message(const char *tag, LogLevel level, const char *fmt, va_list args)
+void UdawaSerialLogger::write(const char *tag, LogLevel level, const char *fmt, va_list args)
 {
-    if(xSemaphoreSerialLogger == NULL)
+    if(xSemaphoreUdawaSerialLogger == NULL)
     {
-        xSemaphoreSerialLogger = xSemaphoreCreateMutex();
+        xSemaphoreUdawaSerialLogger = xSemaphoreCreateMutex();
     }
 
-    if(xSemaphoreSerialLogger != NULL && xSemaphoreTake(xSemaphoreSerialLogger, (TickType_t) 20))
+    if(xSemaphoreUdawaSerialLogger != NULL && xSemaphoreTake(xSemaphoreUdawaSerialLogger, (TickType_t) 20))
     {
-        //esp_log_level_t esp_log_level = (esp_log_level_t)map_log_level(level);
+        //esp_log_level_t esp_log_level = (esp_log_level_t)_mapLogLevel(level);
         esp_log_level_t esp_log_level = ESP_LOG_NONE;
-        esp_log_write(esp_log_level, tag, "\033[0;%dm%c (%d) %s: ", get_console_color_code(level), get_error_char(level), esp_log_timestamp(), tag);
+        esp_log_write(esp_log_level, tag, "\033[0;%dm%c (%d) %s: ", _getConsoleColorCode(level), _getErrorChar(level), esp_log_timestamp(), tag);
         esp_log_writev(esp_log_level, tag, fmt, args);
         esp_log_write(esp_log_level, tag, "\033[0m");
-        xSemaphoreGive(xSemaphoreSerialLogger);
+        xSemaphoreGive(xSemaphoreUdawaSerialLogger);
     }
     else{
         printf("Could not get semaphore\n");
