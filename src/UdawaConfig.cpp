@@ -1,37 +1,51 @@
-#include "UdawaConfig.h"
+#ifndef UDAWACONFIG_H
+#define UDAWACONFIG_H
 
+#include <ArduinoJson.h>
 
-UdawaGenericConfig::UdawaGenericConfig(){
-    char* deviceId = new char[16];
-    uint64_t chipid = ESP.getEfuseMac();
-    sprintf(deviceId, "%04X%08X",(uint16_t)(chipid>>32), (uint32_t)chipid);
-    
-    strlcpy(_genericConfig.hwid, deviceId, sizeof(_genericConfig.hwid));
-    strlcpy(_genericConfig.model, model, sizeof(_genericConfig.model));
-    strlcpy(_genericConfig.group, "UDAWA", sizeof(_genericConfig.group));
-    String name = String(model) + String(deviceId);
-    strlcpy(_genericConfig.name, name.c_str(), sizeof(_genericConfig.name));
-    strlcpy(_genericConfig.tbAddr, tbAddr, sizeof(_genericConfig.tbAddr));
-    strlcpy(_genericConfig.wssid, wssid, sizeof(_genericConfig.wssid));
-    strlcpy(_genericConfig.wpass, wpass, sizeof(_genericConfig.wpass));
-    strlcpy(_genericConfig.dssid, dssid, sizeof(_genericConfig.dssid));
-    strlcpy(_genericConfig.dpass, dpass, sizeof(_genericConfig.dpass));
-    strlcpy(_genericConfig.upass, upass, sizeof(_genericConfig.upass));
-    strlcpy(_genericConfig.accTkn, accTkn, sizeof(_genericConfig.accTkn));
-    _genericConfig.provSent = false;
-    _genericConfig.tbPort = tbPort;
-    strlcpy(_genericConfig.provDK, provDK, sizeof(_genericConfig.provDK));
-    strlcpy(_genericConfig.provDS, provDS, sizeof(_genericConfig.provDS));
-    _genericConfig.logLev = 5;
-    _genericConfig.gmtOff = 28800;
+struct GenericConfig{
+  char hwid[16];
+  char name[24];
+  char model[16];
+  char group[16];
+  uint8_t logLev;
 
-    _genericConfig.fIoT = 1;
-    _genericConfig.fWOTA = 1;
-    _genericConfig.fWeb = 1;
+  char tbAddr[48];
+  uint16_t tbPort;
+  char wssid[48];
+  char wpass[48];
+  char dssid[24];
+  char dpass[24];
+  char upass[64];
+  char accTkn[24];
+  bool provSent;
 
-    strlcpy(_genericConfig.hname, _genericConfig.name, sizeof(_genericConfig.hname));
-    strlcpy(_genericConfig.htU, "UDAWA", sizeof(_genericConfig.htU));
-    strlcpy(_genericConfig.htP, "defaultkey", sizeof(_genericConfig.htP));
-    strlcpy(_genericConfig.logIP, "255.255.255.255", sizeof(_genericConfig.logIP));
-    _genericConfig.logPrt = 29514;
-}
+  char provDK[24];
+  char provDS[24];
+
+  int gmtOff;
+
+  bool fIoT;
+  bool fWOTA;
+  bool fWeb;
+  char hname[40];
+  char htU[24];
+  char htP[24];
+
+  char logIP[16] = "255.255.255.255";
+  uint16_t logPort = 29514;
+};
+
+class UdawaGenericConfig{
+    public:
+        UdawaGenericConfig(const char* model, const char* group, const char* tbAddr, const char* wssid,
+    const char* wpass, const char* dssid, const char* dpass, const char* upass, const char* accTkn, bool provSent, int tbPort, 
+    const char* provDK, const char* provDS, uint8_t logLev, int gmtOff, bool fIoT, bool fWOTA, bool fWeb, const char* htU, 
+    const char* htP, const char* logIP, uint16_t logPort);
+        void write(JsonDocument &doc, const char* configPath);
+        void read(JsonDocument &doc, const char* configPath);
+    private:
+        GenericConfig _genericConfig;
+};
+
+#endif

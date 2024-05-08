@@ -33,12 +33,15 @@ struct GenericConfig{
   char htP[24];
 
   char logIP[16] = "255.255.255.255";
-  uint16_t logPrt = 29514;
+  uint16_t logPort = 29514;
 };
 
 class UdawaGenericConfig{
     public:
-        UdawaGenericConfig();
+        UdawaGenericConfig(const char* model, const char* group, const char* tbAddr, const char* wssid,
+    const char* wpass, const char* dssid, const char* dpass, const char* upass, const char* accTkn, bool provSent, int tbPort, 
+    const char* provDK, const char* provDS, uint8_t logLev, int gmtOff, bool fIoT, bool fWOTA, bool fWeb, const char* htU, 
+    const char* htP, const char* logIP, uint16_t logPort);
         void write(JsonDocument &doc, const char* configPath);
         void read(JsonDocument &doc, const char* configPath);
     private:
