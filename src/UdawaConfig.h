@@ -2,6 +2,11 @@
 #define UDAWACONFIG_H
 
 #include <ArduinoJson.h>
+#include <UdawaLogger.h>
+#include <FS.h>
+#include <LittleFS.h>
+#include "../../../../../include/secret.h"
+#include "../../../../../include/params.h"
 
 struct GenericConfig{
   char hwid[16];
@@ -36,16 +41,19 @@ struct GenericConfig{
   uint16_t logPort = 29514;
 };
 
-class UdawaGenericConfig{
+extern SemaphoreHandle_t xSemaphoreConfig; 
+
+class UdawaConfig{
     public:
-        UdawaGenericConfig(const char* model, const char* group, const char* tbAddr, const char* wssid,
-    const char* wpass, const char* dssid, const char* dpass, const char* upass, const char* accTkn, bool provSent, int tbPort, 
-    const char* provDK, const char* provDS, uint8_t logLev, int gmtOff, bool fIoT, bool fWOTA, bool fWeb, const char* htU, 
-    const char* htP, const char* logIP, uint16_t logPort);
-        void write(JsonDocument &doc, const char* configPath);
-        void read(JsonDocument &doc, const char* configPath);
+        UdawaConfig(const char* path);
+        bool begin();
+        bool load();        
+        bool save();
+        GenericConfig state;
     private:
-        GenericConfig _genericConfig;
+        UdawaLogger *_logger = UdawaLogger::getInstance(LogLevel::VERBOSE);
+        const char* _path;
+        
 };
 
 #endif
