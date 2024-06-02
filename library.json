@@ -1,4 +1,19 @@
 {
-  "name": "libudawa",
-  "version": "0.0.0+20211029194501"
+  "name": "libudawa-esp32",
+  "keywords": "mqtt, iot, arduino, embedded, esp32, arduino-library, mcu, thingsboard, m5stack-library,",
+  "description": "UDAWA Smart System library to speed up development of UDAWA devices.",
+  "repository": {
+      "type": "git",
+      "url": "https://github.com/Narin-Laboratory/libudawa-esp32.git#gigarefactor"
+  },
+  "dependencies": {
+      "bblanchon/ArduinoJson": "^7.0.4",
+      "arkhipenko/TaskScheduler": "^3.7.0",
+      "me-no-dev/ESP Async WebServer": "^1.2.3",
+      "rweather/arduinolibs": "https://github.com/rweather/arduinolibs.git#master"
+  },
+  "version": "0.1.0",
+  "examples": "examples/*/main.cpp",
+  "frameworks": "*",
+  "license": "aGPLv3"
 }

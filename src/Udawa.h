@@ -10,8 +10,16 @@
 #ifdef USE_WIFI_OTA
 #include <ArduinoOTA.h>
 #endif
+#ifdef USE_LOCAL_WEB_INTERFACE
+#include <Crypto.h>
+#include <SHA256.h>
+#include "mbedtls/md.h"
+#include <map>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#endif
 
-struct AppState{
+struct CrashState{
     unsigned long rtcp = 0;
     int crashCnt = 0;
     bool fSafeMode = false;
@@ -26,7 +34,11 @@ class Udawa {
         UdawaSerialLogger *serialLogger = UdawaSerialLogger::getInstance(SERIAL_BAUD_RATE);
         UdawaWiFiHelper wiFiHelper;
         UdawaConfig config;
-        AppState state;
+        CrashState state;
+        #ifdef USE_LOCAL_WEB_INTERFACE
+        AsyncWebServer http;
+        AsyncWebSocket ws;
+        #endif
     private:
         void _onWiFiConnected();
         void _onWiFiDisconnected();

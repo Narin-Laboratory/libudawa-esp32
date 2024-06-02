@@ -1,9 +1,16 @@
 #include "Udawa.h"
 
+#ifdef USE_LOCAL_WEB_INTERFACE
+Udawa::Udawa() : config(PSTR("/config.json")), http(80), ws(PSTR("/ws")) {
+    logger->addLogger(serialLogger);
+    logger->setLogLevel(LogLevel::VERBOSE);
+}
+#else
 Udawa::Udawa() : config("/config.json") {
     logger->addLogger(serialLogger);
     logger->setLogLevel(LogLevel::VERBOSE);
 }
+#endif
 
 void Udawa::begin(){
     logger->debug(PSTR(__func__), PSTR("Initializing LittleFS: %d\n"), config.begin());
