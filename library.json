@@ -9,7 +9,7 @@
   "dependencies": {
       "bblanchon/ArduinoJson": "^7.0.4",
       "arkhipenko/TaskScheduler": "^3.7.0",
-      "me-no-dev/ESP Async WebServer": "^1.2.3",
+      "me-no-dev/ESPAsyncWebServer": "https://github.com/me-no-dev/ESPAsyncWebServer.git#master",
       "rweather/arduinolibs": "https://github.com/rweather/arduinolibs.git#master"
   },
   "version": "0.1.0",

@@ -3,6 +3,7 @@
 #include "UdawaLogger.h"
 #include "UdawaWiFiHelper.h"
 #include <functional> 
+#include <vector>
 #include "UdawaConfig.h"
 #include "../../../../../include/secret.h"
 #include "../../../../../include/params.h"
@@ -13,7 +14,8 @@
 #ifdef USE_LOCAL_WEB_INTERFACE
 #include <Crypto.h>
 #include <SHA256.h>
-#include "mbedtls/md.h"
+#include <mbedtls/sha256.h>
+#include <base64.h>
 #include <map>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
@@ -30,14 +32,19 @@ class Udawa {
         Udawa();
         void run();
         void begin();
+        typedef std::function<void(AsyncWebSocket * server, AsyncWebSocketClient * client, 
+                          AwsEventType type, void * arg, uint8_t *data, size_t len)> 
+                          WsOnEventCallback;
         UdawaLogger *logger = UdawaLogger::getInstance(LogLevel::VERBOSE);
         UdawaSerialLogger *serialLogger = UdawaSerialLogger::getInstance(SERIAL_BAUD_RATE);
         UdawaWiFiHelper wiFiHelper;
         UdawaConfig config;
         CrashState state;
+        String hmacSha256(const String& message, const String& salt);
         #ifdef USE_LOCAL_WEB_INTERFACE
         AsyncWebServer http;
         AsyncWebSocket ws;
+        void addOnWsEvent(WsOnEventCallback callback);
         #endif
     private:
         void _onWiFiConnected();
@@ -48,6 +55,10 @@ class Udawa {
         void _onWiFiOTAEnd();
         void _onWiFiOTAProgress(unsigned int progress, unsigned int total);
         void _onWiFiOTAError(ota_error_t error);
+        void _onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len);
+        std::vector<WsOnEventCallback> _onWSEventCallbacks;
+        std::map<uint32_t, bool> _clientAuthenticationStatus;
+        std::map<IPAddress, unsigned long> _clientAuthAttemptTimestamps; 
         #endif
 };
 
