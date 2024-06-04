@@ -5,10 +5,12 @@
 #include <UdawaLogger.h>
 #include <FS.h>
 #include <LittleFS.h>
-#include "../../../../../include/secret.h"
-#include "../../../../../include/params.h"
+#include "secret.h"
+#include "params.h"
+#include <functional> 
+#include <vector>
 
-struct GenericConfig{
+struct UdawaConfigStruct{
   char hwid[16];
   char name[24];
   char model[16];
@@ -49,11 +51,21 @@ class UdawaConfig{
         bool begin();
         bool load();        
         bool save();
-        GenericConfig state;
+        UdawaConfigStruct state;
     private:
         UdawaLogger *_logger = UdawaLogger::getInstance(LogLevel::VERBOSE);
-        const char* _path;
+        const char *_path;
         
+};
+
+class GenericConfig{
+  public:
+    GenericConfig(const char* path);
+    bool load(JsonDocument &data);
+    bool save(JsonDocument &data);
+  private:
+    UdawaLogger *_logger = UdawaLogger::getInstance(LogLevel::VERBOSE);
+    const char *_path;
 };
 
 #endif

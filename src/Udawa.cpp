@@ -1,9 +1,11 @@
 #include "Udawa.h"
 
 #ifdef USE_LOCAL_WEB_INTERFACE
-Udawa::Udawa() : config(PSTR("/config.json")), http(80), ws(PSTR("/ws")) {
+Udawa::Udawa() : config(PSTR("/config.json")), http(80), ws(PSTR("/ws")), _crashStateConfig(PSTR("/crash.json"))  {
     logger->addLogger(serialLogger);
     logger->setLogLevel(LogLevel::VERBOSE);
+    _crashStateCheckTimer = millis();
+    _crashStateCheckedFlag = false;
 }
 #else
 Udawa::Udawa() : config("/config.json") {
@@ -15,6 +17,8 @@ Udawa::Udawa() : config("/config.json") {
 void Udawa::begin(){
     logger->debug(PSTR(__func__), PSTR("Initializing LittleFS: %d\n"), config.begin());
     config.load();
+    
+    logger->setLogLevel((LogLevel)config.state.logLev);
 
     wiFiHelper.begin(config.state.wssid, config.state.wpass, config.state.dssid, config.state.dpass, config.state.model);
     wiFiHelper.addOnConnectedCallback(std::bind(&Udawa::_onWiFiConnected, this));
@@ -22,21 +26,27 @@ void Udawa::begin(){
     wiFiHelper.addOnDisconnectedCallback(std::bind(&Udawa::_onWiFiDisconnected, this));
 
     logger->info(PSTR(__func__), PSTR("Firmware version %s compiled on %s.\n"), CURRENT_FIRMWARE_VERSION, COMPILED);
-
-
-    state.rtcp = millis();
-    if(state.rtcp < 100){
-        state.crashCnt++;
-        if(state.crashCnt >= 60){
-            state.fSafeMode = true;
+    
+    _crashStateTruthKeeper(1);
+    if(crashState.rtcp < 30000){
+        crashState.crashCnt++;
+        if(crashState.crashCnt >= 10){
+            crashState.fSafeMode = true;
             logger->warn(PSTR(__func__), PSTR("** SAFEMODE ACTIVATED **\n"));
         }
     }
-    logger->debug(PSTR(__func__), PSTR("Runtime Counter: %d, Crash Counter: %d, Safemode Status: %s\n"), state.rtcp, state.crashCnt, state.fSafeMode ? PSTR("ENABLED") : PSTR("DISABLED"));
-    
+    logger->debug(PSTR(__func__), PSTR("Runtime Counter: %d, Crash Counter: %d, Safemode Status: %s\n"), crashState.rtcp, crashState.crashCnt, crashState.fSafeMode ? PSTR("ENABLED") : PSTR("DISABLED"));
+
+
+
+
+    crashState.rtcp = 0;
+    _crashStateTruthKeeper(2);
 }
 
 void Udawa::run(){
+    unsigned long now = millis();
+
     wiFiHelper.run();
 
     #ifdef USE_WIFI_OTA
@@ -45,8 +55,17 @@ void Udawa::run(){
 
     #ifdef USE_LOCAL_WEB_INTERFACE
     ws.cleanupClients();
-    
     #endif
+
+    if( !_crashStateCheckedFlag && (now - _crashStateCheckTimer) > 30000 ){
+      crashState.fSafeMode = false;
+      crashState.crashCnt = 0;
+      logger->info(PSTR(__func__), PSTR("fSafeMode & Crash Counter cleared! Try to reboot normally.\n"));
+      _crashStateTruthKeeper(2);
+      _crashStateCheckedFlag = true;
+    }
+
+    
 }
 
 void Udawa::_onWiFiConnected(){
@@ -223,11 +242,11 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
     callback(server, client, type, arg, data, len); // Call each callback
   }
 }
-#endif
 
 void Udawa::addOnWsEvent(WsOnEventCallback callback) {
     _onWSEventCallbacks.push_back(callback);
 }
+#endif
 
 String Udawa::hmacSha256(const String& message, const String& salt) {
 // Convert input strings to UTF-8
@@ -241,4 +260,24 @@ String Udawa::hmacSha256(const String& message, const String& salt) {
   mbedtls_sha256_finish(&ctx, hash);
   mbedtls_sha256_free(&ctx);
   return base64::encode(hash, 32);
+}
+
+void Udawa::_crashStateTruthKeeper(uint8_t direction){
+  JsonDocument crashStateDoc;
+  crashState.rtcp = millis();
+
+  if(direction == 1 || direction == 3){
+    _crashStateConfig.load(crashStateDoc);
+    crashState.rtcp = crashStateDoc[PSTR("rtcp")];
+    crashState.crashCnt = crashStateDoc[PSTR("crashCnt")];
+    crashState.fSafeMode = crashStateDoc[PSTR("fSafeMode")];
+  } 
+
+   if(direction == 2 || direction == 3){
+    crashStateDoc[PSTR("rtcp")] = crashState.rtcp;
+    crashStateDoc[PSTR("crashCnt")] = crashState.crashCnt;
+    crashStateDoc[PSTR("fSafeMode")] = crashState.fSafeMode;
+    
+    _crashStateConfig.save(crashStateDoc);
+  }
 }

@@ -206,3 +206,72 @@ bool UdawaConfig::save(){
     return false;
 }
 
+GenericConfig::GenericConfig(const char* path) : _path(path) {
+
+}
+
+bool GenericConfig::load(JsonDocument &data){
+    if( xSemaphoreConfig != NULL ){
+        if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 5000 ) == pdTRUE ){
+            _logger->info(PSTR(__func__),PSTR("Loading %s.\n"), _path);
+            File file = LittleFS.open(_path, FILE_READ);
+            if(file.size() > 1)
+            {
+                _logger->info(PSTR(__func__),PSTR("%s size is normal: %d.\n"), _path, file.size());
+            }
+            else
+            {
+                _logger->warn(PSTR(__func__),PSTR("%s size is abnormal: %d!\n"), _path, file.size());
+            }
+
+            DeserializationError err = deserializeJson(data, file);
+
+            if(err == DeserializationError::Ok){
+                _logger->debug(PSTR(__func__), PSTR("%s is valid JSON.\n"), _path);                
+            }
+            
+            file.close();
+            xSemaphoreGive( xSemaphoreConfig );
+            return true;
+        }
+        else{
+            _logger->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+        }
+    }
+    return false;
+}
+
+bool GenericConfig::save(JsonDocument &data){
+    if( xSemaphoreConfig != NULL ){
+      if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 5000 ) == pdTRUE )
+      {
+        if(!LittleFS.remove(_path)){
+            Serial.println(_path);
+            _logger->warn(PSTR(__func__),PSTR("Failed to delete the old configFile: %s\n"), _path);
+        }
+        
+        File file = LittleFS.open(_path, FILE_WRITE);
+        
+        if (!file){
+            _logger->error(PSTR(__func__),PSTR("Failed to open the old configFile: %s\n"), _path);
+            file.close();
+            xSemaphoreGive( xSemaphoreConfig );
+            return false;
+        }
+
+        serializeJson(data, file);
+
+        _logger->debug(PSTR(__func__),PSTR("%s saved successfully.\n"), _path);
+
+        file.close();        
+        xSemaphoreGive( xSemaphoreConfig );
+        return true;
+      }
+      else
+      {
+        _logger->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+      }
+    }
+
+    return false;
+}

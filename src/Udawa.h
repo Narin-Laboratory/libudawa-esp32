@@ -5,8 +5,8 @@
 #include <functional> 
 #include <vector>
 #include "UdawaConfig.h"
-#include "../../../../../include/secret.h"
-#include "../../../../../include/params.h"
+#include "secret.h"
+#include "params.h"
 #include <ESPmDNS.h>
 #ifdef USE_WIFI_OTA
 #include <ArduinoOTA.h>
@@ -39,7 +39,7 @@ class Udawa {
         UdawaSerialLogger *serialLogger = UdawaSerialLogger::getInstance(SERIAL_BAUD_RATE);
         UdawaWiFiHelper wiFiHelper;
         UdawaConfig config;
-        CrashState state;
+        CrashState crashState;
         String hmacSha256(const String& message, const String& salt);
         #ifdef USE_LOCAL_WEB_INTERFACE
         AsyncWebServer http;
@@ -55,11 +55,17 @@ class Udawa {
         void _onWiFiOTAEnd();
         void _onWiFiOTAProgress(unsigned int progress, unsigned int total);
         void _onWiFiOTAError(ota_error_t error);
+        #endif
+        #ifdef USE_LOCAL_WEB_INTERFACE
         void _onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len);
         std::vector<WsOnEventCallback> _onWSEventCallbacks;
         std::map<uint32_t, bool> _clientAuthenticationStatus;
         std::map<IPAddress, unsigned long> _clientAuthAttemptTimestamps; 
         #endif
+        void _crashStateTruthKeeper(uint8_t direction);
+        GenericConfig _crashStateConfig;
+        unsigned long _crashStateCheckTimer;
+        bool _crashStateCheckedFlag;
 };
 
 #endif
