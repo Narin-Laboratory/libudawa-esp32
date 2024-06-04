@@ -9,7 +9,8 @@
   "dependencies": {
       "bblanchon/ArduinoJson": "^7.0.4",
       "me-no-dev/ESPAsyncWebServer": "https://github.com/me-no-dev/ESPAsyncWebServer.git#master",
-      "rweather/arduinolibs": "https://github.com/rweather/arduinolibs.git#master"
+      "rweather/arduinolibs": "https://github.com/rweather/arduinolibs.git#master",
+      "Narin-Laboratory/thingsboard-arduino-sdk":"https://github.com/Narin-Laboratory/thingsboard-arduino-sdk.git#master"
   },
   "version": "0.1.0",
   "examples": "examples/*/main.cpp",
