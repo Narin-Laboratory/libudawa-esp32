@@ -44,6 +44,14 @@ struct IoTState{
     BaseType_t xReturnedIoT;
     SemaphoreHandle_t xSemaphoreThingsboard = NULL;
 };
+class UdawaThingsboardLogger{
+    public:
+        static void log(const char *error){
+            UdawaLogger *_logger = UdawaLogger::getInstance(LogLevel::VERBOSE);
+            _logger->debug(PSTR(__func__), PSTR("%s\n"), error);
+        }
+        
+};
 #endif
 
 class Udawa {
