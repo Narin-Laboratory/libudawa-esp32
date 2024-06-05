@@ -34,7 +34,17 @@ struct CrashState{
     unsigned long rtcp = 0;
     int crashCnt = 0;
     bool fSafeMode = false;
+    unsigned long crashStateCheckTimer = millis();
+    bool crashStateCheckedFlag = false;
 };
+
+#ifdef USE_IOT
+struct IoTState{
+    TaskHandle_t xHandleIoT;
+    BaseType_t xReturnedIoT;
+    SemaphoreHandle_t xSemaphoreThingsboard = NULL;
+};
+#endif
 
 class Udawa {
     public:
@@ -73,22 +83,20 @@ class Udawa {
         #endif
         void _crashStateTruthKeeper(uint8_t direction);
         GenericConfig _crashStateConfig;
-        unsigned long _crashStateCheckTimer;
-        bool _crashStateCheckedFlag;
         #ifdef USE_IOT
             #ifdef USE_IOT_SECURE
                 WiFiClientSecure _tcpClient;
                 Arduino_MQTT_Client _mqttClient;
-                ThingsBoard _tb;
+                ThingsBoardSized<UdawaThingsboardLogger> _tb;
             #else
                 WiFiClient _tcpClient;
                 Arduino_MQTT_Client _mqttClient;
                 ThingsBoard _tb;
             #endif
-            TaskHandle_t _xHandleIoT;
-            BaseType_t _xReturnedIoT;
-            void _pvTaskCodeThingsboard(void *pvParameters);
+            IoTState _iotState;
             static void _pvTaskCodeThingsboardTaskWrapper(void* pvParameters);
+            void _pvTaskCodeThingsboard(void *pvParameters);
+            void _processThingsboardProvisionResponse(const Provision_Data &data);
         #endif
 };
 

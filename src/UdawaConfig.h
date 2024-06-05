@@ -24,15 +24,16 @@ struct UdawaConfigStruct{
   char dssid[24];
   char dpass[24];
   char upass[64];
+  #ifdef USE_IOT
+  bool fIoT;
   char accTkn[24];
   bool provSent;
-
   char provDK[24];
   char provDS[24];
+  #endif
 
   int gmtOff;
 
-  bool fIoT;
   bool fWOTA;
   bool fWeb;
   char hname[40];

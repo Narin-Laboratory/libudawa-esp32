@@ -5,8 +5,7 @@ Udawa::Udawa() : config(PSTR("/config.json")), http(80), ws(PSTR("/ws")), _crash
   _mqttClient(_tcpClient), _tb(_mqttClient, IOT_MAX_MESSAGE_SIZE)  {
     logger->addLogger(serialLogger);
     logger->setLogLevel(LogLevel::VERBOSE);
-    _crashStateCheckTimer = millis();
-    _crashStateCheckedFlag = false;
+    if(_iotState.xSemaphoreThingsboard == NULL){_iotState.xSemaphoreThingsboard = xSemaphoreCreateMutex();}
 }
 #else
 Udawa::Udawa() : config("/config.json") {
@@ -58,12 +57,12 @@ void Udawa::run(){
     ws.cleanupClients();
     #endif
 
-    if( !_crashStateCheckedFlag && (now - _crashStateCheckTimer) > 30000 ){
+    if( !crashState.crashStateCheckedFlag && (now - crashState.crashStateCheckTimer) > 30000 ){
       crashState.fSafeMode = false;
       crashState.crashCnt = 0;
       logger->info(PSTR(__func__), PSTR("fSafeMode & Crash Counter cleared! Try to reboot normally.\n"));
       _crashStateTruthKeeper(2);
-      _crashStateCheckedFlag = true;
+      crashState.crashStateCheckedFlag = true;
     }
 
     
@@ -115,9 +114,9 @@ void Udawa::_onWiFiGotIP(){
     #endif
 
     #ifdef USE_IOT
-    if(config.state.fIoT && _xHandleIoT == NULL && !crashState.fSafeMode){
-      _xReturnedIoT = xTaskCreatePinnedToCore(_pvTaskCodeThingsboardTaskWrapper, PSTR("Thingsboard"), IOT_STACKSIZE_TB, NULL, 1, &_xHandleIoT, 1);
-      if(_xReturnedIoT == pdPASS){
+    if(config.state.fIoT && _iotState.xHandleIoT == NULL && !crashState.fSafeMode){
+      _iotState.xReturnedIoT = xTaskCreatePinnedToCore(_pvTaskCodeThingsboardTaskWrapper, PSTR("Thingsboard"), IOT_STACKSIZE_TB, this, 1, &_iotState.xHandleIoT, 1);
+      if(_iotState.xReturnedIoT == pdPASS){
         logger->warn(PSTR(__func__), PSTR("Task Thingsboard has been created.\n"));
       }
     }
@@ -293,8 +292,122 @@ void Udawa::_crashStateTruthKeeper(uint8_t direction){
 }
 
 
+void Udawa::_processThingsboardProvisionResponse(const Provision_Data &data){
+  if( _iotState.xSemaphoreThingsboard != NULL && WiFi.isConnected() && !config.state.provSent && _tb.connected()){
+    if( xSemaphoreTake( _iotState.xSemaphoreThingsboard, ( TickType_t ) 1000 ) == pdTRUE )
+    {
+      constexpr char CREDENTIALS_TYPE[] PROGMEM = "credentialsType";
+      constexpr char CREDENTIALS_VALUE[] PROGMEM = "credentialsValue";
+      String _data;
+      serializeJson(data, _data);
+      logger->verbose(PSTR(__func__),PSTR("Received device provision response: %s\n"), _data.c_str());
+
+      if (strncmp(data["status"], "SUCCESS", strlen("SUCCESS")) != 0) {
+        logger->error(PSTR(__func__),PSTR("Provision response contains the error: (%s)\n"), data["errorMsg"].as<const char*>());
+      }
+      else
+      {
+        if (strncmp(data[CREDENTIALS_TYPE], PSTR("ACCESS_TOKEN"), strlen(PSTR("ACCESS_TOKEN"))) == 0) {
+          strlcpy(config.state.accTkn, data[CREDENTIALS_VALUE].as<std::string>().c_str(), sizeof(config.state.accTkn));
+          config.state.provSent = true;  
+          config.save();
+          logger->verbose(PSTR(__func__),PSTR("Access token provision response saved.\n"));
+        }
+        else if (strncmp(data[CREDENTIALS_TYPE], PSTR("MQTT_BASIC"), strlen(PSTR("MQTT_BASIC"))) == 0) {
+          /*auto credentials_value = data[CREDENTIALS_VALUE].as<JsonObjectConst>();
+          credentials.client_id = credentials_value[CLIENT_ID].as<std::string>();
+          credentials.username = credentials_value[CLIENT_USERNAME].as<std::string>();
+          credentials.password = credentials_value[CLIENT_PASSWORD].as<std::string>();*/
+        }
+        else {
+          logger->warn(PSTR(__func__),PSTR("Unexpected provision credentialsType: (%s)\n"), data[CREDENTIALS_TYPE].as<const char*>());
+
+        }
+      }
+
+      // Disconnect from the cloud client connected to the provision account, because it is no longer needed the device has been provisioned
+      // and we can reconnect to the cloud with the newly generated credentials.
+      if (_tb.connected()) {
+        _tb.disconnect();
+      }
+      xSemaphoreGive( _iotState.xSemaphoreThingsboard );
+    }
+    else
+    {
+      logger->error(PSTR(__func__), PSTR("No semaphore available.\n"));
+    }
+  }
+}
+
 void Udawa::_pvTaskCodeThingsboard(void *pvParameters){
+  #ifdef USE_IOT_SECURE
+  _tcpClient.setCACert(CA_CERT);
+  const char *ssl_protos[] = {PSTR("mqtt")};
+  _tcpClient.setAlpnProtocols(ssl_protos);
+  #endif
   while(true){
+    if(!config.state.provSent){
+      if (_tb.connect(config.state.tbAddr, "provision", config.state.tbPort)) {
+        const Provision_Callback provisionCallback(
+            Access_Token(),
+            [this](const Provision_Data &data) {
+                this->_processThingsboardProvisionResponse(data);
+            }
+            ,
+            config.state.provDK,
+            config.state.provDS,
+            config.state.name
+        );
+        if(_tb.Provision_Request(provisionCallback))
+        {
+          logger->info(PSTR(__func__),PSTR("Connected to provisioning server: %s:%d. Sending provisioning response: DK: %s, DS: %s, Name: %s \n"),  
+            config.state.tbAddr, config.state.tbPort, config.state.provDK, config.state.provDS, config.state.name);
+        }
+      }
+      else
+      {
+        logger->warn(PSTR(__func__),PSTR("Failed to connect to provisioning server: %s:%d\n"),  config.state.tbAddr, config.state.tbPort);
+      }
+      unsigned long timer = millis();
+      while(true){
+        _tb.loop();
+        if(config.state.provSent || (millis() - timer) > 10000){break;}
+        vTaskDelay((const TickType_t)10 / portTICK_PERIOD_MS);
+      }
+    }
+    else{
+      if(!_tb.connected() && WiFi.isConnected())
+      {
+        logger->warn(PSTR(__func__),PSTR("IoT disconnected!\n"));
+        //onTbDisconnectedCb();
+        logger->info(PSTR(__func__),PSTR("Connecting to broker %s:%d\n"), config.state.tbAddr, config.state.tbPort);
+        uint8_t tbDisco = 0;
+        while(!_tb.connect(config.state.tbAddr, config.state.accTkn, config.state.tbPort, config.state.name)){  
+          tbDisco++;
+          logger->warn(PSTR(__func__),PSTR("Failed to connect to IoT Broker %s (%d)\n"), config.state.tbAddr, tbDisco);
+          if(tbDisco >= 12){
+            config.state.provSent = false;
+            tbDisco = 0;
+            break;
+          }
+          vTaskDelay((const TickType_t)5000 / portTICK_PERIOD_MS);
+        }
+
+        if(_tb.connected()){
+          /*bool tbSharedUpdate_status = tb.Shared_Attributes_Subscribe(tbSharedAttrUpdateCb);
+          bool tbClientRPC_status = tb.RPC_Subscribe(clientRPCCallbacks.cbegin(), clientRPCCallbacks.cend());
+          tb.Firmware_Send_Info(CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION); 
+          tb.Firmware_Send_State(PSTR("updated"));
+          tb.Shared_Attributes_Request(fwCheckCb);
+
+          LAST_TB_CONNECTED = millis();
+
+          setAlarm(0, 0, 3, 50);*/
+          logger->info(PSTR(__func__),PSTR("IoT Connected!\n"));
+        }
+      }
+    }
+
     _tb.loop();
     vTaskDelay((const TickType_t) 10 / portTICK_PERIOD_MS);
   }

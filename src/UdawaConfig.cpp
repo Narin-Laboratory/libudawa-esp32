@@ -61,36 +61,32 @@ bool UdawaConfig::load(){
                 if(data[PSTR("name")] != nullptr){strlcpy(state.name, data[PSTR("name")].as<const char*>(), sizeof(state.name));}
                 if(data[PSTR("model")] != nullptr){strlcpy(state.model, data[PSTR("model")].as<const char*>(), sizeof(state.model));}
                 if(data[PSTR("group")] != nullptr){strlcpy(state.group, data[PSTR("group")].as<const char*>(), sizeof(state.group));}
-                if(data[PSTR("tbAddr")] != nullptr){strlcpy(state.tbAddr, data[PSTR("tbAddr")].as<const char*>(), sizeof(state.tbAddr));}
                 if(data[PSTR("wssid")] != nullptr){strlcpy(state.wssid, data[PSTR("wssid")].as<const char*>(), sizeof(state.wssid));}
                 if(data[PSTR("wpass")] != nullptr){strlcpy(state.wpass, data[PSTR("wpass")].as<const char*>(), sizeof(state.wpass));}
                 if(data[PSTR("dssid")] != nullptr){strlcpy(state.dssid, data[PSTR("dssid")].as<const char*>(), sizeof(state.dssid));}
                 if(data[PSTR("dpass")] != nullptr){strlcpy(state.dpass, data[PSTR("dpass")].as<const char*>(), sizeof(state.dpass));}
                 if(data[PSTR("upass")] != nullptr){strlcpy(state.upass, data[PSTR("upass")].as<const char*>(), sizeof(state.upass));}
-                if(data[PSTR("accTkn")] != nullptr){strlcpy(state.accTkn, data[PSTR("accTkn")].as<const char*>(), sizeof(state.accTkn));}
-                if(data[PSTR("provDK")] != nullptr){strlcpy(state.provDK, data[PSTR("provDK")].as<const char*>(), sizeof(state.provDK));}
-                if(data[PSTR("provDS")] != nullptr){strlcpy(state.provDS, data[PSTR("provDS")].as<const char*>(), sizeof(state.provDS));}
                 if(data[PSTR("hname")] != nullptr){strlcpy(state.hname, data[PSTR("hname")].as<const char*>(), sizeof(state.hname));}
                 if(data[PSTR("htU")] != nullptr){strlcpy(state.htU, data[PSTR("htU")].as<const char*>(), sizeof(state.htU));}
                 if(data[PSTR("htP")] != nullptr){strlcpy(state.htP, data[PSTR("htP")].as<const char*>(), sizeof(state.htP));}
                 if(data[PSTR("logIP")] != nullptr){strlcpy(state.logIP, data[PSTR("logIP")].as<const char*>(), sizeof(state.logIP));}
                 if(data[PSTR("htU")] != nullptr){strlcpy(state.htU, data[PSTR("htU")].as<const char*>(), sizeof(state.htU));}
                 if(data[PSTR("htP")] != nullptr){strlcpy(state.htP, data[PSTR("htP")].as<const char*>(), sizeof(state.htP));}
-
-                
-                
-                if(data[PSTR("logLev")] != nullptr){state.logLev = data[PSTR("logLev")].as<uint8_t>();}
-                if(data[PSTR("tbPort")] != nullptr){state.tbPort = data[PSTR("tbPort")].as<uint16_t>();}
-
-                if(data[PSTR("provSent")] != nullptr){state.provSent = data[PSTR("provSent")].as<bool>();}
-                if(data[PSTR("fIoT")] != nullptr){state.fIoT = data[PSTR("fIoT")].as<bool>();}
+                if(data[PSTR("logLev")] != nullptr){state.logLev = data[PSTR("logLev")].as<uint8_t>();}                
                 if(data[PSTR("fWOTA")] != nullptr){state.fWOTA = data[PSTR("fWOTA")].as<bool>();}
                 if(data[PSTR("fWeb")] != nullptr){state.fWeb = data[PSTR("fWeb")].as<bool>();}
-
                 if(data[PSTR("gmtOff")] != nullptr){state.gmtOff = data[PSTR("gmtOff")].as<int>();}
-
                 if(data[PSTR("logPort")] != nullptr){state.logPort = data[PSTR("logPort")].as<uint16_t>();}
                 
+                #ifdef USE_IOT
+                if(data[PSTR("accTkn")] != nullptr){strlcpy(state.accTkn, data[PSTR("accTkn")].as<const char*>(), sizeof(state.accTkn));}
+                if(data[PSTR("provDK")] != nullptr){strlcpy(state.provDK, data[PSTR("provDK")].as<const char*>(), sizeof(state.provDK));}
+                if(data[PSTR("provDS")] != nullptr){strlcpy(state.provDS, data[PSTR("provDS")].as<const char*>(), sizeof(state.provDS));}
+                if(data[PSTR("tbPort")] != nullptr){state.tbPort = data[PSTR("tbPort")].as<uint16_t>();}
+                if(data[PSTR("provSent")] != nullptr){state.provSent = data[PSTR("provSent")].as<bool>();}
+                if(data[PSTR("fIoT")] != nullptr){state.fIoT = data[PSTR("fIoT")].as<bool>();}
+                if(data[PSTR("tbAddr")] != nullptr){strlcpy(state.tbAddr, data[PSTR("tbAddr")].as<const char*>(), sizeof(state.tbAddr));}
+                #endif
             }
             else{
                 _logger->error(PSTR(__func__), PSTR("%s is not valid JSON!\n"), _path);
@@ -104,33 +100,30 @@ bool UdawaConfig::load(){
                 strlcpy(state.name, (String("UDAWA") + String(decodedString)).c_str(), sizeof(state.name));
                 strlcpy(state.model, model, sizeof(state.model));
                 strlcpy(state.group, group, sizeof(state.group));
-                strlcpy(state.tbAddr, tbAddr, sizeof(state.tbAddr));
                 strlcpy(state.wssid, wssid, sizeof(state.wssid));
                 strlcpy(state.wpass, wpass, sizeof(state.wpass));
                 strlcpy(state.dssid, dssid, sizeof(state.dssid));
                 strlcpy(state.dpass, dpass, sizeof(state.dpass));
                 strlcpy(state.upass, upass, sizeof(state.upass));
-                strlcpy(state.accTkn, accTkn, sizeof(state.accTkn));
-                strlcpy(state.provDK, provDK, sizeof(state.provDK));
-                strlcpy(state.provDS, provDS, sizeof(state.provDS));
                 strlcpy(state.hname, (String(model) + String(decodedString)).c_str(), sizeof(state.hname));
                 strlcpy(state.logIP, logIP, sizeof(state.logIP));
                 strlcpy(state.htU, htU, sizeof(state.htU));
                 strlcpy(state.htP, htP, sizeof(state.htP));
-
-                
-                
                 state.logLev = logLev;
-                state.tbPort = tbPort;
-
-                state.provSent = false;
-                state.fIoT = fIoT;
                 state.fWOTA = fWOTA;
                 state.fWeb = fWeb;
-
                 state.gmtOff = gmtOff;
-
                 state.logPort = logPort;
+
+                #ifdef USE_IOT
+                strlcpy(state.accTkn, accTkn, sizeof(state.accTkn));
+                strlcpy(state.provDK, provDK, sizeof(state.provDK));
+                strlcpy(state.provDS, provDS, sizeof(state.provDS));
+                state.provSent = false;
+                state.fIoT = fIoT;
+                strlcpy(state.tbAddr, tbAddr, sizeof(state.tbAddr));
+                state.tbPort = tbPort;
+                #endif
             }
         
             file.close();
@@ -168,19 +161,21 @@ bool UdawaConfig::save(){
         data[PSTR("model")] = state.model;
         data[PSTR("group")] = state.group;
         data[PSTR("logLev")] = state.logLev;
-        data[PSTR("tbAddr")] = state.tbAddr;
-        data[PSTR("tbPort")] = state.tbPort;
         data[PSTR("wssid")] = state.wssid;
         data[PSTR("wpass")] = state.wpass;
         data[PSTR("dssid")] = state.dssid;
         data[PSTR("dpass")] = state.dpass;
         data[PSTR("upass")] = state.upass;
+        #ifdef USE_IOT
         data[PSTR("accTkn")] = state.accTkn;
         data[PSTR("provSent")] = state.provSent;
         data[PSTR("provDK")] = state.provDK;
         data[PSTR("provDS")] = state.provDS;
-        data[PSTR("gmtOff")] = state.gmtOff;
         data[PSTR("fIoT")] = state.fIoT;
+        data[PSTR("tbAddr")] = state.tbAddr;
+        data[PSTR("tbPort")] = state.tbPort;
+        #endif
+        data[PSTR("gmtOff")] = state.gmtOff;
         data[PSTR("fWOTA")] = state.fWOTA;
         data[PSTR("fWeb")] = state.fWeb;
         data[PSTR("hname")] = state.hname;

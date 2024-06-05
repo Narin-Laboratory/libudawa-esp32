@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <stdarg.h>
 #include <list>
+#include <params.h>
 
 enum class LogLevel
 {
@@ -45,5 +46,16 @@ class UdawaLogger
         static UdawaLogger *_logManager;
         LogLevel _logLevel;
 };
+
+#ifdef USE_IOT
+class UdawaThingsboardLogger{
+    public:
+        static void log(const char *error){
+            UdawaLogger *_logger = UdawaLogger::getInstance(LogLevel::VERBOSE);
+            _logger->debug(PSTR(__func__), PSTR("%s\n"), error);
+        }
+        
+};
+#endif
 
 #endif
