@@ -20,6 +20,15 @@
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #endif
+#ifdef USE_IOT
+#include <Arduino_MQTT_Client.h>
+#include <ThingsBoard.h>
+#endif
+#ifdef USE_IOT_SECURE
+#include <WiFiClientSecure.h>
+#else
+#include <WiFiClient.h>
+#endif
 
 struct CrashState{
     unsigned long rtcp = 0;
@@ -42,30 +51,45 @@ class Udawa {
         CrashState crashState;
         String hmacSha256(const String& message, const String& salt);
         #ifdef USE_LOCAL_WEB_INTERFACE
-        AsyncWebServer http;
-        AsyncWebSocket ws;
-        void addOnWsEvent(WsOnEventCallback callback);
+            AsyncWebServer http;
+            AsyncWebSocket ws;
+            void addOnWsEvent(WsOnEventCallback callback);
         #endif
     private:
         void _onWiFiConnected();
         void _onWiFiDisconnected();
         void _onWiFiGotIP();
         #ifdef USE_WIFI_OTA
-        void _onWiFiOTAStart();
-        void _onWiFiOTAEnd();
-        void _onWiFiOTAProgress(unsigned int progress, unsigned int total);
-        void _onWiFiOTAError(ota_error_t error);
+            void _onWiFiOTAStart();
+            void _onWiFiOTAEnd();
+            void _onWiFiOTAProgress(unsigned int progress, unsigned int total);
+            void _onWiFiOTAError(ota_error_t error);
         #endif
         #ifdef USE_LOCAL_WEB_INTERFACE
-        void _onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len);
-        std::vector<WsOnEventCallback> _onWSEventCallbacks;
-        std::map<uint32_t, bool> _clientAuthenticationStatus;
-        std::map<IPAddress, unsigned long> _clientAuthAttemptTimestamps; 
+            void _onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len);
+            std::vector<WsOnEventCallback> _onWSEventCallbacks;
+            std::map<uint32_t, bool> _clientAuthenticationStatus;
+            std::map<IPAddress, unsigned long> _clientAuthAttemptTimestamps; 
         #endif
         void _crashStateTruthKeeper(uint8_t direction);
         GenericConfig _crashStateConfig;
         unsigned long _crashStateCheckTimer;
         bool _crashStateCheckedFlag;
+        #ifdef USE_IOT
+            #ifdef USE_IOT_SECURE
+                WiFiClientSecure _tcpClient;
+                Arduino_MQTT_Client _mqttClient;
+                ThingsBoard _tb;
+            #else
+                WiFiClient _tcpClient;
+                Arduino_MQTT_Client _mqttClient;
+                ThingsBoard _tb;
+            #endif
+            TaskHandle_t _xHandleIoT;
+            BaseType_t _xReturnedIoT;
+            void _pvTaskCodeThingsboard(void *pvParameters);
+            static void _pvTaskCodeThingsboardTaskWrapper(void* pvParameters);
+        #endif
 };
 
 #endif

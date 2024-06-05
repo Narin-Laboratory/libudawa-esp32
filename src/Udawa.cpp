@@ -1,7 +1,8 @@
 #include "Udawa.h"
 
 #ifdef USE_LOCAL_WEB_INTERFACE
-Udawa::Udawa() : config(PSTR("/config.json")), http(80), ws(PSTR("/ws")), _crashStateConfig(PSTR("/crash.json"))  {
+Udawa::Udawa() : config(PSTR("/config.json")), http(80), ws(PSTR("/ws")), _crashStateConfig(PSTR("/crash.json")),
+  _mqttClient(_tcpClient), _tb(_mqttClient, IOT_MAX_MESSAGE_SIZE)  {
     logger->addLogger(serialLogger);
     logger->setLogLevel(LogLevel::VERBOSE);
     _crashStateCheckTimer = millis();
@@ -111,6 +112,15 @@ void Udawa::_onWiFiGotIP(){
 
     http.addHandler(&ws);
     http.begin();
+    #endif
+
+    #ifdef USE_IOT
+    if(config.state.fIoT && _xHandleIoT == NULL && !crashState.fSafeMode){
+      _xReturnedIoT = xTaskCreatePinnedToCore(_pvTaskCodeThingsboardTaskWrapper, PSTR("Thingsboard"), IOT_STACKSIZE_TB, NULL, 1, &_xHandleIoT, 1);
+      if(_xReturnedIoT == pdPASS){
+        logger->warn(PSTR(__func__), PSTR("Task Thingsboard has been created.\n"));
+      }
+    }
     #endif
 }
 
@@ -280,4 +290,17 @@ void Udawa::_crashStateTruthKeeper(uint8_t direction){
     
     _crashStateConfig.save(crashStateDoc);
   }
+}
+
+
+void Udawa::_pvTaskCodeThingsboard(void *pvParameters){
+  while(true){
+    _tb.loop();
+    vTaskDelay((const TickType_t) 10 / portTICK_PERIOD_MS);
+  }
+}
+
+void Udawa::_pvTaskCodeThingsboardTaskWrapper(void* pvParameters) {  // Define as static
+    Udawa* udawaInstance = static_cast<Udawa*>(pvParameters);
+    udawaInstance->_pvTaskCodeThingsboard(pvParameters); 
 }
