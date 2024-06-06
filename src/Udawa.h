@@ -62,6 +62,9 @@ class Udawa {
         typedef std::function<void(AsyncWebSocket * server, AsyncWebSocketClient * client, 
                           AwsEventType type, void * arg, uint8_t *data, size_t len)> 
                           WsOnEventCallback;
+        typedef std::function<void()> ThingsboardOnConnectedCallback;
+        typedef std::function<void()> ThingsboardOnDisconnectedCallback;
+        typedef std::function<void(const Shared_Attribute_Data &data)> ThingsboardOnSharedAttributesReceivedCallback;
         UdawaLogger *logger = UdawaLogger::getInstance(LogLevel::VERBOSE);
         UdawaSerialLogger *serialLogger = UdawaSerialLogger::getInstance(SERIAL_BAUD_RATE);
         UdawaWiFiHelper wiFiHelper;
@@ -72,6 +75,11 @@ class Udawa {
             AsyncWebServer http;
             AsyncWebSocket ws;
             void addOnWsEvent(WsOnEventCallback callback);
+        #endif
+        #ifdef USE_IOT
+            void addOnThingsboardConnected(ThingsboardOnConnectedCallback callback);
+            void addOnThingsboardDisonnected(ThingsboardOnConnectedCallback callback);
+            void addOnThingsboardSharedAttributesReceived(ThingsboardOnSharedAttributesReceivedCallback callback);
         #endif
     private:
         void _onWiFiConnected();
@@ -105,6 +113,21 @@ class Udawa {
             static void _pvTaskCodeThingsboardTaskWrapper(void* pvParameters);
             void _pvTaskCodeThingsboard(void *pvParameters);
             void _processThingsboardProvisionResponse(const Provision_Data &data);
+            std::vector<ThingsboardOnConnectedCallback> _onThingsboardConnectedCallbacks;
+            std::vector<ThingsboardOnDisconnectedCallback> _onThingsboardDisconnectedCallbacks;
+            std::vector<ThingsboardOnSharedAttributesReceivedCallback> _onThingsboardSharedAttributesReceivedCallbacks;
+            static void _processThingsboardSharedAttributesUpdateWrapper(void* context, const Shared_Attribute_Data &data) {
+                // Retrieve the Udawa instance
+                Udawa *instance = static_cast<Udawa*>(context);
+
+                // Call the non-static method using the lambda
+                instance->_processThingsboardSharedAttributesUpdate(data); 
+            }
+
+            // Declaration of the callback object (within the class)
+            Shared_Attribute_Callback _thingsboardSharedAttributesUpdateCallback;
+
+            void _processThingsboardSharedAttributesUpdate(const Shared_Attribute_Data &data);
         #endif
 };
 

@@ -5,7 +5,13 @@ Udawa::Udawa() : config(PSTR("/config.json")), http(80), ws(PSTR("/ws")), _crash
   _mqttClient(_tcpClient), _tb(_mqttClient, IOT_MAX_MESSAGE_SIZE)  {
     logger->addLogger(serialLogger);
     logger->setLogLevel(LogLevel::VERBOSE);
+    #ifdef USE_IOT
     if(_iotState.xSemaphoreThingsboard == NULL){_iotState.xSemaphoreThingsboard = xSemaphoreCreateMutex();}
+    // Initialize Shared_Attribute_Callback with the correct arguments
+    _thingsboardSharedAttributesUpdateCallback = Shared_Attribute_Callback([this](const Shared_Attribute_Data &data) {
+        this->_processThingsboardSharedAttributesUpdateWrapper(this, data); 
+    });
+    #endif
 }
 #else
 Udawa::Udawa() : config("/config.json") {
@@ -378,6 +384,9 @@ void Udawa::_pvTaskCodeThingsboard(void *pvParameters){
     else{
       if(!_tb.connected() && WiFi.isConnected())
       {
+        for (auto callback : _onThingsboardDisconnectedCallbacks) { 
+          callback(); // Call each callback
+        }
         logger->warn(PSTR(__func__),PSTR("IoT disconnected!\n"));
         //onTbDisconnectedCb();
         logger->info(PSTR(__func__),PSTR("Connecting to broker %s:%d\n"), config.state.tbAddr, config.state.tbPort);
@@ -394,15 +403,14 @@ void Udawa::_pvTaskCodeThingsboard(void *pvParameters){
         }
 
         if(_tb.connected()){
-          /*bool tbSharedUpdate_status = tb.Shared_Attributes_Subscribe(tbSharedAttrUpdateCb);
-          bool tbClientRPC_status = tb.RPC_Subscribe(clientRPCCallbacks.cbegin(), clientRPCCallbacks.cend());
+          bool tbSharedUpdate_status = _tb.Shared_Attributes_Subscribe(_thingsboardSharedAttributesUpdateCallback);
+          /*bool tbClientRPC_status = tb.RPC_Subscribe(clientRPCCallbacks.cbegin(), clientRPCCallbacks.cend());
           tb.Firmware_Send_Info(CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION); 
           tb.Firmware_Send_State(PSTR("updated"));
-          tb.Shared_Attributes_Request(fwCheckCb);
-
-          LAST_TB_CONNECTED = millis();
-
-          setAlarm(0, 0, 3, 50);*/
+          tb.Shared_Attributes_Request(fwCheckCb);*/
+          for (auto callback : _onThingsboardConnectedCallbacks) { 
+            callback(); // Call each callback
+          }
           logger->info(PSTR(__func__),PSTR("IoT Connected!\n"));
         }
       }
@@ -414,6 +422,12 @@ void Udawa::_pvTaskCodeThingsboard(void *pvParameters){
 }
 
 void Udawa::_pvTaskCodeThingsboardTaskWrapper(void* pvParameters) {  // Define as static
-    Udawa* udawaInstance = static_cast<Udawa*>(pvParameters);
-    udawaInstance->_pvTaskCodeThingsboard(pvParameters); 
+  Udawa* udawaInstance = static_cast<Udawa*>(pvParameters);
+  udawaInstance->_pvTaskCodeThingsboard(pvParameters); 
+}
+
+void Udawa::_processThingsboardSharedAttributesUpdate(const Shared_Attribute_Data &data){
+  for (auto callback : _onThingsboardSharedAttributesReceivedCallbacks) { 
+    callback(data); // Call each callback
+  }
 }
