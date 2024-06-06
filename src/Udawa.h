@@ -148,6 +148,9 @@ class Udawa {
             
             RPC_Response _processThingsboardRPCReboot(const RPC_Data &data);
             std::function<RPC_Response(const RPC_Data&)> _thingsboardRPCRebootHandler;
+
+            RPC_Response _processThingsboardRPCConfigSave(const RPC_Data &data);
+            std::function<RPC_Response(const RPC_Data&)> _thingsboardRPCConfigSaveHandler;
         #endif
 };
 

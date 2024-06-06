@@ -21,6 +21,9 @@ Udawa::Udawa() : config(PSTR("/config.json")), _crashStateConfig(PSTR("/crash.js
     _thingsboardRPCRebootHandler = [this](const RPC_Data& data) {
        return this->_processThingsboardRPCReboot(data);
     };
+    _thingsboardRPCConfigSaveHandler = [this](const RPC_Data& data) {
+       return this->_processThingsboardRPCConfigSave(data);
+    };
     #endif
 }
 
@@ -446,14 +449,24 @@ void Udawa::_pvTaskCodeThingsboard(void *pvParameters){
             _iotState.fSharedAttributesSubscribed = true;
           }
 
-          RPC_Callback rebootCallback("reboot", _thingsboardRPCRebootHandler);
           if(!_iotState.fRPCSubscribed){
+            
+            RPC_Callback rebootCallback("reboot", _thingsboardRPCRebootHandler);
             bool statusReboot = _tb.RPC_Subscribe(rebootCallback); // Pass the callback directly
             if(statusReboot){
               logger->verbose(PSTR(__func__), PSTR("reboot RPC subscribed successfuly.\n"));
             }
             else{
               logger->warn(PSTR(__func__), PSTR("Failed to subscribe reboot RPC.\n"));
+            }
+
+            RPC_Callback configSaveCallback("configSave", _thingsboardRPCConfigSaveHandler);
+            bool statusConfigSave = _tb.RPC_Subscribe(configSaveCallback); // Pass the callback directly
+            if(statusConfigSave){
+              logger->verbose(PSTR(__func__), PSTR("configSave RPC subscribed successfuly.\n"));
+            }
+            else{
+              logger->warn(PSTR(__func__), PSTR("Failed to subscribe configSave RPC.\n"));
             }
 
             _iotState.fRPCSubscribed = true;
@@ -509,6 +522,11 @@ RPC_Response Udawa::_processThingsboardRPCReboot(const RPC_Data &data) {
     reboot(0);
   }
   return RPC_Response(PSTR("reboot"), 1);
+}
+
+RPC_Response Udawa::_processThingsboardRPCConfigSave(const RPC_Data &data) {
+  config.save();
+  return RPC_Response(PSTR("configSave"), 1);
 }
 #endif
 
