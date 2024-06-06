@@ -1,8 +1,15 @@
 #include "Udawa.h"
 
-#ifdef USE_LOCAL_WEB_INTERFACE
-Udawa::Udawa() : config(PSTR("/config.json")), http(80), ws(PSTR("/ws")), _crashStateConfig(PSTR("/crash.json")),
-  _mqttClient(_tcpClient), _tb(_mqttClient, IOT_MAX_MESSAGE_SIZE)  {
+Udawa::Udawa() : config(PSTR("/config.json")), _crashStateConfig(PSTR("/crash.json"))
+  #ifdef USE_LOCAL_WEB_INTERFACE
+  ,http(80), 
+  ws(PSTR("/ws"))
+  #endif
+  #ifdef USE_IOT
+  ,_mqttClient(_tcpClient), 
+  _tb(_mqttClient, IOT_MAX_MESSAGE_SIZE)
+  #endif
+  {
     logger->addLogger(serialLogger);
     logger->setLogLevel(LogLevel::VERBOSE);
     #ifdef USE_IOT
@@ -11,20 +18,18 @@ Udawa::Udawa() : config(PSTR("/config.json")), http(80), ws(PSTR("/ws")), _crash
     _thingsboardSharedAttributesUpdateCallback = Shared_Attribute_Callback([this](const Shared_Attribute_Data &data) {
         this->_processThingsboardSharedAttributesUpdateWrapper(this, data); 
     });
+    _thingsboardRPCRebootHandler = [this](const RPC_Data& data) {
+       return this->_processThingsboardRPCReboot(data);
+    };
     #endif
 }
-#else
-Udawa::Udawa() : config("/config.json") {
-    logger->addLogger(serialLogger);
-    logger->setLogLevel(LogLevel::VERBOSE);
-}
-#endif
 
 void Udawa::begin(){
     logger->debug(PSTR(__func__), PSTR("Initializing LittleFS: %d\n"), config.begin());
     config.load();
     
     logger->setLogLevel((LogLevel)config.state.logLev);
+    wiFiLogger->setConfig(config.state.logIP, config.state.logPort, WIFI_LOGGER_BUFFER_SIZE);
 
     wiFiHelper.begin(config.state.wssid, config.state.wpass, config.state.dssid, config.state.dpass, config.state.model);
     wiFiHelper.addOnConnectedCallback(std::bind(&Udawa::_onWiFiConnected, this));
@@ -71,6 +76,18 @@ void Udawa::run(){
       crashState.crashStateCheckedFlag = true;
     }
 
+    if(crashState.fPlannedReboot){
+      if( now - crashState.plannedRebootTimer > 1000){
+        if(crashState.plannedRebootCountDown <= 0){
+          logger->warn(PSTR(__func__), PSTR("Reboting...\n"));
+          ESP.restart();
+        }
+        crashState.plannedRebootCountDown--;
+        logger->warn(PSTR(__func__), PSTR("Planned reboot in %d.\n"), crashState.plannedRebootCountDown);
+        crashState.plannedRebootTimer = now;
+      }
+    }
+
     
 }
 
@@ -83,20 +100,25 @@ void Udawa::_onWiFiDisconnected(){
 }
 
 void Udawa::_onWiFiGotIP(){
+    #ifdef USE_WIFI_LOGGER
+    logger->addLogger(wiFiLogger);
+    #endif
     #ifdef USE_WIFI_OTA
-    logger->debug(PSTR(__func__), PSTR("Starting WiFi OTA at %s\n"), config.state.hname);
-    ArduinoOTA.setHostname(config.state.hname);
-    ArduinoOTA.setPasswordHash(config.state.upass);
+    if(config.state.fWOTA){
+      logger->debug(PSTR(__func__), PSTR("Starting WiFi OTA at %s\n"), config.state.hname);
+      ArduinoOTA.setHostname(config.state.hname);
+      ArduinoOTA.setPasswordHash(config.state.upass);
 
-    ArduinoOTA.onStart(std::bind(&Udawa::_onWiFiOTAStart, this));
-    ArduinoOTA.onEnd(std::bind(&Udawa::_onWiFiOTAEnd, this));
-    ArduinoOTA.onProgress([this](unsigned int progress, unsigned int total) {
-        this->_onWiFiOTAProgress(progress, total);
-    });
-    ArduinoOTA.onError([this](ota_error_t error) {
-        this->_onWiFiOTAError(error);
-    });
-    ArduinoOTA.begin();
+      ArduinoOTA.onStart(std::bind(&Udawa::_onWiFiOTAStart, this));
+      ArduinoOTA.onEnd(std::bind(&Udawa::_onWiFiOTAEnd, this));
+      ArduinoOTA.onProgress([this](unsigned int progress, unsigned int total) {
+          this->_onWiFiOTAProgress(progress, total);
+      });
+      ArduinoOTA.onError([this](ota_error_t error) {
+          this->_onWiFiOTAError(error);
+      });
+      ArduinoOTA.begin();
+    }
     #endif
 
     if (!MDNS.begin(config.state.hname)) {
@@ -109,14 +131,17 @@ void Udawa::_onWiFiGotIP(){
     MDNS.addService("http", "tcp", 80);
 
     #ifdef USE_LOCAL_WEB_INTERFACE
-    http.serveStatic("/", LittleFS, "/www").setDefaultFile("index.html");
+    if(config.state.fWeb && !crashState.fSafeMode){
+      logger->debug(PSTR(__func__), PSTR("Starting Web Service...\n"));
+      http.serveStatic("/", LittleFS, "/www").setDefaultFile("index.html");
 
-    ws.onEvent([this](AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len) {
-        this->_onWsEvent(server, client, type, arg, data, len);
-    });
+      ws.onEvent([this](AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len) {
+          this->_onWsEvent(server, client, type, arg, data, len);
+      });
 
-    http.addHandler(&ws);
-    http.begin();
+      http.addHandler(&ws);
+      http.begin();
+    }
     #endif
 
     #ifdef USE_IOT
@@ -170,10 +195,10 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
   switch(type) {
     case WS_EVT_DISCONNECT:
       {
-        logger->verbose(PSTR(__func__), PSTR("Client disconnected [%s]\n"), clientIP.toString().c_str());
+        logger->verbose(PSTR(__func__), PSTR("Client disconnected.\n"));
         // Remove client from maps
-        _clientAuthenticationStatus.erase(client->id());
-        _clientAuthAttemptTimestamps.erase(clientIP);
+        _wsClientAuthenticationStatus.erase(client->id());
+        _wsClientAuthAttemptTimestamps.erase(clientIP);
         logger->debug(PSTR(__func__), PSTR("ws [%u] disconnect.\n"), client->id());        
       }
       break;
@@ -181,9 +206,9 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
       {
         logger->verbose(PSTR(__func__), PSTR("New client arrived [%s]\n"), clientIP.toString().c_str());
         // Initialize client as unauthenticated
-        _clientAuthenticationStatus[client->id()] = false;
+        _wsClientAuthenticationStatus[client->id()] = false;
         // Initialize timestamp for rate limiting
-        _clientAuthAttemptTimestamps[clientIP] = millis();
+        _wsClientAuthAttemptTimestamps[clientIP] = millis();
       }
       break;
     case WS_EVT_DATA:
@@ -196,13 +221,13 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
         }
         
         // If client is not authenticated, check credentials
-        if(!_clientAuthenticationStatus[client->id()]) {
+        if(!_wsClientAuthenticationStatus[client->id()]) {
           unsigned long currentTime = millis();
-          unsigned long lastAttemptTime = _clientAuthAttemptTimestamps[clientIP];
+          unsigned long lastAttemptTime = _wsClientAuthAttemptTimestamps[clientIP];
 
           if (currentTime - lastAttemptTime < 1000) {
             // Too many attempts in short time, block this IP for blockInterval
-            //_clientAuthAttemptTimestamps[clientIP] = currentTime + WS_BLOCKED_DURATION - WS_RATE_LIMIT_INTERVAL;
+            //_wsClientAuthAttemptTimestamps[clientIP] = currentTime + WS_BLOCKED_DURATION - WS_RATE_LIMIT_INTERVAL;
             logger->verbose(PSTR(__func__), PSTR("Too many authentication attempts. Blocking for %d seconds. Rate limit %d.\n"), WS_BLOCKED_DURATION / 1000, WS_RATE_LIMIT_INTERVAL);
             client->close();
             return;
@@ -210,22 +235,23 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
 
           if (err != DeserializationError::Ok) {
             client->printf(PSTR("{\"status\": {\"code\": 400, \"msg\": \"Bad request.\"}}"));
-            _clientAuthAttemptTimestamps[clientIP] = currentTime;
+            _wsClientAuthAttemptTimestamps[clientIP] = currentTime;
             return;
           }
           else{
             if(doc["salt"] == nullptr || doc["auth"] == nullptr){
               client->printf(PSTR("{\"status\": {\"code\": 400, \"msg\": \"Bad request.\"}}"));
-              _clientAuthAttemptTimestamps[clientIP] = currentTime;
+              _wsClientAuthAttemptTimestamps[clientIP] = currentTime;
               return;
             }
 
             String salt = doc["salt"];
             String auth = doc["auth"];
-          
-            if (hmacSha256(config.state.htP, salt) == auth) {
+            String _auth = hmacSha256(String(config.state.htP), salt);
+            //logger->debug(PSTR(__func__), PSTR("\n\t_auth: %s\n\tauth: %s\n\tkey: %s\n\tsalt: %s\n"), _auth.c_str(), auth.c_str(), config.state.htP, salt.c_str());
+            if (_auth == auth) {
               // Client authenticated successfully, update the status in the map
-              _clientAuthenticationStatus[client->id()] = true;
+              _wsClientAuthenticationStatus[client->id()] = true;
               client->printf(PSTR("{\"status\": {\"code\": 200, \"msg\": \"Authorized.\", \"model\": \"%s\"}}"), config.state.model);
               logger->debug(PSTR(__func__), PSTR("ws [%u] authenticated.\n"), client->id());
             } else {
@@ -235,7 +261,7 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
             }
 
             // Update timestamp for rate limiting
-            _clientAuthAttemptTimestamps[clientIP] = currentTime;
+            _wsClientAuthAttemptTimestamps[clientIP] = currentTime;
             return;
           }
         }
@@ -261,21 +287,26 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
 void Udawa::addOnWsEvent(WsOnEventCallback callback) {
     _onWSEventCallbacks.push_back(callback);
 }
-#endif
 
-String Udawa::hmacSha256(const String& message, const String& salt) {
+String Udawa::hmacSha256(String htP, String salt) {
 // Convert input strings to UTF-8
-  mbedtls_sha256_context ctx;
-  mbedtls_sha256_init(&ctx);
-  mbedtls_sha256_starts(&ctx, 0); // HMAC mode
-  mbedtls_sha256_update(&ctx, (const unsigned char*)config.state.htP, strlen(config.state.htP));
-  mbedtls_sha256_update(&ctx, (const unsigned char*)salt.c_str(), salt.length());
-  mbedtls_sha256_update(&ctx, (const unsigned char*)message.c_str(), message.length());
   unsigned char hash[32];
-  mbedtls_sha256_finish(&ctx, hash);
-  mbedtls_sha256_free(&ctx);
+  const byte* key = (const byte*)htP.c_str();
+  size_t keyLength = htP.length();
+  const byte* message = (const byte*)salt.c_str();
+  size_t messageLength = salt.length();
+  mbedtls_md_context_t ctx;
+  mbedtls_md_type_t md_type = MBEDTLS_MD_SHA256;
+
+  mbedtls_md_init(&ctx);
+  mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(md_type), 1);
+  mbedtls_md_hmac_starts(&ctx, key, keyLength);
+  mbedtls_md_hmac_update(&ctx, message, messageLength);
+  mbedtls_md_hmac_finish(&ctx, hash);
+  mbedtls_md_free(&ctx); 
   return base64::encode(hash, 32);
 }
+#endif
 
 void Udawa::_crashStateTruthKeeper(uint8_t direction){
   JsonDocument crashStateDoc;
@@ -297,7 +328,7 @@ void Udawa::_crashStateTruthKeeper(uint8_t direction){
   }
 }
 
-
+#ifdef USE_IOT
 void Udawa::_processThingsboardProvisionResponse(const Provision_Data &data){
   if( _iotState.xSemaphoreThingsboard != NULL && WiFi.isConnected() && !config.state.provSent && _tb.connected()){
     if( xSemaphoreTake( _iotState.xSemaphoreThingsboard, ( TickType_t ) 1000 ) == pdTRUE )
@@ -344,6 +375,7 @@ void Udawa::_processThingsboardProvisionResponse(const Provision_Data &data){
     }
   }
 }
+
 
 void Udawa::_pvTaskCodeThingsboard(void *pvParameters){
   #ifdef USE_IOT_SECURE
@@ -403,7 +435,29 @@ void Udawa::_pvTaskCodeThingsboard(void *pvParameters){
         }
 
         if(_tb.connected()){
-          bool tbSharedUpdate_status = _tb.Shared_Attributes_Subscribe(_thingsboardSharedAttributesUpdateCallback);
+          if(!_iotState.fSharedAttributesSubscribed){
+            bool status = _tb.Shared_Attributes_Subscribe(_thingsboardSharedAttributesUpdateCallback);
+            if (status){
+              logger->verbose(PSTR(__func__), PSTR("Thingsboard shared attributes update subscribed successfuly.\n"));
+            }
+            else{
+              logger->warn(PSTR(__func__), PSTR("Failed to subscribe Thingsboard shared attributes update.\n"));
+            }
+            _iotState.fSharedAttributesSubscribed = true;
+          }
+
+          RPC_Callback rebootCallback("reboot", _thingsboardRPCRebootHandler);
+          if(!_iotState.fRPCSubscribed){
+            bool statusReboot = _tb.RPC_Subscribe(rebootCallback); // Pass the callback directly
+            if(statusReboot){
+              logger->verbose(PSTR(__func__), PSTR("reboot RPC subscribed successfuly.\n"));
+            }
+            else{
+              logger->warn(PSTR(__func__), PSTR("Failed to subscribe reboot RPC.\n"));
+            }
+
+            _iotState.fRPCSubscribed = true;
+          }
           /*bool tbClientRPC_status = tb.RPC_Subscribe(clientRPCCallbacks.cbegin(), clientRPCCallbacks.cend());
           tb.Firmware_Send_Info(CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION); 
           tb.Firmware_Send_State(PSTR("updated"));
@@ -427,7 +481,38 @@ void Udawa::_pvTaskCodeThingsboardTaskWrapper(void* pvParameters) {  // Define a
 }
 
 void Udawa::_processThingsboardSharedAttributesUpdate(const Shared_Attribute_Data &data){
+  String _data;
+  serializeJson(data, _data);
+  logger->debug(PSTR(__func__), PSTR("%s\n"), _data.c_str());
   for (auto callback : _onThingsboardSharedAttributesReceivedCallbacks) { 
     callback(data); // Call each callback
   }
+}
+
+void Udawa::addOnThingsboardConnected(ThingsboardOnConnectedCallback callback){
+  _onThingsboardConnectedCallbacks.push_back(callback);
+}
+
+void Udawa::addOnThingsboardDisconnected(ThingsboardOnDisconnectedCallback callback){
+  _onThingsboardDisconnectedCallbacks.push_back(callback);
+}
+
+void Udawa::addOnThingsboardSharedAttributesReceived(ThingsboardOnSharedAttributesReceivedCallback callback) {
+    _onThingsboardSharedAttributesReceivedCallbacks.push_back(callback);
+}
+
+RPC_Response Udawa::_processThingsboardRPCReboot(const RPC_Data &data) {
+  if(data != nullptr && data.as<int>() >= 0){
+    reboot(data.as<int>());
+  }
+  else{
+    reboot(0);
+  }
+  return RPC_Response(PSTR("reboot"), 1);
+}
+#endif
+
+void Udawa::reboot(int countDown = 0){
+  crashState.plannedRebootCountDown = countDown;
+  crashState.fPlannedReboot = true;
 }
