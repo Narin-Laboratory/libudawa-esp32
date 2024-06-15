@@ -7,6 +7,9 @@
 #include "UdawaConfig.h"
 #include "secret.h"
 #include "params.h"
+#ifdef THINGSBOARD_ENABLE_STREAM_UTILS
+#include <StreamUtils.h>
+#endif
 #include <ESPmDNS.h>
 #ifdef USE_WIFI_OTA
 #include <ArduinoOTA.h>
@@ -23,6 +26,9 @@
 #ifdef USE_IOT
 #include <Arduino_MQTT_Client.h>
 #include <ThingsBoard.h>
+#ifdef USE_IOT_OTA
+#include <Espressif_Updater.h>
+#endif
 #endif
 #ifdef USE_IOT_SECURE
 #include <WiFiClientSecure.h>
@@ -50,7 +56,10 @@ struct IoTState{
     BaseType_t xReturnedIoT;
     SemaphoreHandle_t xSemaphoreThingsboard = NULL;
     bool fSharedAttributesSubscribed = false;
-    bool fRPCSubscribed = false;
+    bool fRebootRPCSubscribed = false;
+    bool fConfigSaveRPCSubscribed = false;
+    bool fIoTCurrentFWSent = false;
+    bool fIoTUpdateRequestSent = false;
 };
 class UdawaThingsboardLogger{
     public:
@@ -60,6 +69,11 @@ class UdawaThingsboardLogger{
         }
         
 };
+#ifdef USE_IOT_OTA
+constexpr std::array<const char*, 1U> REQUESTED_FW_CHECK_SHARED_ATTRIBUTES = {
+    FW_VER_KEY
+};
+#endif
 #endif
 
 class Udawa {
@@ -151,6 +165,14 @@ class Udawa {
 
             RPC_Response _processThingsboardRPCConfigSave(const RPC_Data &data);
             std::function<RPC_Response(const RPC_Data&)> _thingsboardRPCConfigSaveHandler;
+            #ifdef USE_IOT_OTA
+            Espressif_Updater _iotUpdater;
+            void _iotUpdaterUpdatedCallback(const bool& success);
+            void _iotUpdaterProgressCallback(const size_t& currentChunk, const size_t& totalChuncks);
+            void _processIoTUpdaterFirmwareCheckAttributesRequest(const Shared_Attribute_Data &data);
+            const Attribute_Request_Callback _iotUpdaterFirmwareCheckCallback; //(&_processIoTUpdaterFirmwareCheckAttributesRequest, "fw_version");
+            const OTA_Update_Callback _iotUpdaterOTACallback; //(&_iotUpdaterProgressCallback, &_iotUpdaterUpdatedCallback, CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION, &_iotUpdater, IOT_FIRMWARE_FAILURE_RETRIES, IOT_FIRMWARE_PACKET_SIZE);            
+            #endif
         #endif
 };
 

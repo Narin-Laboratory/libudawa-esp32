@@ -9,6 +9,25 @@ Udawa::Udawa() : config(PSTR("/config.json")), _crashStateConfig(PSTR("/crash.js
   ,_mqttClient(_tcpClient), 
   _tb(_mqttClient, IOT_MAX_MESSAGE_SIZE)
   #endif
+  #ifdef USE_IOT_OTA
+  ,_iotUpdaterFirmwareCheckCallback([this](Shared_Attribute_Data& data) { 
+      this->_processIoTUpdaterFirmwareCheckAttributesRequest(data); 
+  }, REQUESTED_FW_CHECK_SHARED_ATTRIBUTES.cbegin(), REQUESTED_FW_CHECK_SHARED_ATTRIBUTES.cend()),
+
+  _iotUpdaterOTACallback(
+    [this](const size_t& total, const size_t& progress) { 
+        this->_iotUpdaterProgressCallback(total, progress);
+    }, 
+    [this](const bool& result) {
+        this->_iotUpdaterUpdatedCallback(result);
+    },
+    CURRENT_FIRMWARE_TITLE, 
+    CURRENT_FIRMWARE_VERSION, 
+    &_iotUpdater, 
+    IOT_FIRMWARE_FAILURE_RETRIES, 
+    IOT_FIRMWARE_PACKET_SIZE
+  ) 
+  #endif
   {
     logger->addLogger(serialLogger);
     logger->setLogLevel(LogLevel::VERBOSE);
@@ -32,7 +51,9 @@ void Udawa::begin(){
     config.load();
     
     logger->setLogLevel((LogLevel)config.state.logLev);
+    #ifdef USE_WIFI_LOGGER
     wiFiLogger->setConfig(config.state.logIP, config.state.logPort, WIFI_LOGGER_BUFFER_SIZE);
+    #endif
 
     wiFiHelper.begin(config.state.wssid, config.state.wpass, config.state.dssid, config.state.dpass, config.state.model);
     wiFiHelper.addOnConnectedCallback(std::bind(&Udawa::_onWiFiConnected, this));
@@ -157,6 +178,7 @@ void Udawa::_onWiFiGotIP(){
     #endif
 }
 
+#ifdef USE_WIFI_OTA
 void Udawa::_onWiFiOTAStart(){
     String type;
     if (ArduinoOTA.getCommand() == U_FLASH) {
@@ -191,6 +213,7 @@ void Udawa::_onWiFiOTAError(ota_error_t error){
     logger->error(PSTR(""),PSTR("End Failed\n"));
     }
 }
+#endif
 
 #ifdef USE_LOCAL_WEB_INTERFACE
 void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len){
@@ -439,42 +462,45 @@ void Udawa::_pvTaskCodeThingsboard(void *pvParameters){
 
         if(_tb.connected()){
           if(!_iotState.fSharedAttributesSubscribed){
-            bool status = _tb.Shared_Attributes_Subscribe(_thingsboardSharedAttributesUpdateCallback);
-            if (status){
+            _iotState.fSharedAttributesSubscribed = _tb.Shared_Attributes_Subscribe(_thingsboardSharedAttributesUpdateCallback);
+            if (_iotState.fSharedAttributesSubscribed){
               logger->verbose(PSTR(__func__), PSTR("Thingsboard shared attributes update subscribed successfuly.\n"));
             }
             else{
               logger->warn(PSTR(__func__), PSTR("Failed to subscribe Thingsboard shared attributes update.\n"));
             }
-            _iotState.fSharedAttributesSubscribed = true;
           }
 
-          if(!_iotState.fRPCSubscribed){
-            
+          if(!_iotState.fRebootRPCSubscribed){
             RPC_Callback rebootCallback("reboot", _thingsboardRPCRebootHandler);
-            bool statusReboot = _tb.RPC_Subscribe(rebootCallback); // Pass the callback directly
-            if(statusReboot){
+            _iotState.fRebootRPCSubscribed = _tb.RPC_Subscribe(rebootCallback); // Pass the callback directly
+            if(_iotState.fRebootRPCSubscribed){
               logger->verbose(PSTR(__func__), PSTR("reboot RPC subscribed successfuly.\n"));
             }
             else{
               logger->warn(PSTR(__func__), PSTR("Failed to subscribe reboot RPC.\n"));
             }
+          }
 
+          if(!_iotState.fConfigSaveRPCSubscribed){
             RPC_Callback configSaveCallback("configSave", _thingsboardRPCConfigSaveHandler);
-            bool statusConfigSave = _tb.RPC_Subscribe(configSaveCallback); // Pass the callback directly
-            if(statusConfigSave){
+            _iotState.fConfigSaveRPCSubscribed = _tb.RPC_Subscribe(configSaveCallback); // Pass the callback directly
+            if(_iotState.fConfigSaveRPCSubscribed){
               logger->verbose(PSTR(__func__), PSTR("configSave RPC subscribed successfuly.\n"));
             }
             else{
               logger->warn(PSTR(__func__), PSTR("Failed to subscribe configSave RPC.\n"));
             }
-
-            _iotState.fRPCSubscribed = true;
           }
-          /*bool tbClientRPC_status = tb.RPC_Subscribe(clientRPCCallbacks.cbegin(), clientRPCCallbacks.cend());
-          tb.Firmware_Send_Info(CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION); 
-          tb.Firmware_Send_State(PSTR("updated"));
-          tb.Shared_Attributes_Request(fwCheckCb);*/
+
+          #ifdef USE_IOT_OTA
+          //_iotState.fIoTCurrentFWSent = _tb.Firmware_Send_Info(CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION) && _tb.Firmware_Send_State(FW_STATE_UPDATED);
+          //if(_iotState.fIoTCurrentFWSent){
+          if(true){
+            //_tb.Shared_Attributes_Request(_iotUpdaterFirmwareCheckCallback);
+          }
+          #endif
+
           for (auto callback : _onThingsboardConnectedCallbacks) { 
             callback(); // Call each callback
           }
@@ -484,7 +510,7 @@ void Udawa::_pvTaskCodeThingsboard(void *pvParameters){
     }
 
     _tb.loop();
-    vTaskDelay((const TickType_t) 10 / portTICK_PERIOD_MS);
+    vTaskDelay((const TickType_t) 1 / portTICK_PERIOD_MS);
   }
 }
 
@@ -533,4 +559,38 @@ RPC_Response Udawa::_processThingsboardRPCConfigSave(const RPC_Data &data) {
 void Udawa::reboot(int countDown = 0){
   crashState.plannedRebootCountDown = countDown;
   crashState.fPlannedReboot = true;
+}
+
+void Udawa::_processIoTUpdaterFirmwareCheckAttributesRequest(const Shared_Attribute_Data &data){
+  if( _iotState.xSemaphoreThingsboard != NULL && WiFi.isConnected() && config.state.provSent && _tb.connected()){
+    if( xSemaphoreTake( _iotState.xSemaphoreThingsboard, ( TickType_t ) 5000 ) == pdTRUE )
+    {
+      if(data["fw_version"] != nullptr){
+        logger->info(PSTR(__func__), PSTR("Firmware check local: %s vs cloud: %s\n"), CURRENT_FIRMWARE_VERSION, data["fw_version"].as<const char*>());
+        if(strcmp(data["fw_version"].as<const char*>(), CURRENT_FIRMWARE_VERSION)){
+          _tb.Start_Firmware_Update(_iotUpdaterOTACallback);
+        }
+      }
+      xSemaphoreGive( _iotState.xSemaphoreThingsboard );
+    }
+    else
+    {
+      logger->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+    }
+  }
+}
+
+void Udawa::_iotUpdaterUpdatedCallback(const bool& success){
+  if(success){
+    logger->info(PSTR(__func__), PSTR("IoT OTA Update done!"));
+    reboot(10);
+  }
+  else{
+    logger->warn(PSTR(__func__), PSTR("IoT OTA Update failed!"));
+    reboot(10);
+  }
+}
+
+void Udawa::_iotUpdaterProgressCallback(const size_t& currentChunk, const size_t& totalChuncks){
+  logger->debug(PSTR(__func__), PSTR("IoT OTA Progress: %.2f%%\n"),  static_cast<float>(currentChunk * 100U) / totalChuncks);
 }
