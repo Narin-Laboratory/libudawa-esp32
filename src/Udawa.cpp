@@ -10,9 +10,14 @@ Udawa::Udawa() : config(PSTR("/config.json")), _crashStateConfig(PSTR("/crash.js
   _tb(_mqttClient, IOT_MAX_MESSAGE_SIZE)
   #endif
   #ifdef USE_IOT_OTA
-  ,_iotUpdaterFirmwareCheckCallback([this](Shared_Attribute_Data& data) { 
-      this->_processIoTUpdaterFirmwareCheckAttributesRequest(data); 
-  }, REQUESTED_FW_CHECK_SHARED_ATTRIBUTES.cbegin(), REQUESTED_FW_CHECK_SHARED_ATTRIBUTES.cend()),
+  ,_iotUpdaterFirmwareCheckCallback(
+        createFirmwareCheckCallback(
+            [this](const JsonObjectConst& data) {
+                this->_processIoTUpdaterFirmwareCheckAttributesRequest(data);
+            },
+            std::array<const char*, 1>{FW_VER_KEY}
+        )
+    ),
 
   _iotUpdaterOTACallback(
     [this](const size_t& total, const size_t& progress) { 
@@ -32,16 +37,17 @@ Udawa::Udawa() : config(PSTR("/config.json")), _crashStateConfig(PSTR("/crash.js
     logger->addLogger(serialLogger);
     logger->setLogLevel(LogLevel::VERBOSE);
     #ifdef USE_IOT
+    _tb.setBufferSize(IOT_BUFFER_SIZE);
     if(_iotState.xSemaphoreThingsboard == NULL){_iotState.xSemaphoreThingsboard = xSemaphoreCreateMutex();}
     // Initialize Shared_Attribute_Callback with the correct arguments
-    _thingsboardSharedAttributesUpdateCallback = Shared_Attribute_Callback([this](const Shared_Attribute_Data &data) {
+    _thingsboardSharedAttributesUpdateCallback = Shared_Attribute_Callback([this](const JsonObjectConst &data) {
         this->_processThingsboardSharedAttributesUpdateWrapper(this, data); 
     });
-    _thingsboardRPCRebootHandler = [this](const RPC_Data& data) {
-       return this->_processThingsboardRPCReboot(data);
+    _thingsboardRPCRebootHandler = [this](const JsonVariantConst &data, JsonDocument &response) {
+       return this->_processThingsboardRPCReboot(data, response);
     };
-    _thingsboardRPCConfigSaveHandler = [this](const RPC_Data& data) {
-       return this->_processThingsboardRPCConfigSave(data);
+    _thingsboardRPCConfigSaveHandler = [this](const JsonVariantConst &data, JsonDocument &response) {
+       return this->_processThingsboardRPCConfigSave(data, response);
     };
     #endif
 }
@@ -355,7 +361,7 @@ void Udawa::_crashStateTruthKeeper(uint8_t direction){
 }
 
 #ifdef USE_IOT
-void Udawa::_processThingsboardProvisionResponse(const Provision_Data &data){
+void Udawa::_processThingsboardProvisionResponse(const JsonObjectConst &data){
   if( _iotState.xSemaphoreThingsboard != NULL && WiFi.isConnected() && !config.state.provSent && _tb.connected()){
     if( xSemaphoreTake( _iotState.xSemaphoreThingsboard, ( TickType_t ) 1000 ) == pdTRUE )
     {
@@ -414,7 +420,7 @@ void Udawa::_pvTaskCodeThingsboard(void *pvParameters){
       if (_tb.connect(config.state.tbAddr, "provision", config.state.tbPort)) {
         const Provision_Callback provisionCallback(
             Access_Token(),
-            [this](const Provision_Data &data) {
+            [this](const JsonObjectConst &data) {
                 this->_processThingsboardProvisionResponse(data);
             }
             ,
@@ -494,10 +500,10 @@ void Udawa::_pvTaskCodeThingsboard(void *pvParameters){
           }
 
           #ifdef USE_IOT_OTA
-          //_iotState.fIoTCurrentFWSent = _tb.Firmware_Send_Info(CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION) && _tb.Firmware_Send_State(FW_STATE_UPDATED);
-          //if(_iotState.fIoTCurrentFWSent){
-          if(true){
-            //_tb.Shared_Attributes_Request(_iotUpdaterFirmwareCheckCallback);
+          _iotState.fIoTCurrentFWSent = _tb.Firmware_Send_Info(CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION) && _tb.Firmware_Send_State(PSTR("UPDATED"));
+          if(_iotState.fIoTCurrentFWSent){
+          //if(true){
+            _tb.Shared_Attributes_Request(_iotUpdaterFirmwareCheckCallback);
           }
           #endif
 
@@ -519,7 +525,7 @@ void Udawa::_pvTaskCodeThingsboardTaskWrapper(void* pvParameters) {  // Define a
   udawaInstance->_pvTaskCodeThingsboard(pvParameters); 
 }
 
-void Udawa::_processThingsboardSharedAttributesUpdate(const Shared_Attribute_Data &data){
+void Udawa::_processThingsboardSharedAttributesUpdate(const JsonObjectConst &data){
   String _data;
   serializeJson(data, _data);
   logger->debug(PSTR(__func__), PSTR("%s\n"), _data.c_str());
@@ -540,19 +546,17 @@ void Udawa::addOnThingsboardSharedAttributesReceived(ThingsboardOnSharedAttribut
     _onThingsboardSharedAttributesReceivedCallbacks.push_back(callback);
 }
 
-RPC_Response Udawa::_processThingsboardRPCReboot(const RPC_Data &data) {
+void Udawa::_processThingsboardRPCReboot(const JsonVariantConst &data, JsonDocument &response) {
   if(data != nullptr && data.as<int>() >= 0){
     reboot(data.as<int>());
   }
   else{
     reboot(0);
   }
-  return RPC_Response(PSTR("reboot"), 1);
 }
 
-RPC_Response Udawa::_processThingsboardRPCConfigSave(const RPC_Data &data) {
+void Udawa::_processThingsboardRPCConfigSave(const JsonVariantConst &data, JsonDocument &response) {
   config.save();
-  return RPC_Response(PSTR("configSave"), 1);
 }
 #endif
 
@@ -561,14 +565,17 @@ void Udawa::reboot(int countDown = 0){
   crashState.fPlannedReboot = true;
 }
 
-void Udawa::_processIoTUpdaterFirmwareCheckAttributesRequest(const Shared_Attribute_Data &data){
+void Udawa::_processIoTUpdaterFirmwareCheckAttributesRequest(const JsonObjectConst &data){
   if( _iotState.xSemaphoreThingsboard != NULL && WiFi.isConnected() && config.state.provSent && _tb.connected()){
     if( xSemaphoreTake( _iotState.xSemaphoreThingsboard, ( TickType_t ) 5000 ) == pdTRUE )
     {
       if(data["fw_version"] != nullptr){
         logger->info(PSTR(__func__), PSTR("Firmware check local: %s vs cloud: %s\n"), CURRENT_FIRMWARE_VERSION, data["fw_version"].as<const char*>());
         if(strcmp(data["fw_version"].as<const char*>(), CURRENT_FIRMWARE_VERSION)){
+          logger->debug(PSTR(__func__), PSTR("Updating firmware...\n"));
           _tb.Start_Firmware_Update(_iotUpdaterOTACallback);
+        }else{
+          logger->debug(PSTR(__func__), PSTR("No need to update firmware.\n"));
         }
       }
       xSemaphoreGive( _iotState.xSemaphoreThingsboard );
