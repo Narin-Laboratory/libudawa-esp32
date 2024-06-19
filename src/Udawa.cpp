@@ -573,7 +573,22 @@ void Udawa::_processIoTUpdaterFirmwareCheckAttributesRequest(const JsonObjectCon
         logger->info(PSTR(__func__), PSTR("Firmware check local: %s vs cloud: %s\n"), CURRENT_FIRMWARE_VERSION, data["fw_version"].as<const char*>());
         if(strcmp(data["fw_version"].as<const char*>(), CURRENT_FIRMWARE_VERSION)){
           logger->debug(PSTR(__func__), PSTR("Updating firmware...\n"));
-          _tb.Start_Firmware_Update(_iotUpdaterOTACallback);
+          // Print heap info before starting firmware update for comparison
+          Serial.printf("Heap before update: free = %u, min free = %u, max block = %u\n",
+                        ESP.getFreeHeap(), ESP.getMinFreeHeap(), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+
+          if (!_tb.Start_Firmware_Update(_iotUpdaterOTACallback)) {
+              logger->error(PSTR(__func__), PSTR("Firmware update failed to start.\n"));
+
+              // Print heap info after failed update
+              Serial.printf("Heap after failed update: free = %u, min free = %u, max block = %u\n",
+                            ESP.getFreeHeap(), ESP.getMinFreeHeap(), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+
+              // Handle the update failure
+          } else {
+              // Firmware update started successfully
+              // Continue with the update process
+          }
         }else{
           logger->debug(PSTR(__func__), PSTR("No need to update firmware.\n"));
         }
