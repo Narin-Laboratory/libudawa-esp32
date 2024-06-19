@@ -176,7 +176,7 @@ class Udawa {
                 // Retrieve the Udawa instance
                 Udawa *instance = static_cast<Udawa*>(context);
                 // Call the non-static method using the lambda
-                instance->_processThingsboardSharedAttributesUpdate(data); 
+                instance->_processThingsboardSharedAttributesUpdate(data);
             }
             // Declaration of the callback object (within the class)
             Shared_Attribute_Callback _thingsboardSharedAttributesUpdateCallback;
