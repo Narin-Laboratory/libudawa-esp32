@@ -1,9 +1,10 @@
 #include "Udawa.h"
 
 Udawa::Udawa() : config(PSTR("/config.json")), _crashStateConfig(PSTR("/crash.json"))
+  ,RTC(0)
   #ifdef USE_LOCAL_WEB_INTERFACE
-  ,http(80), 
-  ws(PSTR("/ws"))
+  ,http(80) 
+  ,ws(PSTR("/ws"))
   #endif
   #ifdef USE_IOT
   ,_mqttClient(_tcpClient), 
@@ -59,6 +60,11 @@ void Udawa::begin(){
     logger->setLogLevel((LogLevel)config.state.logLev);
     #ifdef USE_WIFI_LOGGER
     wiFiLogger->setConfig(config.state.logIP, config.state.logPort, WIFI_LOGGER_BUFFER_SIZE);
+    #endif
+
+    #ifdef USE_I2C
+    Wire.begin();
+    Wire.setClock(400000);
     #endif
 
     wiFiHelper.begin(config.state.wssid, config.state.wpass, config.state.dssid, config.state.dpass, config.state.model);
@@ -131,6 +137,7 @@ void Udawa::_onWiFiGotIP(){
     #ifdef USE_WIFI_LOGGER
     logger->addLogger(wiFiLogger);
     #endif
+    rtcUpdate(0);
     #ifdef USE_WIFI_OTA
     if(config.state.fWOTA){
       logger->debug(PSTR(__func__), PSTR("Starting WiFi OTA at %s\n"), config.state.hname);
@@ -660,4 +667,47 @@ bool Udawa::iotSendTelemetry(const char *buffer){
     }   
   }
   return res;
+}
+
+void Udawa::rtcUpdate(long ts){
+  #ifdef USE_HW_RTC
+  crashState.fRTCHwDetected = false;
+  if(!_hwRTC.begin()){
+    logger->error(PSTR(__func__), PSTR("RTC module not found; please update the device time manually. Any function that requires precise timing will malfunction! \n"));
+  }
+  else{
+    crashState.fRTCHwDetected = true;
+    _hwRTC.setSquareWave(SquareWaveDisable);
+  }
+  #endif
+  if(ts == 0){
+    WiFiUDP ntpUDP;
+    NTPClient timeClient(ntpUDP, "pool.ntp.org");
+    timeClient.setTimeOffset(config.state.gmtOff);
+    bool ntpSuccess = timeClient.update();
+    if (ntpSuccess){
+      long epochTime = timeClient.getEpochTime();
+      RTC.setTime(epochTime);
+      logger->debug(PSTR(__func__), PSTR("Updated time via NTP: %s GMT Offset:%d (%d) \n"), RTC.getDateTime().c_str(), config.state.gmtOff, config.state.gmtOff / 3600);
+      #ifdef USE_HW_RTC
+      if(crashState.fRTCHwDetected){
+        logger->debug(PSTR(__func__), PSTR("Updating RTC HW from NTP...\n"));
+        _hwRTC.setDateTime(RTC.getHour(), RTC.getMinute(), RTC.getSecond(), RTC.getDay(), RTC.getMonth()+1, RTC.getYear(), RTC.getDayofWeek());
+        logger->debug(PSTR(__func__), PSTR("Updated RTC HW from NTP with epoch %d | H:I:S W D-M-Y. -> %d:%d:%d %d %d-%d-%d\n"), 
+        _hwRTC.getEpoch(), RTC.getHour(), RTC.getMinute(), RTC.getSecond(), RTC.getDayofWeek(), RTC.getDay(), RTC.getMonth()+1, RTC.getYear());
+      }
+      #endif
+    }else{
+      #ifdef USE_HW_RTC
+      if(crashState.fRTCHwDetected){
+        logger->debug(PSTR(__func__), PSTR("Updating RTC from RTC HW with epoch %d.\n"), _hwRTC.getEpoch());
+        RTC.setTime(_hwRTC.getEpoch());
+        logger->debug(PSTR(__func__), PSTR("Updated time via RTC HW: %s GMT Offset:%d (%d) \n"), RTC.getDateTime().c_str(), config.state.gmtOff, config.state.gmtOff / 3600);
+      }
+      #endif
+    }
+  }else{
+      RTC.setTime(ts);
+      logger->debug(PSTR(__func__), PSTR("Updated time via timestamp: %s\n"), RTC.getDateTime().c_str());
+  }
 }

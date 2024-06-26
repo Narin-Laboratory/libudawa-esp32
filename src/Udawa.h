@@ -7,6 +7,7 @@
 #include <vector>
 #include "UdawaConfig.h"
 #include "secret.h"
+#include <ESP32Time.h>
 #ifdef THINGSBOARD_ENABLE_STREAM_UTILS
 #include <StreamUtils.h>
 #endif
@@ -38,6 +39,14 @@
 #ifdef USE_WIFI_LOGGER
 #include <UdawaWiFiLogger.h>
 #endif
+#include <NTPClient.h>
+#include <WiFiUdp.h>
+#ifdef USE_I2C
+#include <Wire.h>
+#endif
+#ifdef USE_HW_RTC
+#include <ErriezDS3231.h>
+#endif
 
 struct CrashState{
     unsigned long rtcp = 0;
@@ -48,6 +57,7 @@ struct CrashState{
     unsigned long plannedRebootTimer = millis();
     unsigned int plannedRebootCountDown = 0;
     bool fPlannedReboot = false;
+    bool fRTCHwDetected = false;
 };
 
 #ifdef USE_IOT
@@ -136,8 +146,8 @@ class Udawa {
             void addOnThingsboardSharedAttributesReceived(ThingsboardOnSharedAttributesReceivedCallback callback);
         #endif
         void reboot(int countDown);
-
-
+        ESP32Time RTC;
+        void rtcUpdate(long ts);
 
 
     private:
@@ -198,6 +208,9 @@ class Udawa {
             const Attribute_Request_Callback _iotUpdaterFirmwareCheckCallback; //(&_processIoTUpdaterFirmwareCheckAttributesRequest, "fw_version");
             const OTA_Update_Callback _iotUpdaterOTACallback; //(&_iotUpdaterProgressCallback, &_iotUpdaterUpdatedCallback, CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION, &_iotUpdater, IOT_FIRMWARE_FAILURE_RETRIES, IOT_FIRMWARE_PACKET_SIZE);            
             #endif
+        #endif
+        #ifdef USE_HW_RTC
+        ErriezDS3231 _hwRTC;
         #endif
 };
 
