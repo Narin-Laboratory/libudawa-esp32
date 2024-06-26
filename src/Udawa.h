@@ -60,6 +60,7 @@ struct IoTState{
     bool fConfigSaveRPCSubscribed = false;
     bool fIoTCurrentFWSent = false;
     bool fIoTUpdateRequestSent = false;
+    bool fIoTUpdateStarted = false;
 };
 class UdawaThingsboardLogger{
     public:
@@ -112,6 +113,8 @@ class Udawa {
         typedef std::function<void()> ThingsboardOnConnectedCallback;
         typedef std::function<void()> ThingsboardOnDisconnectedCallback;
         typedef std::function<void(const JsonObjectConst &data)> ThingsboardOnSharedAttributesReceivedCallback;
+        bool iotSendAttributes(const char *buffer);
+        bool iotSendTelemetry(const char *buffer);
         #endif
         UdawaLogger *logger = UdawaLogger::getInstance(LogLevel::VERBOSE);
         UdawaSerialLogger *serialLogger = UdawaSerialLogger::getInstance(SERIAL_BAUD_RATE);
@@ -163,7 +166,7 @@ class Udawa {
             #else
                 WiFiClient _tcpClient;
                 Arduino_MQTT_Client _mqttClient;
-                ThingsBoard _tb;
+                ThingsBoardSized<UdawaThingsboardLogger> _tb;
             #endif
             IoTState _iotState;
             static void _pvTaskCodeThingsboardTaskWrapper(void* pvParameters);
