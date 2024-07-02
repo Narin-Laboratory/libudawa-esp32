@@ -1,9 +1,10 @@
 #include "Udawa.h"
 
 Udawa::Udawa() : config(PSTR("/config.json")), _crashStateConfig(PSTR("/crash.json"))
+  ,RTC(0)
   #ifdef USE_LOCAL_WEB_INTERFACE
-  ,http(80), 
-  ws(PSTR("/ws"))
+  ,http(80) 
+  ,ws(PSTR("/ws"))
   #endif
   #ifdef USE_IOT
   ,_mqttClient(_tcpClient), 
@@ -61,6 +62,11 @@ void Udawa::begin(){
     wiFiLogger->setConfig(config.state.logIP, config.state.logPort, WIFI_LOGGER_BUFFER_SIZE);
     #endif
 
+    #ifdef USE_I2C
+    Wire.begin();
+    Wire.setClock(400000);
+    #endif
+
     wiFiHelper.begin(config.state.wssid, config.state.wpass, config.state.dssid, config.state.dpass, config.state.model);
     wiFiHelper.addOnConnectedCallback(std::bind(&Udawa::_onWiFiConnected, this));
     wiFiHelper.addOnGotIPCallback(std::bind(&Udawa::_onWiFiGotIP, this));
@@ -116,9 +122,7 @@ void Udawa::run(){
         logger->warn(PSTR(__func__), PSTR("Planned reboot in %d.\n"), crashState.plannedRebootCountDown);
         crashState.plannedRebootTimer = now;
       }
-    }
-
-    
+    }    
 }
 
 void Udawa::_onWiFiConnected(){
@@ -133,6 +137,7 @@ void Udawa::_onWiFiGotIP(){
     #ifdef USE_WIFI_LOGGER
     logger->addLogger(wiFiLogger);
     #endif
+    rtcUpdate(0);
     #ifdef USE_WIFI_OTA
     if(config.state.fWOTA){
       logger->debug(PSTR(__func__), PSTR("Starting WiFi OTA at %s\n"), config.state.hname);
@@ -513,6 +518,20 @@ void Udawa::_pvTaskCodeThingsboard(void *pvParameters){
           logger->info(PSTR(__func__),PSTR("IoT Connected!\n"));
         }
       }
+      else{
+        if(_iotState.fIoTUpdateStarted){
+          _tb.Firmware_Send_Info(CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION) && _tb.Firmware_Send_State(PSTR("UPDATED"));
+          if (_tb.Subscribe_Firmware_Update(_iotUpdaterOTACallback) && _tb.Start_Firmware_Update(_iotUpdaterOTACallback)) {
+              logger->debug(PSTR(__func__), PSTR("Firmware update started.\n"));
+              // Firmware update started successfully
+              // Continue with the update process
+          } else {
+              logger->error(PSTR(__func__), PSTR("Firmware update failed to start.\n"));
+              // Handle the update failure
+          }
+          _iotState.fIoTUpdateStarted = false;
+        }
+      }
     }
 
     _tb.loop();
@@ -573,24 +592,10 @@ void Udawa::_processIoTUpdaterFirmwareCheckAttributesRequest(const JsonObjectCon
         logger->info(PSTR(__func__), PSTR("Firmware check local: %s vs cloud: %s\n"), CURRENT_FIRMWARE_VERSION, data["fw_version"].as<const char*>());
         if(strcmp(data["fw_version"].as<const char*>(), CURRENT_FIRMWARE_VERSION)){
           logger->debug(PSTR(__func__), PSTR("Updating firmware...\n"));
-          // Print heap info before starting firmware update for comparison
-          Serial.printf("Heap before update: free = %u, min free = %u, max block = %u\n",
-                        ESP.getFreeHeap(), ESP.getMinFreeHeap(), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
-
-          if (!_tb.Start_Firmware_Update(_iotUpdaterOTACallback)) {
-              logger->error(PSTR(__func__), PSTR("Firmware update failed to start.\n"));
-
-              // Print heap info after failed update
-              Serial.printf("Heap after failed update: free = %u, min free = %u, max block = %u\n",
-                            ESP.getFreeHeap(), ESP.getMinFreeHeap(), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
-
-              // Handle the update failure
-          } else {
-              // Firmware update started successfully
-              // Continue with the update process
-          }
+          _iotState.fIoTUpdateStarted = true;
         }else{
           logger->debug(PSTR(__func__), PSTR("No need to update firmware.\n"));
+          _iotState.fIoTUpdateStarted = false;
         }
       }
       xSemaphoreGive( _iotState.xSemaphoreThingsboard );
@@ -604,15 +609,105 @@ void Udawa::_processIoTUpdaterFirmwareCheckAttributesRequest(const JsonObjectCon
 
 void Udawa::_iotUpdaterUpdatedCallback(const bool& success){
   if(success){
-    logger->info(PSTR(__func__), PSTR("IoT OTA Update done!"));
+    logger->info(PSTR(__func__), PSTR("IoT OTA Update done!\n"));
     reboot(10);
   }
   else{
-    logger->warn(PSTR(__func__), PSTR("IoT OTA Update failed!"));
+    logger->warn(PSTR(__func__), PSTR("IoT OTA Update failed!\n"));
     reboot(10);
   }
 }
 
 void Udawa::_iotUpdaterProgressCallback(const size_t& currentChunk, const size_t& totalChuncks){
-  logger->debug(PSTR(__func__), PSTR("IoT OTA Progress: %.2f%%\n"),  static_cast<float>(currentChunk * 100U) / totalChuncks);
+  if( xSemaphoreTake( _iotState.xSemaphoreThingsboard, ( TickType_t ) 5000 ) == pdTRUE ) {
+    logger->debug(PSTR(__func__), PSTR("IoT OTA Progress: %.2f%%\n"),  static_cast<float>(currentChunk * 100U) / totalChuncks);
+    xSemaphoreGive( _iotState.xSemaphoreThingsboard );   
+  }
+}
+
+bool Udawa::iotSendAttributes(const char *buffer){
+  bool res = false;
+  int length = strlen(buffer);
+  if (buffer[length - 1] != '}') {
+      logger->verbose(PSTR(__func__),PSTR("The buffer is not JSON formatted!\n"));
+      return false;
+  }
+  if( _iotState.xSemaphoreThingsboard != NULL && WiFi.isConnected() && config.state.provSent && _tb.connected() && config.state.accTkn != NULL){
+    if( xSemaphoreTake( _iotState.xSemaphoreThingsboard, ( TickType_t ) 10000 ) == pdTRUE )
+    {
+      logger->verbose(PSTR(__func__), PSTR("Sending attribute to broker: %s\n"), buffer);
+      res = _tb.sendAttributeJson(buffer);
+      xSemaphoreGive( _iotState.xSemaphoreThingsboard );
+    }
+    else
+    {
+      logger->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+    }
+  }
+  return res;
+}
+
+bool Udawa::iotSendTelemetry(const char *buffer){
+  bool res = false;
+  int length = strlen(buffer);
+  if (buffer[length - 1] != '}') {
+      logger->verbose(PSTR(__func__),PSTR("The buffer is not JSON formatted!\n"));
+      return false;
+  }
+  if( _iotState.xSemaphoreThingsboard != NULL && WiFi.isConnected() && config.state.provSent && _tb.connected() && config.state.accTkn != NULL){
+    if( xSemaphoreTake( _iotState.xSemaphoreThingsboard, ( TickType_t ) 10000 ) == pdTRUE )
+    {
+      logger->verbose(PSTR(__func__), PSTR("Sending telemetry to broker: %s\n"), buffer);
+      res = _tb.sendTelemetryJson(buffer); 
+      xSemaphoreGive( _iotState.xSemaphoreThingsboard );
+    }
+    else
+    {
+      logger->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+    }   
+  }
+  return res;
+}
+
+void Udawa::rtcUpdate(long ts){
+  #ifdef USE_HW_RTC
+  crashState.fRTCHwDetected = false;
+  if(!_hwRTC.begin()){
+    logger->error(PSTR(__func__), PSTR("RTC module not found; please update the device time manually. Any function that requires precise timing will malfunction! \n"));
+  }
+  else{
+    crashState.fRTCHwDetected = true;
+    _hwRTC.setSquareWave(SquareWaveDisable);
+  }
+  #endif
+  if(ts == 0){
+    WiFiUDP ntpUDP;
+    NTPClient timeClient(ntpUDP, "pool.ntp.org");
+    timeClient.setTimeOffset(config.state.gmtOff);
+    bool ntpSuccess = timeClient.update();
+    if (ntpSuccess){
+      long epochTime = timeClient.getEpochTime();
+      RTC.setTime(epochTime);
+      logger->debug(PSTR(__func__), PSTR("Updated time via NTP: %s GMT Offset:%d (%d) \n"), RTC.getDateTime().c_str(), config.state.gmtOff, config.state.gmtOff / 3600);
+      #ifdef USE_HW_RTC
+      if(crashState.fRTCHwDetected){
+        logger->debug(PSTR(__func__), PSTR("Updating RTC HW from NTP...\n"));
+        _hwRTC.setDateTime(RTC.getHour(), RTC.getMinute(), RTC.getSecond(), RTC.getDay(), RTC.getMonth()+1, RTC.getYear(), RTC.getDayofWeek());
+        logger->debug(PSTR(__func__), PSTR("Updated RTC HW from NTP with epoch %d | H:I:S W D-M-Y. -> %d:%d:%d %d %d-%d-%d\n"), 
+        _hwRTC.getEpoch(), RTC.getHour(), RTC.getMinute(), RTC.getSecond(), RTC.getDayofWeek(), RTC.getDay(), RTC.getMonth()+1, RTC.getYear());
+      }
+      #endif
+    }else{
+      #ifdef USE_HW_RTC
+      if(crashState.fRTCHwDetected){
+        logger->debug(PSTR(__func__), PSTR("Updating RTC from RTC HW with epoch %d.\n"), _hwRTC.getEpoch());
+        RTC.setTime(_hwRTC.getEpoch());
+        logger->debug(PSTR(__func__), PSTR("Updated time via RTC HW: %s GMT Offset:%d (%d) \n"), RTC.getDateTime().c_str(), config.state.gmtOff, config.state.gmtOff / 3600);
+      }
+      #endif
+    }
+  }else{
+      RTC.setTime(ts);
+      logger->debug(PSTR(__func__), PSTR("Updated time via timestamp: %s\n"), RTC.getDateTime().c_str());
+  }
 }

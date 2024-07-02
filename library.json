@@ -13,7 +13,10 @@
       "Narin-Laboratory/thingsboard-arduino-sdk":"https://github.com/Narin-Laboratory/thingsboard-arduino-sdk.git#arduinojson7",
       "Narin-Laboratory/pubsubclient": "https://github.com/Narin-Laboratory/pubsubclient.git#master",
       "arduino-libraries/ArduinoHttpClient": "https://github.com/arduino-libraries/ArduinoHttpClient.git#master",
-      "bblanchon/StreamUtils": "^1.8.0"
+      "bblanchon/StreamUtils": "^1.8.0",
+      "erriez/ErriezDS3231": "https://github.com/Erriez/ErriezDS3231.git#master",
+      "arduino-libraries/NTPClient": "https://github.com/arduino-libraries/NTPClient.git#master",
+      "fbiego/ESP32Time": "https://github.com/fbiego/ESP32Time.git"
   },
   "version": "0.1.0",
   "examples": "examples/*/main.cpp",
