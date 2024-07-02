@@ -97,7 +97,7 @@ bool UdawaConfig::load(){
                 sprintf(decodedString, "%04X%08X",(uint16_t)(chipid>>32), (uint32_t)chipid);
 
                 strlcpy(state.hwid, decodedString, sizeof(state.hwid));
-                strlcpy(state.name, (String("UDAWA") + String(decodedString)).c_str(), sizeof(state.name));
+                strlcpy(state.name, (String(model) + String(decodedString)).c_str(), sizeof(state.name));
                 strlcpy(state.model, model, sizeof(state.model));
                 strlcpy(state.group, group, sizeof(state.group));
                 strlcpy(state.wssid, wssid, sizeof(state.wssid));
