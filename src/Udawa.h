@@ -15,15 +15,6 @@
 #ifdef USE_WIFI_OTA
 #include <ArduinoOTA.h>
 #endif
-#ifdef USE_LOCAL_WEB_INTERFACE
-#include <Crypto.h>
-#include <SHA256.h>
-#include <mbedtls/sha256.h>
-#include <base64.h>
-#include <map>
-#include <AsyncTCP.h>
-#include <ESPAsyncWebServer.h>
-#endif
 #ifdef USE_IOT
 #include <Arduino_MQTT_Client.h>
 #include <ThingsBoard.h>
@@ -46,6 +37,17 @@
 #endif
 #ifdef USE_HW_RTC
 #include <ErriezDS3231.h>
+#endif
+#ifdef USE_LOCAL_WEB_INTERFACE
+#include <Crypto.h>
+#include <SHA256.h>
+#include <mbedtls/sha256.h>
+#include <base64.h>
+#include <map>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include "mbedtls/md.h"
+#include "mbedtls/base64.h"
 #endif
 
 struct CrashState{

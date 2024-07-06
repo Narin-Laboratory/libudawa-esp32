@@ -125,6 +125,11 @@ void Udawa::run(){
     }    
 }
 
+void Udawa::reboot(int countDown = 0){
+  crashState.plannedRebootCountDown = countDown;
+  crashState.fPlannedReboot = true;
+}
+
 void Udawa::_onWiFiConnected(){
     
 }
@@ -227,6 +232,35 @@ void Udawa::_onWiFiOTAError(ota_error_t error){
 #endif
 
 #ifdef USE_LOCAL_WEB_INTERFACE
+String Udawa::hmacSha256(String htP, String salt) {
+  char outputBuffer[65]; // 2 characters per byte + null terminator
+
+  // Convert input strings to UTF-8 byte arrays 
+  std::vector<uint8_t> apiKeyUtf8(htP.begin(), htP.end());
+  std::vector<uint8_t> saltUtf8(salt.begin(), salt.end());
+
+  // Calculate the HMAC
+  unsigned char hmac[32];
+  mbedtls_md_context_t ctx;
+  mbedtls_md_type_t md_type = MBEDTLS_MD_SHA256;
+
+  mbedtls_md_init(&ctx);
+  mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(md_type), 1); // Set HMAC mode
+  mbedtls_md_hmac_starts(&ctx, apiKeyUtf8.data(), apiKeyUtf8.size());
+  mbedtls_md_hmac_update(&ctx, saltUtf8.data(), saltUtf8.size());
+  mbedtls_md_hmac_finish(&ctx, hmac);
+  mbedtls_md_free(&ctx); 
+
+  // Convert the hash to a hex string (with leading zeros)
+  for (int i = 0; i < 32; i++) {
+    sprintf(&outputBuffer[i * 2], "%02x", hmac[i]);
+  }
+
+  // Null terminate the string
+  outputBuffer[64] = '\0';
+  return String(outputBuffer);  
+}
+
 void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len){
   IPAddress clientIP = client->remoteIP();
   switch(type) {
@@ -262,13 +296,13 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
           unsigned long currentTime = millis();
           unsigned long lastAttemptTime = _wsClientAuthAttemptTimestamps[clientIP];
 
-          if (currentTime - lastAttemptTime < 1000) {
+          /**if (currentTime - lastAttemptTime < 1000) {
             // Too many attempts in short time, block this IP for blockInterval
             //_wsClientAuthAttemptTimestamps[clientIP] = currentTime + WS_BLOCKED_DURATION - WS_RATE_LIMIT_INTERVAL;
             logger->verbose(PSTR(__func__), PSTR("Too many authentication attempts. Blocking for %d seconds. Rate limit %d.\n"), WS_BLOCKED_DURATION / 1000, WS_RATE_LIMIT_INTERVAL);
-            client->close();
+            //client->close();
             return;
-          }
+          }**/
 
           if (err != DeserializationError::Ok) {
             client->printf(PSTR("{\"status\": {\"code\": 400, \"msg\": \"Bad request.\"}}"));
@@ -285,7 +319,7 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
             String salt = doc["salt"];
             String auth = doc["auth"];
             String _auth = hmacSha256(String(config.state.htP), salt);
-            //logger->debug(PSTR(__func__), PSTR("\n\t_auth: %s\n\tauth: %s\n\tkey: %s\n\tsalt: %s\n"), _auth.c_str(), auth.c_str(), config.state.htP, salt.c_str());
+            //logger->debug(PSTR(__func__), PSTR("\n\tserver: %s\n\tclient: %s\n\tkey: %s\n\tsalt: %s\n"), _auth.c_str(), auth.c_str(), config.state.htP, salt.c_str());
             if (_auth == auth) {
               // Client authenticated successfully, update the status in the map
               _wsClientAuthenticationStatus[client->id()] = true;
@@ -323,25 +357,6 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
 
 void Udawa::addOnWsEvent(WsOnEventCallback callback) {
     _onWSEventCallbacks.push_back(callback);
-}
-
-String Udawa::hmacSha256(String htP, String salt) {
-// Convert input strings to UTF-8
-  unsigned char hash[32];
-  const byte* key = (const byte*)htP.c_str();
-  size_t keyLength = htP.length();
-  const byte* message = (const byte*)salt.c_str();
-  size_t messageLength = salt.length();
-  mbedtls_md_context_t ctx;
-  mbedtls_md_type_t md_type = MBEDTLS_MD_SHA256;
-
-  mbedtls_md_init(&ctx);
-  mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(md_type), 1);
-  mbedtls_md_hmac_starts(&ctx, key, keyLength);
-  mbedtls_md_hmac_update(&ctx, message, messageLength);
-  mbedtls_md_hmac_finish(&ctx, hash);
-  mbedtls_md_free(&ctx); 
-  return base64::encode(hash, 32);
 }
 #endif
 
@@ -577,12 +592,6 @@ void Udawa::_processThingsboardRPCReboot(const JsonVariantConst &data, JsonDocum
 void Udawa::_processThingsboardRPCConfigSave(const JsonVariantConst &data, JsonDocument &response) {
   config.save();
 }
-#endif
-
-void Udawa::reboot(int countDown = 0){
-  crashState.plannedRebootCountDown = countDown;
-  crashState.fPlannedReboot = true;
-}
 
 void Udawa::_processIoTUpdaterFirmwareCheckAttributesRequest(const JsonObjectConst &data){
   if( _iotState.xSemaphoreThingsboard != NULL && WiFi.isConnected() && config.state.provSent && _tb.connected()){
@@ -668,6 +677,7 @@ bool Udawa::iotSendTelemetry(const char *buffer){
   }
   return res;
 }
+#endif
 
 void Udawa::rtcUpdate(long ts){
   #ifdef USE_HW_RTC
