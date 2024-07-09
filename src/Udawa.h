@@ -141,16 +141,31 @@ class Udawa {
             AsyncWebServer http;
             AsyncWebSocket ws;
             void addOnWsEvent(WsOnEventCallback callback);
+            void wsBroadcast(const char *buffer);
+            SemaphoreHandle_t xSemaphoreWSBroadcast;
         #endif
         #ifdef USE_IOT
             void addOnThingsboardConnected(ThingsboardOnConnectedCallback callback);
             void addOnThingsboardDisconnected(ThingsboardOnDisconnectedCallback callback);
             void addOnThingsboardSharedAttributesReceived(ThingsboardOnSharedAttributesReceivedCallback callback);
+            #ifdef USE_IOT_SECURE
+                WiFiClientSecure _tcpClient;
+                Arduino_MQTT_Client _mqttClient;
+                ThingsBoardSized<UdawaThingsboardLogger> tb;
+            #else
+                WiFiClient _tcpClient;
+                Arduino_MQTT_Client _mqttClient;
+                ThingsBoardSized<UdawaThingsboardLogger> tb;
+            #endif
+            IoTState iotState;
         #endif
         void reboot(int countDown);
         ESP32Time RTC;
         void rtcUpdate(long ts);
-
+        void syncClientAttr(uint8_t direction);
+        typedef std::function<void(uint8_t direction)> SyncClientAttributesCallback;
+        void addOnSyncClientAttributesCallback(SyncClientAttributesCallback callback);
+        std::vector<SyncClientAttributesCallback> _onSyncClientAttributesCallback;
 
     private:
         void _onWiFiConnected();
@@ -171,16 +186,6 @@ class Udawa {
         void _crashStateTruthKeeper(uint8_t direction);
         GenericConfig _crashStateConfig;
         #ifdef USE_IOT
-            #ifdef USE_IOT_SECURE
-                WiFiClientSecure _tcpClient;
-                Arduino_MQTT_Client _mqttClient;
-                ThingsBoardSized<UdawaThingsboardLogger> _tb;
-            #else
-                WiFiClient _tcpClient;
-                Arduino_MQTT_Client _mqttClient;
-                ThingsBoardSized<UdawaThingsboardLogger> _tb;
-            #endif
-            IoTState _iotState;
             static void _pvTaskCodeThingsboardTaskWrapper(void* pvParameters);
             void _pvTaskCodeThingsboard(void *pvParameters);
             void _processThingsboardProvisionResponse(const JsonObjectConst &data);
