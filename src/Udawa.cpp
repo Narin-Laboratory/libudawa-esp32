@@ -308,10 +308,10 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
       {
         JsonDocument doc;
         DeserializationError err = deserializeJson(doc, data);
-        if(err != DeserializationError::Ok){
+        /*if(err != DeserializationError::Ok){
           logger->error(PSTR(__func__), PSTR("Failed to parse JSON.\n"));
           return;
-        }
+        }*/
         
         // If client is not authenticated, check credentials
         if(!_wsClientAuthenticationStatus[client->id()]) {
@@ -362,6 +362,9 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
         else {
           // The client is already authenticated, you can process the received data
           //...
+          for (auto callback : _onWSEventCallbacks) { 
+            callback(server, client, type, arg, data, len); // Call each callback
+          }
         }
       }
       break;
@@ -371,10 +374,6 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
         return;
       }
       break;	
-  }
-
-  for (auto callback : _onWSEventCallbacks) { 
-    callback(server, client, type, arg, data, len); // Call each callback
   }
 }
 
