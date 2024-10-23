@@ -39,8 +39,8 @@
 #include <ErriezDS3231.h>
 #endif
 #ifdef USE_LOCAL_WEB_INTERFACE
-#include <Crypto.h>
-#include <SHA256.h>
+#include <../lib/Crypto/src/Crypto.h>
+#include <../lib/Crypto/src/SHA256.h>
 #include <mbedtls/sha256.h>
 #include <base64.h>
 #include <map>

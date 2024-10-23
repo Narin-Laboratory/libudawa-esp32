@@ -814,7 +814,7 @@ void Udawa::syncClientAttr(uint8_t direction){
 
   #ifdef USE_LOCAL_WEB_INTERFACE
   if((direction == 0 || direction == 2)){
-    JsonObject attr = doc.createNestedObject("attr");
+    JsonObject attr = doc["attr"].to<JsonObject>(); 
     attr[PSTR("ipad")] = ip.c_str();
     attr[PSTR("compdate")] = COMPILED;
     attr[PSTR("fmTitle")] = CURRENT_FIRMWARE_TITLE;
@@ -830,7 +830,7 @@ void Udawa::syncClientAttr(uint8_t direction){
     serializeJson(doc, buffer);
     wsBroadcast(buffer);
     doc.clear();
-    JsonObject cfg = doc.createNestedObject("cfg");
+    JsonObject cfg = doc["cfg"].to<JsonObject>(); 
     cfg[PSTR("name")] = config.state.name;
     cfg[PSTR("model")] = config.state.model;
     cfg[PSTR("group")] = config.state.group;
