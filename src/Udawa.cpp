@@ -73,10 +73,12 @@ void Udawa::begin(){
     Wire.setClock(400000);
     #endif
 
-    wiFiHelper.begin(config.state.wssid, config.state.wpass, config.state.dssid, config.state.dpass, config.state.model);
+    wiFiHelper.setInitState(config.state.fInit);
+    wiFiHelper.begin(config.state.wssid, config.state.wpass, config.state.dssid, config.state.dpass, config.state.model, config.state.htP);
     wiFiHelper.addOnConnectedCallback(std::bind(&Udawa::_onWiFiConnected, this));
     wiFiHelper.addOnGotIPCallback(std::bind(&Udawa::_onWiFiGotIP, this));
     wiFiHelper.addOnDisconnectedCallback(std::bind(&Udawa::_onWiFiDisconnected, this));
+    wiFiHelper.addOnAPNewClientIP(std::bind(&Udawa::_onWiFiAPNewClientIP, this));
 
     logger->info(PSTR(__func__), PSTR("Firmware version %s compiled on %s.\n"), CURRENT_FIRMWARE_VERSION, COMPILED);
     
@@ -95,6 +97,10 @@ void Udawa::begin(){
 
     crashState.rtcp = 0;
     _crashStateTruthKeeper(2);
+
+    if(!config.state.fInit){
+      _doInitialSetup();
+    }
 }
 
 void Udawa::run(){
@@ -136,12 +142,39 @@ void Udawa::reboot(int countDown = 0){
   crashState.fPlannedReboot = true;
 }
 
+void Udawa::_doInitialSetup(){
+  logger->warn(PSTR(__func__), PSTR("Starting initial setup protocol!\n"));
+  if (!MDNS.begin(config.state.hname)) {
+    logger->error(PSTR(__func__), PSTR("Error setting up MDNS responder!\n"));
+  }
+  else{
+    logger->debug(PSTR(__func__), PSTR("mDNS responder started at %s\n"), config.state.hname);
+  }
+
+  MDNS.addService("http", "tcp", 80);
+
+
+  logger->debug(PSTR(__func__), PSTR("Starting Web Service...\n"));
+  http.serveStatic("/", LittleFS, "/ui").setDefaultFile("setup.html");
+
+  ws.onEvent([this](AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len) {
+    this->_onWsEvent(server, client, type, arg, data, len);
+  });
+
+  http.addHandler(&ws);
+  http.begin();
+}
+
 void Udawa::_onWiFiConnected(){
-    
+  
 }
 
 void Udawa::_onWiFiDisconnected(){
+  
+}
 
+void Udawa::_onWiFiAPNewClientIP(){
+  
 }
 
 void Udawa::_onWiFiGotIP(){
@@ -314,7 +347,7 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
         }*/
         
         // If client is not authenticated, check credentials
-        if(!_wsClientAuthenticationStatus[client->id()]) {
+        if(!_wsClientAuthenticationStatus[client->id()] && config.state.fInit) {
           unsigned long currentTime = millis();
           unsigned long lastAttemptTime = _wsClientAuthAttemptTimestamps[clientIP];
 

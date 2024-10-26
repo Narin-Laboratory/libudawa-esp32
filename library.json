@@ -8,7 +8,7 @@
   },
   "dependencies": {
       "bblanchon/ArduinoJson": "^7.0.4",
-      "me-no-dev/ESPAsyncWebServer": "https://github.com/me-no-dev/ESPAsyncWebServer.git#master",
+      "mathieucarbou/ESPAsyncWebServer": "https://github.com/mathieucarbou/ESPAsyncWebServer",
       "Narin-Laboratory/thingsboard-arduino-sdk":"https://github.com/Narin-Laboratory/thingsboard-arduino-sdk.git#arduinojson7",
       "Narin-Laboratory/pubsubclient": "https://github.com/Narin-Laboratory/pubsubclient.git#master",
       "arduino-libraries/ArduinoHttpClient": "https://github.com/arduino-libraries/ArduinoHttpClient.git#master",

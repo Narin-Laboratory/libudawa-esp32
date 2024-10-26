@@ -4,21 +4,42 @@ UdawaWiFiHelper::UdawaWiFiHelper() {
 
     }
 
-void UdawaWiFiHelper::begin(const char* wssid, const char* wpass,
-    const char* dssid, const char* dpass, const char* hname){
-    _wssid = wssid; 
-    _wpass = wpass; 
-    _dssid = dssid;
-    _dpass = dpass;
-    _hname = hname;
-    
-    _logger->debug(PSTR(__func__), PSTR("Initializing WiFi network...\n"));
+void UdawaWiFiHelper::modeSTA(){
     WiFi.mode(WIFI_STA);
     WiFi.setHostname(_hname);
     WiFi.setAutoReconnect(true);
 
     _wiFi.addAP(_wssid, _wpass);
     _wiFi.addAP(_dssid, _dpass);
+}
+
+void UdawaWiFiHelper::modeAP(bool open){
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(_hname, _htP);
+    _logger->debug(PSTR(__func__), PSTR("SoftAP %s started with IP address: %s\n"), _hname, WiFi.softAPIP().toString().c_str());
+    _state.softAPstartTime = millis();
+}
+
+void UdawaWiFiHelper::setInitState (bool fInit){
+    _fInit = fInit;
+}
+
+void UdawaWiFiHelper::begin(const char* wssid, const char* wpass,
+    const char* dssid, const char* dpass, const char* hname, const char* htP){
+    _wssid = wssid; 
+    _wpass = wpass; 
+    _dssid = dssid;
+    _dpass = dpass;
+    _hname = hname;
+    _htP = htP;
+
+    if(!_fInit){
+        _logger->debug(PSTR(__func__), PSTR("Initializing WiFi network for the first time (AP Mode)...\n"));
+        modeAP(true);
+    }else{
+        _logger->debug(PSTR(__func__), PSTR("Initializing WiFi network...\n"));
+        modeSTA();
+    }
 
     WiFi.onEvent([this](WiFiEvent_t event, WiFiEventInfo_t info){
         this->onWiFiEvent(event, info);
@@ -38,7 +59,72 @@ void UdawaWiFiHelper::addOnGotIPCallback(WiFiGotIPCallback callback) {
     _onGotIPCallbacks.push_back(callback);
 }
 
+void UdawaWiFiHelper::addOnAPNewClientIP(WiFiAPNewClientIPCallback callback){
+    _onAPNewClientIPCallbacks.push_back(callback);
+}
+
+void UdawaWiFiHelper::addOnAPClientDisconnected(WiFiAPClientDisconnectedCallback callback){
+    _onAPClientDisconnectedCallbacks.push_back(callback);
+}
+
+int UdawaWiFiHelper::rssiToPercent(int rssi) {
+  // Map RSSI to a percentage range
+  // Adjust these values based on your environment and observations
+  const int minRSSI = -120;  // Minimum expected RSSI
+  const int maxRSSI = 0;   // Maximum expected RSSI
+
+  // Clamp the RSSI value to the defined range
+  rssi = constrain(rssi, minRSSI, maxRSSI);
+
+  // Calculate the percentage
+  int percentage = map(rssi, minRSSI, maxRSSI, 0, 100);
+  return percentage;
+}
+
+JsonDocument UdawaWiFiHelper::getAvailableWiFi(){
+    _logger->debug(PSTR(__func__), PSTR("Starting WiFi scanner...\n"));
+    int num = WiFi.scanNetworks();
+    JsonDocument wiFiList;
+    JsonDocument doc;
+    JsonDocument object;
+    JsonObject obj = object.to<JsonObject>();
+
+    for(int i = 0; i < num; i++){
+        object["ssid"] = WiFi.SSID(i);
+        object["rssi"] = rssiToPercent(WiFi.RSSI(i));
+        doc.add(obj);
+    }
+
+    wiFiList["WiFiList"] = doc;
+
+    serializeJsonPretty(wiFiList, Serial);
+    return wiFiList;
+}
+
 void UdawaWiFiHelper::run(){
+    
+    if(_fInit && WiFi.getMode() == WIFI_MODE_AP){
+        if(millis() - _state.softAPClientAvailCheckstartTime > _state.softAPClientAvailCheckTimeout * 1000){
+            uint8_t connectedWiFiClientNum = WiFi.softAPgetStationNum();
+            _logger->debug(PSTR(__func__), PSTR("Checking any connected WiFi client, found %d connected.\n"), connectedWiFiClientNum);
+            if(WiFi.softAPgetStationNum() > 0){
+                _state.softAPstartTime = millis();
+            }
+
+            _state.softAPClientAvailCheckstartTime = millis();
+        }
+        
+
+        if (millis() - _state.softAPstartTime < _state.softAPTimeout * 1000) {
+            delay(500);
+            // You can add code here to check for connected clients if needed
+        }
+
+        Serial.println("SoftAP timeout");
+        WiFi.mode(WIFI_STA); // Switch back to Station mode
+    }    
+
+
     _wiFi.run();
 }
 
@@ -60,6 +146,18 @@ void UdawaWiFiHelper::onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
   else if(event == ARDUINO_EVENT_WIFI_STA_GOT_IP){
     _logger->debug(PSTR(__func__), PSTR("WiFi network got IP: %s.\n"), WiFi.localIP().toString().c_str());
     for (auto callback : _onGotIPCallbacks) { 
+        callback(); // Call each callback
+    }
+  }
+  else if(event == ARDUINO_EVENT_WIFI_AP_STAIPASSIGNED){
+    _logger->debug(PSTR(__func__), PSTR("WiFi AP new client IP released.\n"));
+    for (auto callback : _onAPNewClientIPCallbacks) { 
+        callback(); // Call each callback
+    }
+  }
+  else if(event == ARDUINO_EVENT_WIFI_AP_STADISCONNECTED){
+    _logger->debug(PSTR(__func__), PSTR("WiFi AP client disconnected.\n"));
+    for (auto callback : _onAPClientDisconnectedCallbacks) { 
         callback(); // Call each callback
     }
   }

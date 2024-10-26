@@ -11,6 +11,7 @@
 #include <vector>
 
 struct UdawaConfigStruct{
+  bool fInit;
   char hwid[16];
   char name[24];
   char model[16];

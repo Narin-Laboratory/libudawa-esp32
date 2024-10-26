@@ -171,6 +171,8 @@ class Udawa {
         void _onWiFiConnected();
         void _onWiFiDisconnected();
         void _onWiFiGotIP();
+        void _onWiFiAPNewClientIP();
+        void _doInitialSetup();
         #ifdef USE_WIFI_OTA
             void _onWiFiOTAStart();
             void _onWiFiOTAEnd();

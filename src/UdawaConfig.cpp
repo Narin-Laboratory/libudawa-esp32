@@ -56,7 +56,7 @@ bool UdawaConfig::load(){
             if(err == DeserializationError::Ok){
                 _logger->debug(PSTR(__func__), PSTR("%s is valid JSON.\n"), _path);
                 
-
+                if(data[PSTR("fInit")] != nullptr){state.fInit = data[PSTR("fInit")].as<bool>();}
                 if(data[PSTR("hwid")] != nullptr){strlcpy(state.hwid, data[PSTR("hwid")].as<const char*>(), sizeof(state.hwid));}
                 if(data[PSTR("name")] != nullptr){strlcpy(state.name, data[PSTR("name")].as<const char*>(), sizeof(state.name));}
                 if(data[PSTR("model")] != nullptr){strlcpy(state.model, data[PSTR("model")].as<const char*>(), sizeof(state.model));}
@@ -105,7 +105,7 @@ bool UdawaConfig::load(){
                 strlcpy(state.dssid, dssid, sizeof(state.dssid));
                 strlcpy(state.dpass, dpass, sizeof(state.dpass));
                 strlcpy(state.upass, upass, sizeof(state.upass));
-                strlcpy(state.hname, (String(model) + String(decodedString)).c_str(), sizeof(state.hname));
+                strlcpy(state.hname, hname, sizeof(state.hname));
                 strlcpy(state.logIP, logIP, sizeof(state.logIP));
                 strlcpy(state.htU, htU, sizeof(state.htU));
                 strlcpy(state.htP, htP, sizeof(state.htP));
@@ -114,6 +114,7 @@ bool UdawaConfig::load(){
                 state.fWeb = fWeb;
                 state.gmtOff = gmtOff;
                 state.logPort = logPort;
+                state.fInit = fInit;
 
                 #ifdef USE_IOT
                 strlcpy(state.accTkn, accTkn, sizeof(state.accTkn));
@@ -156,6 +157,7 @@ bool UdawaConfig::save(){
 
         JsonDocument data;
 
+        data[PSTR("fInit")] = state.fInit;
         data[PSTR("hwid")] = state.hwid;
         data[PSTR("name")] = state.name;
         data[PSTR("model")] = state.model;
