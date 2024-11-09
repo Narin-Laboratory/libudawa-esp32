@@ -5,7 +5,11 @@ UdawaWiFiHelper::UdawaWiFiHelper() {
     }
 
 void UdawaWiFiHelper::modeSTA(){
+    WiFi.disconnect(true, true); 
+    WiFi.mode(WIFI_MODE_NULL);
+    delay(1000);
     WiFi.mode(WIFI_STA);
+    _logger->debug(PSTR(__func__), PSTR("STA %s started, trying to connect to AP: %s\n"), _hname, _wssid);
     WiFi.setHostname(_hname);
     WiFi.setAutoReconnect(true);
 
@@ -14,10 +18,14 @@ void UdawaWiFiHelper::modeSTA(){
 }
 
 void UdawaWiFiHelper::modeAP(bool open){
+    WiFi.disconnect(true, true); 
+    WiFi.mode(WIFI_MODE_NULL);
+    delay(1000);
     WiFi.mode(WIFI_AP);
     WiFi.softAP(_hname, _htP);
     _logger->debug(PSTR(__func__), PSTR("SoftAP %s started with IP address: %s\n"), _hname, WiFi.softAPIP().toString().c_str());
     _state.softAPstartTime = millis();
+    _state.softAPClientAvailCheckstartTime = millis();
 }
 
 void UdawaWiFiHelper::setInitState (bool fInit){
@@ -102,12 +110,15 @@ JsonDocument UdawaWiFiHelper::getAvailableWiFi(){
 }
 
 void UdawaWiFiHelper::run(){
-    
+    Serial.println(WiFi.getMode());
+    Serial.println(WIFI_MODE_AP);
+    Serial.println(WiFi.getMode() == WIFI_MODE_AP);
+    delay(1000);
     if(_fInit && WiFi.getMode() == WIFI_MODE_AP){
         if(millis() - _state.softAPClientAvailCheckstartTime > _state.softAPClientAvailCheckTimeout * 1000){
             uint8_t connectedWiFiClientNum = WiFi.softAPgetStationNum();
             _logger->debug(PSTR(__func__), PSTR("Checking any connected WiFi client, found %d connected.\n"), connectedWiFiClientNum);
-            if(WiFi.softAPgetStationNum() > 0){
+            if(connectedWiFiClientNum > 0){
                 _state.softAPstartTime = millis();
             }
 
@@ -115,13 +126,17 @@ void UdawaWiFiHelper::run(){
         }
         
 
-        if (millis() - _state.softAPstartTime < _state.softAPTimeout * 1000) {
-            delay(500);
-            // You can add code here to check for connected clients if needed
+        if (millis() - _state.softAPstartTime > _state.softAPTimeout * 1000) {
+            _logger->warn(PSTR(__func__), PSTR("SoftAP timedout. Switch back to STA mode.\n"));
+            modeSTA();
+            _state.softAPstartTime = millis();
         }
+    }
 
-        Serial.println("SoftAP timeout");
-        WiFi.mode(WIFI_STA); // Switch back to Station mode
+    if(_state.STADisconnectCounter > _state.STAMaximumDisconnectCount && WiFi.getMode() == WIFI_MODE_STA){
+        _logger->warn(PSTR(__func__), PSTR("STA unable to connect %d times. Switch back to AP mode.\n"), _state.STADisconnectCounter);
+        _state.STADisconnectCounter = 0;
+        modeAP(false);
     }    
 
 
@@ -132,7 +147,11 @@ void UdawaWiFiHelper::onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
   // Implement your event handling logic here
   // For example, you can print event details
   if(event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED){
-    _logger->debug(PSTR(__func__), PSTR("WiFi network %s disconnected!\n"), info.wifi_sta_connected.ssid);
+    if(WiFi.getMode() == WIFI_MODE_STA){
+        _state.STADisconnectCounter++;
+        _logger->debug(PSTR(__func__), PSTR("WiFi network %s disconnected %d/%d times!\n"), info.wifi_sta_connected.ssid, 
+            _state.STADisconnectCounter, _state.STAMaximumDisconnectCount);
+    }
     for (auto callback : _onDisconnectedCallbacks) { 
         callback(); // Call each callback
     }

@@ -98,9 +98,7 @@ void Udawa::begin(){
     crashState.rtcp = 0;
     _crashStateTruthKeeper(2);
 
-    if(!config.state.fInit){
-      _doInitialSetup();
-    }
+    _doServicesSetup();
 }
 
 void Udawa::run(){
@@ -142,8 +140,8 @@ void Udawa::reboot(int countDown = 0){
   crashState.fPlannedReboot = true;
 }
 
-void Udawa::_doInitialSetup(){
-  logger->warn(PSTR(__func__), PSTR("Starting initial setup protocol!\n"));
+void Udawa::_doServicesSetup(){
+  logger->warn(PSTR(__func__), PSTR("Starting services setup protocol!\n"));
   if (!MDNS.begin(config.state.hname)) {
     logger->error(PSTR(__func__), PSTR("Error setting up MDNS responder!\n"));
   }
@@ -153,9 +151,8 @@ void Udawa::_doInitialSetup(){
 
   MDNS.addService("http", "tcp", 80);
 
-
   logger->debug(PSTR(__func__), PSTR("Starting Web Service...\n"));
-  http.serveStatic("/", LittleFS, "/ui").setDefaultFile("setup.html");
+  http.serveStatic("/", LittleFS, "/ui").setDefaultFile("index.html");
 
   ws.onEvent([this](AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len) {
     this->_onWsEvent(server, client, type, arg, data, len);
@@ -346,8 +343,11 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
           return;
         }*/
         
+        serializeJsonPretty(doc, Serial);
+
         // If client is not authenticated, check credentials
         if(!_wsClientAuthenticationStatus[client->id()] && config.state.fInit) {
+          logger->verbose(PSTR(__func__), PSTR("Client is NOT authenticated (%i) AND fInit is TRUE (%i)\n"), _wsClientAuthenticationStatus[client->id()], config.state.fInit);
           unsigned long currentTime = millis();
           unsigned long lastAttemptTime = _wsClientAuthAttemptTimestamps[clientIP];
 
@@ -393,8 +393,59 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
           }
         }
         else {
-          // The client is already authenticated, you can process the received data
+          // The client is already authenticated or fInit is false, you can process the received data
           //...
+          String cmd = "";
+          if(doc["cmd"] != nullptr){
+            cmd = doc["cmd"].as<String>();
+          }
+
+          logger->verbose(PSTR(__func__), PSTR("Received command: %s \n"), cmd.c_str());
+
+          if (cmd == "setConfig") {
+            if(doc["cfg"] != nullptr){
+              if (doc["cfg"]["fInit"] != nullptr) {
+                config.state.fInit = doc["cfg"]["fInit"].as<bool>();
+                logger->debug(PSTR(__func__), PSTR("fInit: %i\n"), doc["cfg"]["fInit"].as<bool>());
+              }
+              if (doc["cfg"]["wssid"] != nullptr && strlen(doc["cfg"]["wssid"].as<const char*>()) > 0) {
+                strlcpy(config.state.wssid, doc["cfg"]["wssid"].as<const char*>(), sizeof(config.state.wssid));
+                logger->debug(PSTR(__func__), PSTR("wssid: %s\n"), doc["cfg"]["wssid"].as<const char*>());
+              }
+              if (doc["cfg"]["wpass"] != nullptr && strlen(doc["cfg"]["wpass"].as<const char*>()) > 0) {
+                  strlcpy(config.state.wpass, doc["cfg"]["wpass"].as<const char*>(), sizeof(config.state.wpass));
+                  logger->debug(PSTR(__func__), PSTR("wpass: %s\n"), doc["cfg"]["wpass"].as<const char*>());
+              }
+              if (doc["cfg"]["gmtOff"] != nullptr) {
+                  config.state.gmtOff = doc["cfg"]["gmtOff"].as<int>();
+                  logger->debug(PSTR(__func__), PSTR("gmtOff: %d\n"), config.state.gmtOff);  // Display as integer
+              }
+              if (doc["cfg"]["group"] != nullptr && strlen(doc["cfg"]["group"].as<const char*>()) > 0) {
+                  strlcpy(config.state.group, doc["cfg"]["group"].as<const char*>(), sizeof(config.state.group));
+                  logger->debug(PSTR(__func__), PSTR("group: %s\n"), doc["cfg"]["group"].as<const char*>());
+              }
+              if (doc["cfg"]["name"] != nullptr && strlen(doc["cfg"]["name"].as<const char*>()) > 0) {
+                  strlcpy(config.state.name, doc["cfg"]["name"].as<const char*>(), sizeof(config.state.name));
+                  logger->debug(PSTR(__func__), PSTR("name: %s\n"), doc["cfg"]["name"].as<const char*>());
+              }
+              if (doc["cfg"]["hname"] != nullptr && strlen(doc["cfg"]["hname"].as<const char*>()) > 0) {
+                  strlcpy(config.state.hname, doc["cfg"]["hname"].as<const char*>(), sizeof(config.state.hname));
+                  logger->debug(PSTR(__func__), PSTR("hname: %s\n"), doc["cfg"]["hname"].as<const char*>());
+              }
+              if (doc["cfg"]["htP"] != nullptr && strlen(doc["cfg"]["htP"].as<const char*>()) > 0) {
+                  strlcpy(config.state.htP, doc["cfg"]["htP"].as<const char*>(), sizeof(config.state.htP));
+                  logger->debug(PSTR(__func__), PSTR("htP: %s\n"), doc["cfg"]["htP"].as<const char*>());
+              }
+            }
+            config.save();
+            reboot(10);
+          }
+
+          else if(cmd == "getConfig"){
+            syncClientAttr(2);
+          }
+
+
           for (auto callback : _onWSEventCallbacks) { 
             callback(server, client, type, arg, data, len); // Call each callback
           }
@@ -863,13 +914,17 @@ void Udawa::syncClientAttr(uint8_t direction){
     serializeJson(doc, buffer);
     wsBroadcast(buffer);
     doc.clear();
+    doc[PSTR("cmd")] = PSTR("setConfig");
     JsonObject cfg = doc["cfg"].to<JsonObject>(); 
     cfg[PSTR("name")] = config.state.name;
     cfg[PSTR("model")] = config.state.model;
     cfg[PSTR("group")] = config.state.group;
-    cfg[PSTR("ap")] = WiFi.SSID();
     cfg[PSTR("gmtOff")] = config.state.gmtOff;
     cfg[PSTR("hname")] = config.state.hname;
+    cfg[PSTR("htP")] = config.state.htP;
+    cfg[PSTR("wssid")] = config.state.wssid;
+    cfg[PSTR("wpass")] = config.state.wpass;
+    cfg[PSTR("fInit")] = config.state.fInit;
     serializeJson(doc, buffer);
     wsBroadcast(buffer);
   }
