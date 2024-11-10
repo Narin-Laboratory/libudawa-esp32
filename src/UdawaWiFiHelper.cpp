@@ -27,8 +27,11 @@ void UdawaWiFiHelper::modeAP(bool open){
     _logger->debug(PSTR(__func__), PSTR("SoftAP %s started with IP address: %s\n"), _hname, WiFi.softAPIP().toString().c_str());
     _state.softAPstartTime = millis();
     _state.softAPClientAvailCheckstartTime = millis();
-    arduino_event_info_t info;
-    onWiFiEvent(ARDUINO_EVENT_WIFI_AP_START, info);
+    
+    if(!_fInit){
+        arduino_event_info_t info;
+        onWiFiEvent(ARDUINO_EVENT_WIFI_AP_START, info);
+    }
 }
 
 void UdawaWiFiHelper::setInitState (bool fInit){
