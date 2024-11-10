@@ -3,7 +3,6 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
-#include <WiFiMulti.h>
 #include "UdawaLogger.h"
 #include "UdawaSerialLogger.h"
 #include <vector>
@@ -16,7 +15,7 @@ struct WiFiHelperState {
     unsigned long softAPTimeout = 300;
     unsigned long softAPClientAvailCheckTimeout = 5;
     int STADisconnectCounter = 0;
-    int STAMaximumDisconnectCount = 10;
+    int STAMaximumDisconnectCount = 30;
 };
 
 class UdawaWiFiHelper{
@@ -27,20 +26,21 @@ class UdawaWiFiHelper{
         typedef std::function<void()> WiFiGotIPCallback;
         typedef std::function<void()> WiFiAPNewClientIPCallback;
         typedef std::function<void()> WiFiAPClientDisconnectedCallback;
+        typedef std::function<void()> WiFiAPStartCallback;
         void addOnConnectedCallback(WiFiConnectedCallback callback);
         void addOnDisconnectedCallback(WiFiDisconnectedCallback callback);
         void addOnGotIPCallback(WiFiGotIPCallback callback);
         void addOnAPNewClientIP(WiFiAPNewClientIPCallback callback);
         void addOnAPClientDisconnected(WiFiAPClientDisconnectedCallback callback);
+        void addOnAPStart(WiFiAPStartCallback callback);
         void begin(const char* wssid, const char* wpass,
             const char* dssid, const char* dpass, const char* hname, const char* htP);
         void setInitState (bool fInit);
         void run();
-        JsonDocument getAvailableWiFi();
+        void getAvailableWiFi(JsonDocument &doc);
         int rssiToPercent(int rssi);
     private:
         WiFiHelperState _state;
-        WiFiMulti _wiFi;
         UdawaLogger *_logger = UdawaLogger::getInstance(LogLevel::VERBOSE);
         const char* _wssid;
         const char* _wpass;
@@ -55,6 +55,7 @@ class UdawaWiFiHelper{
         std::vector<WiFiGotIPCallback> _onGotIPCallbacks;
         std::vector<WiFiAPNewClientIPCallback> _onAPNewClientIPCallbacks;
         std::vector<WiFiAPClientDisconnectedCallback> _onAPClientDisconnectedCallbacks;
+        std::vector<WiFiAPStartCallback> _onAPStartCallbacks;
         void modeSTA();
         void modeAP(bool open = false);
 };

@@ -5,27 +5,30 @@ UdawaWiFiHelper::UdawaWiFiHelper() {
     }
 
 void UdawaWiFiHelper::modeSTA(){
-    WiFi.disconnect(true, true); 
     WiFi.mode(WIFI_MODE_NULL);
-    delay(1000);
-    WiFi.mode(WIFI_STA);
-    _logger->debug(PSTR(__func__), PSTR("STA %s started, trying to connect to AP: %s\n"), _hname, _wssid);
+    WiFi.softAPdisconnect();
+    WiFi.disconnect(true, true);
+    WiFi.enableAP(false);
+    WiFi.enableSTA(true);
+    WiFi.mode(WIFI_MODE_STA);
+    _logger->debug(PSTR(__func__), PSTR("STA %s started, trying to connect to AP: %s using password %s\n"), _hname, _wssid, _wpass);
     WiFi.setHostname(_hname);
     WiFi.setAutoReconnect(true);
-
-    _wiFi.addAP(_wssid, _wpass);
-    _wiFi.addAP(_dssid, _dpass);
+    WiFi.begin(_wssid, _wpass);
 }
 
 void UdawaWiFiHelper::modeAP(bool open){
-    WiFi.disconnect(true, true); 
     WiFi.mode(WIFI_MODE_NULL);
-    delay(1000);
-    WiFi.mode(WIFI_AP);
+    WiFi.disconnect(true, true);
+    WiFi.enableSTA(false);
+    WiFi.enableAP(true);
+    WiFi.mode(WIFI_MODE_AP);
     WiFi.softAP(_hname, _htP);
     _logger->debug(PSTR(__func__), PSTR("SoftAP %s started with IP address: %s\n"), _hname, WiFi.softAPIP().toString().c_str());
     _state.softAPstartTime = millis();
     _state.softAPClientAvailCheckstartTime = millis();
+    arduino_event_info_t info;
+    onWiFiEvent(ARDUINO_EVENT_WIFI_AP_START, info);
 }
 
 void UdawaWiFiHelper::setInitState (bool fInit){
@@ -75,6 +78,10 @@ void UdawaWiFiHelper::addOnAPClientDisconnected(WiFiAPClientDisconnectedCallback
     _onAPClientDisconnectedCallbacks.push_back(callback);
 }
 
+void UdawaWiFiHelper::addOnAPStart(WiFiAPStartCallback callback){
+    _onAPStartCallbacks.push_back(callback);
+}
+
 int UdawaWiFiHelper::rssiToPercent(int rssi) {
   // Map RSSI to a percentage range
   // Adjust these values based on your environment and observations
@@ -89,30 +96,22 @@ int UdawaWiFiHelper::rssiToPercent(int rssi) {
   return percentage;
 }
 
-JsonDocument UdawaWiFiHelper::getAvailableWiFi(){
+void UdawaWiFiHelper::getAvailableWiFi(JsonDocument &doc){
     _logger->debug(PSTR(__func__), PSTR("Starting WiFi scanner...\n"));
     int num = WiFi.scanNetworks();
-    JsonDocument wiFiList;
-    JsonDocument doc;
+    _logger->debug(PSTR(__func__), PSTR("Scan finished.\n"));
     JsonDocument object;
     JsonObject obj = object.to<JsonObject>();
 
     for(int i = 0; i < num; i++){
         object["ssid"] = WiFi.SSID(i);
         object["rssi"] = rssiToPercent(WiFi.RSSI(i));
+        _logger->debug(PSTR(__func__), PSTR("Found %s with signal strength %i\n"), WiFi.SSID(i), WiFi.RSSI(i));
         doc.add(obj);
     }
-
-    wiFiList["WiFiList"] = doc;
-
-    serializeJsonPretty(wiFiList, Serial);
-    return wiFiList;
 }
 
 void UdawaWiFiHelper::run(){
-    Serial.println(WiFi.getMode());
-    Serial.println(WIFI_MODE_AP);
-    Serial.println(WiFi.getMode() == WIFI_MODE_AP);
     delay(1000);
     if(_fInit && WiFi.getMode() == WIFI_MODE_AP){
         if(millis() - _state.softAPClientAvailCheckstartTime > _state.softAPClientAvailCheckTimeout * 1000){
@@ -133,14 +132,11 @@ void UdawaWiFiHelper::run(){
         }
     }
 
-    if(_state.STADisconnectCounter > _state.STAMaximumDisconnectCount && WiFi.getMode() == WIFI_MODE_STA){
+    if(_state.STADisconnectCounter >= _state.STAMaximumDisconnectCount && WiFi.getMode() == WIFI_MODE_STA){
         _logger->warn(PSTR(__func__), PSTR("STA unable to connect %d times. Switch back to AP mode.\n"), _state.STADisconnectCounter);
         _state.STADisconnectCounter = 0;
         modeAP(false);
     }    
-
-
-    _wiFi.run();
 }
 
 void UdawaWiFiHelper::onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
@@ -158,6 +154,7 @@ void UdawaWiFiHelper::onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
   }
   else if(event == ARDUINO_EVENT_WIFI_STA_CONNECTED){
     _logger->debug(PSTR(__func__), PSTR("WiFi network %s connected!\n"), info.wifi_sta_connected.ssid);
+    _state.STADisconnectCounter = 0;
     for (auto callback : _onConnectedCallbacks) { 
         callback(); // Call each callback
     }
@@ -177,6 +174,12 @@ void UdawaWiFiHelper::onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
   else if(event == ARDUINO_EVENT_WIFI_AP_STADISCONNECTED){
     _logger->debug(PSTR(__func__), PSTR("WiFi AP client disconnected.\n"));
     for (auto callback : _onAPClientDisconnectedCallbacks) { 
+        callback(); // Call each callback
+    }
+  }
+  else if(event == ARDUINO_EVENT_WIFI_AP_START){
+    _logger->debug(PSTR(__func__), PSTR("WiFi AP started \n"));
+    for (auto callback : _onAPStartCallbacks) { 
         callback(); // Call each callback
     }
   }

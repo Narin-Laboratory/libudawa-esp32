@@ -73,12 +73,22 @@ void Udawa::begin(){
     Wire.setClock(400000);
     #endif
 
-    wiFiHelper.setInitState(config.state.fInit);
-    wiFiHelper.begin(config.state.wssid, config.state.wpass, config.state.dssid, config.state.dpass, config.state.model, config.state.htP);
+    if(!config.state.fInit){
+      JsonDocument doc;
+      wiFiHelper.getAvailableWiFi(doc);
+      File file = LittleFS.open("/WiFiList.json", FILE_WRITE);
+      serializeJson(doc, file);
+      file.close();
+    }
+
+
     wiFiHelper.addOnConnectedCallback(std::bind(&Udawa::_onWiFiConnected, this));
     wiFiHelper.addOnGotIPCallback(std::bind(&Udawa::_onWiFiGotIP, this));
     wiFiHelper.addOnDisconnectedCallback(std::bind(&Udawa::_onWiFiDisconnected, this));
     wiFiHelper.addOnAPNewClientIP(std::bind(&Udawa::_onWiFiAPNewClientIP, this));
+    wiFiHelper.addOnAPStart(std::bind(&Udawa::_onWiFiAPStart, this));
+    wiFiHelper.setInitState(config.state.fInit);
+    wiFiHelper.begin(config.state.wssid, config.state.wpass, config.state.dssid, config.state.dpass, config.state.model, config.state.htP);
 
     logger->info(PSTR(__func__), PSTR("Firmware version %s compiled on %s.\n"), CURRENT_FIRMWARE_VERSION, COMPILED);
     
@@ -97,8 +107,6 @@ void Udawa::begin(){
 
     crashState.rtcp = 0;
     _crashStateTruthKeeper(2);
-
-    _doServicesSetup();
 }
 
 void Udawa::run(){
@@ -135,12 +143,28 @@ void Udawa::run(){
     }    
 }
 
+void Udawa::_setFinit(bool fInit){
+  config.state.fInit = fInit;
+  config.save();
+
+  #ifdef USE_LOCAL_WEB_INTERFACE
+    if(config.state.fWeb && !crashState.fSafeMode){
+      JsonDocument doc;
+      doc[PSTR("cmd")] = PSTR("setFInit");
+      doc[PSTR("fInit")] = config.state.fInit;
+      String data;
+      serializeJson(doc, data);
+      wsBroadcast(data.c_str());
+    }
+  #endif
+}
+
 void Udawa::reboot(int countDown = 0){
   crashState.plannedRebootCountDown = countDown;
   crashState.fPlannedReboot = true;
 }
 
-void Udawa::_doServicesSetup(){
+void Udawa::_doInit(){
   logger->warn(PSTR(__func__), PSTR("Starting services setup protocol!\n"));
   if (!MDNS.begin(config.state.hname)) {
     logger->error(PSTR(__func__), PSTR("Error setting up MDNS responder!\n"));
@@ -150,6 +174,24 @@ void Udawa::_doServicesSetup(){
   }
 
   MDNS.addService("http", "tcp", 80);
+
+  #ifdef USE_WIFI_OTA
+    if(config.state.fWOTA){
+      logger->debug(PSTR(__func__), PSTR("Starting WiFi OTA at %s\n"), config.state.hname);
+      ArduinoOTA.setHostname(config.state.hname);
+      ArduinoOTA.setPasswordHash(config.state.upass);
+
+      ArduinoOTA.onStart(std::bind(&Udawa::_onWiFiOTAStart, this));
+      ArduinoOTA.onEnd(std::bind(&Udawa::_onWiFiOTAEnd, this));
+      ArduinoOTA.onProgress([this](unsigned int progress, unsigned int total) {
+          this->_onWiFiOTAProgress(progress, total);
+      });
+      ArduinoOTA.onError([this](ota_error_t error) {
+          this->_onWiFiOTAError(error);
+      });
+      ArduinoOTA.begin();
+    }
+  #endif
 
   logger->debug(PSTR(__func__), PSTR("Starting Web Service...\n"));
   http.serveStatic("/", LittleFS, "/ui").setDefaultFile("index.html");
@@ -162,20 +204,8 @@ void Udawa::_doServicesSetup(){
   http.begin();
 }
 
-void Udawa::_onWiFiConnected(){
-  
-}
-
-void Udawa::_onWiFiDisconnected(){
-  
-}
-
-void Udawa::_onWiFiAPNewClientIP(){
-  
-}
-
-void Udawa::_onWiFiGotIP(){
-    #ifdef USE_WIFI_LOGGER
+void Udawa::_startServices(){
+  #ifdef USE_WIFI_LOGGER
     logger->addLogger(wiFiLogger);
     #endif
     rtcUpdate(0);
@@ -228,6 +258,48 @@ void Udawa::_onWiFiGotIP(){
       }
     }
     #endif
+}
+
+void Udawa::_stopServices(){
+  #ifdef USE_WIFI_LOGGER
+    logger->addLogger(wiFiLogger);
+    #endif
+    
+    #ifdef USE_WIFI_OTA
+    if(config.state.fWOTA){
+      logger->debug(PSTR(__func__), PSTR("Stopping WiFi OTA...\n"), config.state.hname);
+      ArduinoOTA.end();
+    }
+    #endif
+
+    logger->error(PSTR(__func__), PSTR("Stopping MDNS...\n"));
+    MDNS.end();
+
+
+    #ifdef USE_LOCAL_WEB_INTERFACE
+    logger->error(PSTR(__func__), PSTR("Stopping HTTP...\n"));
+    http.end();
+    #endif
+}
+
+void Udawa::_onWiFiConnected(){
+  
+}
+
+void Udawa::_onWiFiDisconnected(){
+  
+}
+
+void Udawa::_onWiFiAPNewClientIP(){
+  
+}
+
+void Udawa::_onWiFiAPStart(){
+  _doInit();
+}
+
+void Udawa::_onWiFiGotIP(){
+  _startServices();
 }
 
 #ifdef USE_WIFI_OTA
@@ -403,48 +475,67 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
           logger->verbose(PSTR(__func__), PSTR("Received command: %s \n"), cmd.c_str());
 
           if (cmd == "setConfig") {
-            if(doc["cfg"] != nullptr){
-              if (doc["cfg"]["fInit"] != nullptr) {
-                config.state.fInit = doc["cfg"]["fInit"].as<bool>();
-                logger->debug(PSTR(__func__), PSTR("fInit: %i\n"), doc["cfg"]["fInit"].as<bool>());
+            if(doc[PSTR("cfg")] != nullptr){
+              if (doc[PSTR("cfg")][PSTR("wssid")] != nullptr && strlen(doc[PSTR("cfg")][PSTR("wssid")].as<const char*>()) > 0) {
+                strlcpy(config.state.wssid, doc[PSTR("cfg")][PSTR("wssid")].as<const char*>(), sizeof(config.state.wssid));
+                logger->debug(PSTR(__func__), PSTR("wssid: %s\n"), doc[PSTR("cfg")]["wssid"].as<const char*>());
               }
-              if (doc["cfg"]["wssid"] != nullptr && strlen(doc["cfg"]["wssid"].as<const char*>()) > 0) {
-                strlcpy(config.state.wssid, doc["cfg"]["wssid"].as<const char*>(), sizeof(config.state.wssid));
-                logger->debug(PSTR(__func__), PSTR("wssid: %s\n"), doc["cfg"]["wssid"].as<const char*>());
+              if (doc[PSTR("cfg")][PSTR("wpass")] != nullptr && strlen(doc[PSTR("cfg")][PSTR("wpass")].as<const char*>()) > 0) {
+                  strlcpy(config.state.wpass, doc[PSTR("cfg")][PSTR("wpass")].as<const char*>(), sizeof(config.state.wpass));
+                  logger->debug(PSTR(__func__), PSTR("wpass: %s\n"), doc[PSTR("cfg")][PSTR("wpass")].as<const char*>());
               }
-              if (doc["cfg"]["wpass"] != nullptr && strlen(doc["cfg"]["wpass"].as<const char*>()) > 0) {
-                  strlcpy(config.state.wpass, doc["cfg"]["wpass"].as<const char*>(), sizeof(config.state.wpass));
-                  logger->debug(PSTR(__func__), PSTR("wpass: %s\n"), doc["cfg"]["wpass"].as<const char*>());
-              }
-              if (doc["cfg"]["gmtOff"] != nullptr) {
-                  config.state.gmtOff = doc["cfg"]["gmtOff"].as<int>();
+              if (doc[PSTR("cfg")][PSTR("gmtOff")] != nullptr) {
+                  config.state.gmtOff = doc[PSTR("cfg")][PSTR("gmtOff")].as<int>();
                   logger->debug(PSTR(__func__), PSTR("gmtOff: %d\n"), config.state.gmtOff);  // Display as integer
               }
-              if (doc["cfg"]["group"] != nullptr && strlen(doc["cfg"]["group"].as<const char*>()) > 0) {
-                  strlcpy(config.state.group, doc["cfg"]["group"].as<const char*>(), sizeof(config.state.group));
-                  logger->debug(PSTR(__func__), PSTR("group: %s\n"), doc["cfg"]["group"].as<const char*>());
+              if (doc[PSTR("cfg")][PSTR("group")] != nullptr && strlen(doc[PSTR("cfg")][PSTR("group")].as<const char*>()) > 0) {
+                  strlcpy(config.state.group, doc[PSTR("cfg")][PSTR("group")].as<const char*>(), sizeof(config.state.group));
+                  logger->debug(PSTR(__func__), PSTR("group: %s\n"), doc[PSTR("cfg")][PSTR("group")].as<const char*>());
               }
-              if (doc["cfg"]["name"] != nullptr && strlen(doc["cfg"]["name"].as<const char*>()) > 0) {
-                  strlcpy(config.state.name, doc["cfg"]["name"].as<const char*>(), sizeof(config.state.name));
-                  logger->debug(PSTR(__func__), PSTR("name: %s\n"), doc["cfg"]["name"].as<const char*>());
+              if (doc[PSTR("cfg")][PSTR("name")] != nullptr && strlen(doc[PSTR("cfg")][PSTR("name")].as<const char*>()) > 0) {
+                  strlcpy(config.state.name, doc[PSTR("cfg")][PSTR("name")].as<const char*>(), sizeof(config.state.name));
+                  logger->debug(PSTR(__func__), PSTR("name: %s\n"), doc[PSTR("cfg")][PSTR("name")].as<const char*>());
               }
-              if (doc["cfg"]["hname"] != nullptr && strlen(doc["cfg"]["hname"].as<const char*>()) > 0) {
-                  strlcpy(config.state.hname, doc["cfg"]["hname"].as<const char*>(), sizeof(config.state.hname));
-                  logger->debug(PSTR(__func__), PSTR("hname: %s\n"), doc["cfg"]["hname"].as<const char*>());
+              if (doc[PSTR("cfg")][PSTR("hname")] != nullptr && strlen(doc[PSTR("cfg")][PSTR("hname")].as<const char*>()) > 0) {
+                  strlcpy(config.state.hname, doc[PSTR("cfg")][PSTR("hname")].as<const char*>(), sizeof(config.state.hname));
+                  logger->debug(PSTR(__func__), PSTR("hname: %s\n"), doc[PSTR("cfg")][PSTR("hname")].as<const char*>());
               }
-              if (doc["cfg"]["htP"] != nullptr && strlen(doc["cfg"]["htP"].as<const char*>()) > 0) {
-                  strlcpy(config.state.htP, doc["cfg"]["htP"].as<const char*>(), sizeof(config.state.htP));
-                  logger->debug(PSTR(__func__), PSTR("htP: %s\n"), doc["cfg"]["htP"].as<const char*>());
+              if (doc[PSTR("cfg")][PSTR("htP")] != nullptr && strlen(doc[PSTR("cfg")][PSTR("htP")].as<const char*>()) > 0) {
+                  strlcpy(config.state.htP, doc[PSTR("cfg")][PSTR("htP")].as<const char*>(), sizeof(config.state.htP));
+                  logger->debug(PSTR(__func__), PSTR("htP: %s\n"), doc[PSTR("cfg")][PSTR("htP")].as<const char*>());
               }
             }
             config.save();
-            reboot(10);
           }
 
           else if(cmd == "getConfig"){
             syncClientAttr(2);
           }
 
+          else if(cmd == "getAvailableWiFi"){
+            JsonDocument doc;
+            JsonDocument WiFiList;
+            if(!config.state.fInit){
+              File file = LittleFS.open("/WiFiList.json", FILE_READ);
+              deserializeJson(WiFiList, file);
+              file.close();
+            }else{
+              wiFiHelper.getAvailableWiFi(WiFiList);
+            }
+            doc[PSTR("cmd")] = PSTR("getAvailableWiFi");
+            doc[PSTR("WiFiList")] = WiFiList;
+            String data;
+            serializeJson(doc, data);
+            wsBroadcast(data.c_str());
+          }
+
+          else if(cmd == "setFInit"){
+            if(doc[PSTR("fInit")] != nullptr){
+              syncClientAttr(2);
+              _setFinit(doc[PSTR("fInit")].as<bool>());
+            }
+            reboot(3);
+          }
 
           for (auto callback : _onWSEventCallbacks) { 
             callback(server, client, type, arg, data, len); // Call each callback
@@ -915,7 +1006,7 @@ void Udawa::syncClientAttr(uint8_t direction){
     wsBroadcast(buffer);
     doc.clear();
     doc[PSTR("cmd")] = PSTR("setConfig");
-    JsonObject cfg = doc["cfg"].to<JsonObject>(); 
+    JsonObject cfg = doc[PSTR("cfg")].to<JsonObject>(); 
     cfg[PSTR("name")] = config.state.name;
     cfg[PSTR("model")] = config.state.model;
     cfg[PSTR("group")] = config.state.group;
