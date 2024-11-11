@@ -195,6 +195,8 @@ void Udawa::_doInit(){
 
   logger->debug(PSTR(__func__), PSTR("Starting Web Service...\n"));
   http.serveStatic("/", LittleFS, "/ui").setDefaultFile("index.html");
+  http.serveStatic("/css/pico.blue.min.css", LittleFS, "/ui/css/pico.blue.min.css");
+  http.serveStatic("/js/chart.min.js", LittleFS, "/ui/js/chart.min.js");
 
   ws.onEvent([this](AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len) {
     this->_onWsEvent(server, client, type, arg, data, len);
@@ -391,19 +393,51 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
     case WS_EVT_DISCONNECT:
       {
         logger->verbose(PSTR(__func__), PSTR("Client disconnected.\n"));
-        // Remove client from maps
         _wsClientAuthenticationStatus.erase(client->id());
         _wsClientAuthAttemptTimestamps.erase(clientIP);
-        logger->debug(PSTR(__func__), PSTR("ws [%u] disconnect.\n"), client->id());        
+        _wsClientSalts.erase(client->id());  // Remove salt on disconnect
+        break;     
       }
       break;
     case WS_EVT_CONNECT:
       {
         logger->verbose(PSTR(__func__), PSTR("New client arrived [%s]\n"), clientIP.toString().c_str());
-        // Initialize client as unauthenticated
         _wsClientAuthenticationStatus[client->id()] = false;
-        // Initialize timestamp for rate limiting
         _wsClientAuthAttemptTimestamps[clientIP] = millis();
+
+        if(config.state.fInit){
+          // Generate a random salt
+          unsigned char salt[16];
+          mbedtls_entropy_context entropy;
+          mbedtls_ctr_drbg_context ctr_drbg;
+          const char *pers = "ws_salt";
+
+          mbedtls_entropy_init(&entropy);
+          mbedtls_ctr_drbg_init(&ctr_drbg);
+          mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, (const unsigned char *)pers, strlen(pers));
+          mbedtls_ctr_drbg_random(&ctr_drbg, salt, sizeof(salt));
+          mbedtls_ctr_drbg_free(&ctr_drbg);
+          mbedtls_entropy_free(&entropy);
+
+          String saltHex;
+          for (int i = 0; i < sizeof(salt); i++) {
+              char hex[3];
+              sprintf(hex, "%02x", salt[i]);
+              saltHex += hex;
+          }
+          
+          // Store the salt for this client
+          _wsClientSalts[client->id()] = saltHex;
+
+          // Send salt to the client
+          JsonDocument doc;
+          doc[PSTR("cmd")] = PSTR("setSalt");
+          doc[PSTR("salt")] = saltHex;
+          String message;
+          serializeJson(doc, message);
+          client->text(message);
+          break;
+        }
       }
       break;
     case WS_EVT_DATA:
@@ -443,22 +477,28 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
               return;
             }
 
-            String salt = doc["salt"];
-            String auth = doc["auth"];
-            String _auth = hmacSha256(String(config.state.htP), salt);
+            String clientAuth = doc["auth"].as<String>();
+            String clientSalt = doc["salt"].as<String>();
             //logger->debug(PSTR(__func__), PSTR("\n\tserver: %s\n\tclient: %s\n\tkey: %s\n\tsalt: %s\n"), _auth.c_str(), auth.c_str(), config.state.htP, salt.c_str());
-            if (_auth == auth) {
-              // Client authenticated successfully, update the status in the map
-              _wsClientAuthenticationStatus[client->id()] = true;
-              client->printf(PSTR("{\"status\": {\"code\": 200, \"msg\": \"Authorized.\", \"model\": \"%s\"}}"), config.state.model);
-              logger->debug(PSTR(__func__), PSTR("ws [%u] authenticated.\n"), client->id());
-              syncClientAttr(2);
-            } else {
-              // Unauthorized, you can choose to disconnect the client
-              client->text(PSTR("{\"status\": {\"code\": 401, \"msg\": \"Unauthorized.\"}}"));
-              client->close();
-            }
+            
+            if (_wsClientSalts[client->id()] == clientSalt) {
+                // Compute expected HMAC with stored salt
+                String expectedAuth = hmacSha256(htP, _wsClientSalts[client->id()]);
 
+                // Check if the HMACs match
+                logger->verbose(PSTR(__func__), PSTR("\nhtP:\t%s \n\nclientAuth:\t%s\n\nexpectedAuth:\t%s\n"), config.state.htP, clientAuth.c_str(), expectedAuth.c_str());
+                if (clientAuth == expectedAuth) {
+                    _wsClientAuthenticationStatus[client->id()] = true;
+                    logger->verbose(PSTR(__func__), PSTR("Client authenticated successfully.\n"));
+                    client->printf(PSTR("{\"status\": {\"code\": 200, \"msg\": \"Authorized.\", \"model\": \"%s\"}}"), config.state.model);
+                } else {
+                    logger->warn(PSTR(__func__), PSTR("Authentication failed.\n"));
+                    client->printf(PSTR("{\"status\": {\"code\": 401, \"msg\": \"Authorization failed.\", \"model\": \"%s\"}}"), config.state.model);
+                }
+            } else {
+                logger->warn(PSTR(__func__), PSTR("Salt mismatch or expired.\n"));
+                client->printf(PSTR("{\"status\": {\"code\": 401, \"msg\": \"Salt mismatch or expired.\", \"model\": \"%s\"}}"), config.state.model);
+            }
             // Update timestamp for rate limiting
             _wsClientAuthAttemptTimestamps[clientIP] = currentTime;
             return;

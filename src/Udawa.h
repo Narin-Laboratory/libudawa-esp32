@@ -48,6 +48,8 @@
 #include <ESPAsyncWebServer.h>
 #include "mbedtls/md.h"
 #include "mbedtls/base64.h"
+#include <mbedtls/ctr_drbg.h>
+#include <mbedtls/entropy.h>
 #endif
 
 struct CrashState{
@@ -188,6 +190,7 @@ class Udawa {
             std::vector<WsOnEventCallback> _onWSEventCallbacks;
             std::map<uint32_t, bool> _wsClientAuthenticationStatus;
             std::map<IPAddress, unsigned long> _wsClientAuthAttemptTimestamps; 
+            std::map<uint32_t, String> _wsClientSalts;
         #endif
         void _crashStateTruthKeeper(uint8_t direction);
         GenericConfig _crashStateConfig;
