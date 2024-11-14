@@ -73,13 +73,12 @@ void Udawa::begin(){
     Wire.setClock(400000);
     #endif
 
-    if(!config.state.fInit){
-      JsonDocument doc;
-      wiFiHelper.getAvailableWiFi(doc);
-      File file = LittleFS.open("/WiFiList.json", FILE_WRITE);
-      serializeJson(doc, file);
-      file.close();
-    }
+
+    JsonDocument doc;
+    wiFiHelper.getAvailableWiFi(doc);
+    File file = LittleFS.open("/WiFiList.json", FILE_WRITE);
+    serializeJson(doc, file);
+    file.close();
 
 
     wiFiHelper.addOnConnectedCallback(std::bind(&Udawa::_onWiFiConnected, this));
@@ -130,6 +129,11 @@ void Udawa::run(){
       crashState.crashStateCheckedFlag = true;
     }
 
+    if( (now - crashState.lastRecordedDatetimeSavedTimer) > 60000 ){
+      crashState.lastRecordedDatetimeSavedTimer = now;
+      _crashStateTruthKeeper(2);
+    }
+
     if(crashState.fPlannedReboot){
       if( now - crashState.plannedRebootTimer > 1000){
         if(crashState.plannedRebootCountDown <= 0){
@@ -150,7 +154,7 @@ void Udawa::_setFinit(bool fInit){
   #ifdef USE_LOCAL_WEB_INTERFACE
     if(config.state.fWeb && !crashState.fSafeMode){
       JsonDocument doc;
-      doc[PSTR("cmd")] = PSTR("setFInit");
+      doc[PSTR("cmd")] = PSTR("setFinishedSetup");
       doc[PSTR("fInit")] = config.state.fInit;
       String data;
       serializeJson(doc, data);
@@ -387,6 +391,24 @@ void Udawa::wsBroadcast(const char *buffer){
   }
 }
 
+void Udawa::wsBroadcast(JsonDocument &doc){
+  if(config.state.fWeb){
+    if( xSemaphoreWSBroadcast != NULL){
+      if( xSemaphoreTake( xSemaphoreWSBroadcast, ( TickType_t ) 1000 ) == pdTRUE )
+      {
+        String buffer;
+        serializeJson(doc, buffer);
+        ws.textAll(buffer);
+        xSemaphoreGive( xSemaphoreWSBroadcast );
+      }
+      else
+      {
+        logger->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+      }
+    }
+  }
+}
+
 void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len){
   IPAddress clientIP = client->remoteIP();
   switch(type) {
@@ -431,8 +453,11 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
 
           // Send salt to the client
           JsonDocument doc;
-          doc[PSTR("cmd")] = PSTR("setSalt");
-          doc[PSTR("salt")] = saltHex;
+          JsonObject setSalt = doc[PSTR("setSalt")].to<JsonObject>();
+          setSalt[PSTR("salt")] = saltHex;
+          setSalt[PSTR("name")] = config.state.name;
+          setSalt[PSTR("model")] = config.state.model;
+          setSalt[PSTR("group")] = config.state.group;
           String message;
           serializeJson(doc, message);
           client->text(message);
@@ -466,14 +491,14 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
           }**/
 
           if (err != DeserializationError::Ok) {
-            client->printf(PSTR("{\"status\": {\"code\": 400, \"msg\": \"Bad request.\"}}"));
-            _wsClientAuthAttemptTimestamps[clientIP] = currentTime;
+            //client->printf(PSTR("{\"status\": {\"code\": 400, \"msg\": \"Bad request.\"}}"));
+            //_wsClientAuthAttemptTimestamps[clientIP] = currentTime;
             return;
           }
           else{
             if(doc["salt"] == nullptr || doc["auth"] == nullptr){
-              client->printf(PSTR("{\"status\": {\"code\": 400, \"msg\": \"Bad request.\"}}"));
-              _wsClientAuthAttemptTimestamps[clientIP] = currentTime;
+              //client->printf(PSTR("{\"status\": {\"code\": 400, \"msg\": \"Bad request.\"}}"));
+              //_wsClientAuthAttemptTimestamps[clientIP] = currentTime;
               return;
             }
 
@@ -555,13 +580,9 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
           else if(cmd == "getAvailableWiFi"){
             JsonDocument doc;
             JsonDocument WiFiList;
-            if(!config.state.fInit){
-              File file = LittleFS.open("/WiFiList.json", FILE_READ);
-              deserializeJson(WiFiList, file);
-              file.close();
-            }else{
-              wiFiHelper.getAvailableWiFi(WiFiList);
-            }
+            File file = LittleFS.open("/WiFiList.json", FILE_READ);
+            deserializeJson(WiFiList, file);
+            file.close();
             doc[PSTR("cmd")] = PSTR("getAvailableWiFi");
             doc[PSTR("WiFiList")] = WiFiList;
             String data;
@@ -573,6 +594,13 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
             if(doc[PSTR("fInit")] != nullptr){
               syncClientAttr(2);
               _setFinit(doc[PSTR("fInit")].as<bool>());
+            }
+            reboot(3);
+          }
+
+          else if(cmd == "setRTCUpdate"){
+            if(doc[PSTR("ts")] != nullptr){
+              rtcUpdate(doc[PSTR("ts")].as<unsigned long>());
             }
             reboot(3);
           }
@@ -606,13 +634,14 @@ void Udawa::_crashStateTruthKeeper(uint8_t direction){
     crashState.rtcp = crashStateDoc[PSTR("rtcp")];
     crashState.crashCnt = crashStateDoc[PSTR("crashCnt")];
     crashState.fSafeMode = crashStateDoc[PSTR("fSafeMode")];
+    crashState.lastRecordedDatetime = crashStateDoc[PSTR("lastRecordedDatetime")];
   } 
 
    if(direction == 2 || direction == 3){
     crashStateDoc[PSTR("rtcp")] = crashState.rtcp;
     crashStateDoc[PSTR("crashCnt")] = crashState.crashCnt;
     crashStateDoc[PSTR("fSafeMode")] = crashState.fSafeMode;
-    
+    crashStateDoc[PSTR("lastRecordedDatetime")] = RTC.getEpoch();
     _crashStateConfig.save(crashStateDoc);
   }
 }
@@ -920,7 +949,10 @@ void Udawa::rtcUpdate(long ts){
   #ifdef USE_HW_RTC
   crashState.fRTCHwDetected = false;
   if(!_hwRTC.begin()){
-    logger->error(PSTR(__func__), PSTR("RTC module not found; please update the device time manually. Any function that requires precise timing will malfunction! \n"));
+    logger->error(PSTR(__func__), PSTR("RTC module not found. Any function that requires precise timing will malfunction! \n"));
+    logger->warn(PSTR(__func__), PSTR("Trying to recover last recorded time from flash file...! \n"));
+    RTC.setTime(crashState.lastRecordedDatetime);
+    logger->debug(PSTR(__func__), PSTR("Updated time via last recorded time from flash file: %s\n"), RTC.getDateTime().c_str());
   }
   else{
     crashState.fRTCHwDetected = true;

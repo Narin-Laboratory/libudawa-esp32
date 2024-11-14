@@ -62,6 +62,8 @@ struct CrashState{
     unsigned int plannedRebootCountDown = 0;
     bool fPlannedReboot = false;
     bool fRTCHwDetected = false;
+    unsigned long lastRecordedDatetime = 0;
+    unsigned long lastRecordedDatetimeSavedTimer = 0;
 };
 
 #ifdef USE_IOT
@@ -144,6 +146,7 @@ class Udawa {
             AsyncWebSocket ws;
             void addOnWsEvent(WsOnEventCallback callback);
             void wsBroadcast(const char *buffer);
+            void wsBroadcast(JsonDocument &doc);
             SemaphoreHandle_t xSemaphoreWSBroadcast;
         #endif
         #ifdef USE_IOT
