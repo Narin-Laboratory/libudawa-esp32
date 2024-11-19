@@ -216,13 +216,13 @@ void Udawa::_setLEDBuzzer(uint8_t color, uint8_t isBlink, int32_t blinkCount, ui
       digitalWrite(config.state.pinLEDG, config.state.LEDOn == false ? true : false);
       digitalWrite(config.state.pinLEDB, config.state.LEDOn == false ? true : false);
       digitalWrite(config.state.pinBuzz, HIGH);
-      logger->debug(PSTR(__func__), PSTR("Blinking LED and Buzzing, blinkDelay: %d, blinkCount: %d\n"), blinkDelay, blinkCount);
+      //logger->debug(PSTR(__func__), PSTR("Blinking LED and Buzzing, blinkDelay: %d, blinkCount: %d\n"), blinkDelay, blinkCount);
       vTaskDelay(pdMS_TO_TICKS(blinkDelay));
       digitalWrite(config.state.pinLEDR, r);
       digitalWrite(config.state.pinLEDG, g);
       digitalWrite(config.state.pinLEDB, b);
       digitalWrite(config.state.pinBuzz, LOW);
-      logger->debug(PSTR(__func__), PSTR("Stop Blinking LED and Buzzing.\n"));
+      //logger->debug(PSTR(__func__), PSTR("Stop Blinking LED and Buzzing.\n"));
       vTaskDelay(pdMS_TO_TICKS(blinkDelay));
       blinkCounter++;
     }
@@ -274,7 +274,7 @@ void Udawa::_alarmTaskRoutine(void *arg){
         }
         self->_setLEDBuzzer(alarmMsg.color, alarmMsg.blinkCount > 0 ? true : false, alarmMsg.blinkCount, alarmMsg.blinkDelay);
         self->logger->debug(PSTR(__func__), PSTR("Alarm code: %d, color: %d, blinkCount: %d, blinkDelay: %d\n"), alarmMsg.code, alarmMsg.color, alarmMsg.blinkCount, alarmMsg.blinkDelay);
-        vTaskDelay((const TickType_t) (100) / portTICK_PERIOD_MS);
+        vTaskDelay((const TickType_t) (alarmMsg.blinkCount * alarmMsg.blinkDelay) / portTICK_PERIOD_MS);
       }
     }
     vTaskDelay((const TickType_t) 100 / portTICK_PERIOD_MS);
@@ -1278,5 +1278,27 @@ void Udawa::syncClientAttr(uint8_t direction){
 
   for (auto callback : _onSyncClientAttributesCallback) { 
     callback(direction); // Call each callback
+  }
+}
+
+void Udawa::I2CScanner(JsonDocument &doc){
+  JsonArray i2c = doc[PSTR("i2c")].to<JsonArray>();
+  for (uint8_t i = 0; i < 127; i++) {
+    Wire.beginTransmission(i);
+    uint8_t error = Wire.endTransmission();
+    if (error == 0) {
+      logger->debug(PSTR(__func__), PSTR("I2C device found at address 0x%02X\n"), i);
+      i2c.add(i);
+    }
+  }
+}
+
+void Udawa::I2CScanner(){
+  for (uint8_t i = 0; i < 127; i++) {
+    Wire.beginTransmission(i);
+    uint8_t error = Wire.endTransmission();
+    if (error == 0) {
+      logger->debug(PSTR(__func__), PSTR("I2C device found at address 0x%02X\n"), i);
+    }
   }
 }

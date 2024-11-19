@@ -52,6 +52,8 @@
 #include <mbedtls/entropy.h>
 #endif
 
+#define countof(a) (sizeof(a) / sizeof(a[0]))
+
 struct CrashState{
     unsigned long rtcp = 0;
     int crashCnt = 0;
@@ -183,6 +185,8 @@ class Udawa {
         typedef std::function<void(uint8_t direction)> SyncClientAttributesCallback;
         void addOnSyncClientAttributesCallback(SyncClientAttributesCallback callback);
         std::vector<SyncClientAttributesCallback> _onSyncClientAttributesCallback;
+        void I2CScanner(JsonDocument &doc);
+        void I2CScanner();
 
     private:
         void _onWiFiConnected();
