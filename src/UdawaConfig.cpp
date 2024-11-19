@@ -77,6 +77,7 @@ bool UdawaConfig::load(){
                 if(data[PSTR("fWeb")] != nullptr){state.fWeb = data[PSTR("fWeb")].as<bool>();}
                 if(data[PSTR("gmtOff")] != nullptr){state.gmtOff = data[PSTR("gmtOff")].as<int>();}
                 if(data[PSTR("logPort")] != nullptr){state.logPort = data[PSTR("logPort")].as<uint16_t>();}
+                if(data[PSTR("LEDOn")] != nullptr){state.LEDOn = data[PSTR("LEDOn")].as<uint8_t>();}
                 
                 #ifdef USE_IOT
                 if(data[PSTR("accTkn")] != nullptr){strlcpy(state.accTkn, data[PSTR("accTkn")].as<const char*>(), sizeof(state.accTkn));}
@@ -115,6 +116,7 @@ bool UdawaConfig::load(){
                 state.gmtOff = gmtOff;
                 state.logPort = logPort;
                 state.fInit = fInit;
+                state.LEDOn = 0;
 
                 #ifdef USE_IOT
                 strlcpy(state.accTkn, accTkn, sizeof(state.accTkn));
@@ -185,6 +187,7 @@ bool UdawaConfig::save(){
         data[PSTR("htP")] = state.htP;
         data[PSTR("logIP")] = state.logIP;
         data[PSTR("logPort")] = state.logPort;
+        data[PSTR("LEDOn")] = state.LEDOn;
 
         serializeJson(data, file);
 

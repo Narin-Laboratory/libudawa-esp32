@@ -66,6 +66,14 @@ struct CrashState{
     unsigned long lastRecordedDatetimeSavedTimer = 0;
 };
 
+struct AlarmMessage
+{
+    uint16_t code;
+    uint8_t color; 
+    int32_t blinkCount; 
+    uint16_t blinkDelay;
+};
+
 #ifdef USE_IOT
 struct IoTState{
     TaskHandle_t xHandleIoT;
@@ -142,6 +150,8 @@ class Udawa {
         UdawaWiFiHelper wiFiHelper;
         UdawaConfig config;
         CrashState crashState;
+        void setAlarm(uint16_t code, uint8_t color, int32_t blinkCount, uint16_t blinkDelay);
+
         #ifdef USE_LOCAL_WEB_INTERFACE
             String hmacSha256(String htP, String salt);
             AsyncWebServer http;
@@ -184,6 +194,10 @@ class Udawa {
         void _startServices();
         void _stopServices();
         void _setFinit(bool fInit);
+        void _setLEDBuzzer(uint8_t color, uint8_t isBlink, int32_t blinkCount, uint16_t blinkDelay);
+        void _setAlarmTaskRoutine(void *arg);
+        void _emitAlarm(int code);
+        QueueHandle_t _xQueueAlarm;
         #ifdef USE_WIFI_OTA
             void _onWiFiOTAStart();
             void _onWiFiOTAEnd();

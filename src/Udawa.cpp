@@ -60,6 +60,7 @@ Udawa::Udawa() : config(PSTR("/config.json")), _crashStateConfig(PSTR("/crash.js
 }
 
 void Udawa::begin(){
+    _xQueueAlarm = xQueueCreate( 10, sizeof( struct AlarmMessage ) );
     logger->debug(PSTR(__func__), PSTR("Initializing LittleFS: %d\n"), config.begin());
     config.load();
     
@@ -145,6 +146,68 @@ void Udawa::run(){
         crashState.plannedRebootTimer = now;
       }
     }    
+}
+
+void Udawa::_setLEDBuzzer(uint8_t color, uint8_t isBlink, int32_t blinkCount, uint16_t blinkDelay){
+  uint8_t r, g, b;
+  switch (color)
+  {
+  //Auto by network
+  case 0:
+    #ifdef USE_IOT
+    if(tb.connected()){
+    #else
+    if(false){
+    #endif
+      r = config.state.LEDOn == 0 ? 255 : 0;
+      g = config.state.LEDOn == 0 ? 255 : 0;
+      b = config.state.LEDOn;
+    }
+    else if(WiFi.status() == WL_CONNECTED){
+      r = config.state.LEDOn == 0 ? 255 : 0;
+      g = config.state.LEDOn;
+      b = config.state.LEDOn == 0 ? 255 : 0;
+    }
+    else{
+      r = config.state.LEDOn;
+      g = config.state.LEDOn == 0 ? 255 : 0;
+      b = config.state.LEDOn == 0 ? 255 : 0;
+    }
+    break;
+  //RED
+  case 1:
+    r = config.state.LEDOn;
+    g = config.state.LEDOn == 0 ? 255 : 0;
+    b = config.state.LEDOn == 0 ? 255 : 0;
+    break;
+  //GREEN
+  case 2:
+    r = config.state.LEDOn == 0 ? 255 : 0;
+    g = config.state.LEDOn;
+    b = config.state.LEDOn == 0 ? 255 : 0;
+    break;
+  //BLUE
+  case 3:
+    r = config.state.LEDOn == 0 ? 255 : 0;
+    g = config.state.LEDOn == 0 ? 255 : 0;
+    b = config.state.LEDOn;
+    break;
+  default:
+    r = config.state.LEDOn;
+    g = config.state.LEDOn;
+    b = config.state.LEDOn;
+  }
+}
+
+void Udawa::setAlarm(uint16_t code, uint8_t color, int32_t blinkCount, uint16_t blinkDelay){
+  if( _xQueueAlarm != NULL ){
+    AlarmMessage alarmMsg;
+    alarmMsg.code = code; alarmMsg.color = color; alarmMsg.blinkCount = blinkCount; alarmMsg.blinkDelay = blinkDelay;
+    if( xQueueSend( _xQueueAlarm, &alarmMsg, ( TickType_t ) 1000 ) != pdPASS )
+    {
+        logger->debug(PSTR(__func__), PSTR("Failed to set alarm. Queue is full. \n"));
+    }
+  }
 }
 
 void Udawa::_setFinit(bool fInit){
