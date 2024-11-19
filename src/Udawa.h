@@ -129,7 +129,9 @@ class Udawa {
         typedef std::function<void()> ThingsboardOnConnectedCallback;
         typedef std::function<void()> ThingsboardOnDisconnectedCallback;
         typedef std::function<void(const JsonObjectConst &data)> ThingsboardOnSharedAttributesReceivedCallback;
+        bool iotSendAttributes(JsonDocument &doc);
         bool iotSendAttributes(const char *buffer);
+        bool iotSendTelemetry(JsonDocument &doc);
         bool iotSendTelemetry(const char *buffer);
         #endif
         UdawaLogger *logger = UdawaLogger::getInstance(LogLevel::VERBOSE);

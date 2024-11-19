@@ -602,7 +602,6 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
             if(doc[PSTR("ts")] != nullptr){
               rtcUpdate(doc[PSTR("ts")].as<unsigned long>());
             }
-            reboot(3);
           }
 
           for (auto callback : _onWSEventCallbacks) { 
@@ -922,6 +921,30 @@ bool Udawa::iotSendAttributes(const char *buffer){
   return res;
 }
 
+bool Udawa::iotSendAttributes(JsonDocument &doc){
+  bool res = false;
+  String buffer;
+  serializeJson(doc, buffer);
+  int length = strlen(buffer.c_str());
+  if (buffer[length - 1] != '}') {
+      logger->verbose(PSTR(__func__),PSTR("The buffer is not JSON formatted!\n"));
+      return false;
+  }
+  if( iotState.xSemaphoreThingsboard != NULL && WiFi.isConnected() && config.state.provSent && tb.connected() && config.state.accTkn != NULL){
+    if( xSemaphoreTake( iotState.xSemaphoreThingsboard, ( TickType_t ) 10000 ) == pdTRUE )
+    {
+      logger->verbose(PSTR(__func__), PSTR("Sending attribute to broker: %s\n"), buffer.c_str());
+      res = tb.sendAttributeJson(buffer.c_str());
+      xSemaphoreGive( iotState.xSemaphoreThingsboard );
+    }
+    else
+    {
+      logger->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+    }
+  }
+  return res;
+}
+
 bool Udawa::iotSendTelemetry(const char *buffer){
   bool res = false;
   int length = strlen(buffer);
@@ -934,6 +957,30 @@ bool Udawa::iotSendTelemetry(const char *buffer){
     {
       logger->verbose(PSTR(__func__), PSTR("Sending telemetry to broker: %s\n"), buffer);
       res = tb.sendTelemetryJson(buffer); 
+      xSemaphoreGive( iotState.xSemaphoreThingsboard );
+    }
+    else
+    {
+      logger->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
+    }   
+  }
+  return res;
+}
+
+bool Udawa::iotSendTelemetry(JsonDocument &doc){
+  bool res = false;
+  String buffer;
+  serializeJson(doc, buffer);
+  int length = strlen(buffer.c_str());
+  if (buffer[length - 1] != '}') {
+      logger->verbose(PSTR(__func__),PSTR("The buffer is not JSON formatted!\n"));
+      return false;
+  }
+  if( iotState.xSemaphoreThingsboard != NULL && WiFi.isConnected() && config.state.provSent && tb.connected() && config.state.accTkn != NULL){
+    if( xSemaphoreTake( iotState.xSemaphoreThingsboard, ( TickType_t ) 10000 ) == pdTRUE )
+    {
+      logger->verbose(PSTR(__func__), PSTR("Sending telemetry to broker: %s\n"), buffer.c_str());
+      res = tb.sendTelemetryJson(buffer.c_str()); 
       xSemaphoreGive( iotState.xSemaphoreThingsboard );
     }
     else
