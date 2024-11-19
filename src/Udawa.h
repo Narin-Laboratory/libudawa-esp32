@@ -195,8 +195,9 @@ class Udawa {
         void _stopServices();
         void _setFinit(bool fInit);
         void _setLEDBuzzer(uint8_t color, uint8_t isBlink, int32_t blinkCount, uint16_t blinkDelay);
-        void _setAlarmTaskRoutine(void *arg);
-        void _emitAlarm(int code);
+        static void _alarmTaskRoutine(void *arg);
+        TaskHandle_t _xHandleAlarm = NULL;
+        BaseType_t _xReturnedAlarm;
         QueueHandle_t _xQueueAlarm;
         #ifdef USE_WIFI_OTA
             void _onWiFiOTAStart();

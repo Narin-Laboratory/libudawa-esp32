@@ -44,7 +44,11 @@ struct UdawaConfigStruct{
   char logIP[16] = "255.255.255.255";
   uint16_t logPort = 29514;
 
-  uint8_t LEDOn = 0;
+  bool LEDOn = false;
+  uint8_t pinLEDR = 27;
+  uint8_t pinLEDG = 14;
+  uint8_t pinLEDB = 12;
+  uint8_t pinBuzz = 32;
 };
 
 extern SemaphoreHandle_t xSemaphoreConfig; 

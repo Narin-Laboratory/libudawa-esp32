@@ -65,6 +65,7 @@ void Udawa::begin(){
     config.load();
     
     logger->setLogLevel((LogLevel)config.state.logLev);
+    setAlarm(0, 0, 3, 50);
     #ifdef USE_WIFI_LOGGER
     wiFiLogger->setConfig(config.state.logIP, config.state.logPort, WIFI_LOGGER_BUFFER_SIZE);
     #endif
@@ -102,8 +103,12 @@ void Udawa::begin(){
     }
     logger->debug(PSTR(__func__), PSTR("Runtime Counter: %d, Crash Counter: %d, Safemode Status: %s\n"), crashState.rtcp, crashState.crashCnt, crashState.fSafeMode ? PSTR("ENABLED") : PSTR("DISABLED"));
 
-
-
+    if(_xHandleAlarm == NULL){
+      _xReturnedAlarm = xTaskCreatePinnedToCore(_alarmTaskRoutine, PSTR("alarmTaskRoutine"), ALARM_STACKSIZE, this, 1, &_xHandleAlarm, 1);
+      if(_xReturnedAlarm == pdPASS){
+        logger->warn(PSTR(__func__), PSTR("Task alarmTaskRoutine has been created.\n"));
+      }
+    }
 
     crashState.rtcp = 0;
     _crashStateTruthKeeper(2);
@@ -159,37 +164,42 @@ void Udawa::_setLEDBuzzer(uint8_t color, uint8_t isBlink, int32_t blinkCount, ui
     #else
     if(false){
     #endif
-      r = config.state.LEDOn == 0 ? 255 : 0;
-      g = config.state.LEDOn == 0 ? 255 : 0;
+      r = config.state.LEDOn == false ? true : false;
+      g = config.state.LEDOn == false ? true : false;
       b = config.state.LEDOn;
     }
-    else if(WiFi.status() == WL_CONNECTED){
-      r = config.state.LEDOn == 0 ? 255 : 0;
+    else if(WiFi.status() == WL_CONNECTED && WiFi.getMode() == WIFI_MODE_STA){
+      r = config.state.LEDOn == false ? true : false;
       g = config.state.LEDOn;
-      b = config.state.LEDOn == 0 ? 255 : 0;
+      b = config.state.LEDOn == false ? true : false;
+    }
+    else if(WiFi.status() == WL_CONNECTED && WiFi.getMode() == WIFI_MODE_AP && WiFi.softAPgetStationNum() > 0){
+      r = config.state.LEDOn == false ? true : false;
+      g = config.state.LEDOn;
+      b = config.state.LEDOn == false ? true : false;
     }
     else{
       r = config.state.LEDOn;
-      g = config.state.LEDOn == 0 ? 255 : 0;
-      b = config.state.LEDOn == 0 ? 255 : 0;
+      g = config.state.LEDOn == false ? true : false;
+      b = config.state.LEDOn == false ? true : false;
     }
     break;
   //RED
   case 1:
     r = config.state.LEDOn;
-    g = config.state.LEDOn == 0 ? 255 : 0;
-    b = config.state.LEDOn == 0 ? 255 : 0;
+    g = config.state.LEDOn == false ? true : false;
+    b = config.state.LEDOn == false ? true : false;
     break;
   //GREEN
   case 2:
-    r = config.state.LEDOn == 0 ? 255 : 0;
+    r = config.state.LEDOn == false ? true : false;
     g = config.state.LEDOn;
-    b = config.state.LEDOn == 0 ? 255 : 0;
+    b = config.state.LEDOn == false ? true : false;
     break;
   //BLUE
   case 3:
-    r = config.state.LEDOn == 0 ? 255 : 0;
-    g = config.state.LEDOn == 0 ? 255 : 0;
+    r = config.state.LEDOn == false ? true : false;
+    g = config.state.LEDOn == false ? true : false;
     b = config.state.LEDOn;
     break;
   default:
@@ -197,6 +207,32 @@ void Udawa::_setLEDBuzzer(uint8_t color, uint8_t isBlink, int32_t blinkCount, ui
     g = config.state.LEDOn;
     b = config.state.LEDOn;
   }
+
+  if(isBlink){
+    int32_t blinkCounter = 0;
+    while (blinkCounter < blinkCount)
+    {
+      digitalWrite(config.state.pinLEDR, config.state.LEDOn == false ? true : false);
+      digitalWrite(config.state.pinLEDG, config.state.LEDOn == false ? true : false);
+      digitalWrite(config.state.pinLEDB, config.state.LEDOn == false ? true : false);
+      digitalWrite(config.state.pinBuzz, HIGH);
+      logger->debug(PSTR(__func__), PSTR("Blinking LED and Buzzing, blinkDelay: %d, blinkCount: %d\n"), blinkDelay, blinkCount);
+      vTaskDelay(pdMS_TO_TICKS(blinkDelay));
+      digitalWrite(config.state.pinLEDR, r);
+      digitalWrite(config.state.pinLEDG, g);
+      digitalWrite(config.state.pinLEDB, b);
+      digitalWrite(config.state.pinBuzz, LOW);
+      logger->debug(PSTR(__func__), PSTR("Stop Blinking LED and Buzzing.\n"));
+      vTaskDelay(pdMS_TO_TICKS(blinkDelay));
+      blinkCounter++;
+    }
+  }
+  else{
+    digitalWrite(config.state.pinLEDR, r);
+    digitalWrite(config.state.pinLEDG, g);
+    digitalWrite(config.state.pinLEDB, b);
+  }
+  
 }
 
 void Udawa::setAlarm(uint16_t code, uint8_t color, int32_t blinkCount, uint16_t blinkDelay){
@@ -207,6 +243,41 @@ void Udawa::setAlarm(uint16_t code, uint8_t color, int32_t blinkCount, uint16_t 
     {
         logger->debug(PSTR(__func__), PSTR("Failed to set alarm. Queue is full. \n"));
     }
+  }
+}
+
+void Udawa::_alarmTaskRoutine(void *arg){
+  Udawa* self = static_cast<Udawa*>(arg);
+  pinMode(self->config.state.pinLEDR, OUTPUT);
+  pinMode(self->config.state.pinLEDG, OUTPUT);
+  pinMode(self->config.state.pinLEDB, OUTPUT);
+  pinMode(self->config.state.pinBuzz, OUTPUT);
+  while(true){
+    if( self->_xQueueAlarm != NULL ){
+      AlarmMessage alarmMsg;
+      if( xQueueReceive( self->_xQueueAlarm,  &( alarmMsg ), ( TickType_t ) 100 ) == pdPASS )
+      {
+        if(alarmMsg.code > 0){
+          JsonDocument doc;
+          JsonObject alarm = doc[PSTR("alarm")].to<JsonObject>();
+          alarm[PSTR("code")] = alarmMsg.code;  
+
+          #ifdef USE_LOCAL_WEB_INTERFACE
+          self->wsBroadcast(doc);
+          #endif
+          
+          #ifdef USE_IOT
+          doc.clear();
+          doc[PSTR("alarm")] = alarmMsg.code;
+          self->iotSendTelemetry(doc);
+          #endif
+        }
+        self->_setLEDBuzzer(alarmMsg.color, alarmMsg.blinkCount > 0 ? true : false, alarmMsg.blinkCount, alarmMsg.blinkDelay);
+        self->logger->debug(PSTR(__func__), PSTR("Alarm code: %d, color: %d, blinkCount: %d, blinkDelay: %d\n"), alarmMsg.code, alarmMsg.color, alarmMsg.blinkCount, alarmMsg.blinkDelay);
+        vTaskDelay((const TickType_t) (100) / portTICK_PERIOD_MS);
+      }
+    }
+    vTaskDelay((const TickType_t) 100 / portTICK_PERIOD_MS);
   }
 }
 
@@ -352,23 +423,25 @@ void Udawa::_stopServices(){
 }
 
 void Udawa::_onWiFiConnected(){
-  
+  setAlarm(0, 0, 3, 50);
 }
 
 void Udawa::_onWiFiDisconnected(){
-  
+  setAlarm(0, 0, 3, 50);
 }
 
 void Udawa::_onWiFiAPNewClientIP(){
-  
+  setAlarm(0, 0, 3, 50);
 }
 
 void Udawa::_onWiFiAPStart(){
-  _doInit();
+  _doInit(); 
+  setAlarm(0, 0, 3, 50);
 }
 
 void Udawa::_onWiFiGotIP(){
   _startServices();
+  setAlarm(0, 0, 3, 50);
 }
 
 #ifdef USE_WIFI_OTA
