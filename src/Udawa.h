@@ -197,7 +197,7 @@ class Udawa {
         void _doInit();
         void _startServices();
         void _stopServices();
-        void _setFinit(bool fInit);
+        void _setFInit(bool fInit);
         void _setLEDBuzzer(uint8_t color, uint8_t isBlink, int32_t blinkCount, uint16_t blinkDelay);
         static void _alarmTaskRoutine(void *arg);
         TaskHandle_t _xHandleAlarm = NULL;

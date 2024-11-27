@@ -291,9 +291,7 @@ void Udawa::_setFinit(bool fInit){
     if(config.state.fWeb && !crashState.fSafeMode){
       JsonDocument doc;
       doc[PSTR("setFinishedSetup")][PSTR("fInit")] = config.state.fInit;
-      String data;
-      serializeJson(doc, data);
-      wsBroadcast(data.c_str());
+      wsBroadcast(doc);
     }
   #endif
 }
@@ -335,7 +333,9 @@ void Udawa::_doInit(){
   logger->debug(PSTR(__func__), PSTR("Starting Web Service...\n"));
   http.serveStatic("/", LittleFS, "/ui").setDefaultFile("index.html");
   http.serveStatic("/css/pico.blue.min.css", LittleFS, "/ui/css/pico.blue.min.css");
-  http.serveStatic("/js/chart.min.js", LittleFS, "/ui/js/chart.min.js");
+  http.serveStatic("/css/index.css", LittleFS, "/ui/css/index.css");
+  http.serveStatic("/assets/bundle.js", LittleFS, "/ui/assets/bundle.js");
+  
 
   ws.onEvent([this](AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len) {
     this->_onWsEvent(server, client, type, arg, data, len);
@@ -723,7 +723,7 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
           else if(doc[PSTR("setFInit")]){
             if(doc[PSTR("setFInit")][PSTR("fInit")] != nullptr){
               syncClientAttr(2);
-              _setFinit(doc[PSTR("setFInit")][PSTR("fInit")].as<bool>());
+              _setFInit(doc[PSTR("setFInit")][PSTR("fInit")].as<bool>());
             }
             reboot(3);
           }
