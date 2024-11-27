@@ -283,7 +283,7 @@ void Udawa::_alarmTaskRoutine(void *arg){
   }
 }
 
-void Udawa::_setFinit(bool fInit){
+void Udawa::_setFInit(bool fInit){
   config.state.fInit = fInit;
   config.save();
 
@@ -380,7 +380,10 @@ void Udawa::_startServices(){
     #ifdef USE_LOCAL_WEB_INTERFACE
     if(config.state.fWeb && !crashState.fSafeMode){
       logger->debug(PSTR(__func__), PSTR("Starting Web Service...\n"));
-      http.serveStatic("/", LittleFS, "/www").setDefaultFile("index.html");
+      http.serveStatic("/", LittleFS, "/ui").setDefaultFile("index.html");
+      http.serveStatic("/css/pico.blue.min.css", LittleFS, "/ui/css/pico.blue.min.css");
+      http.serveStatic("/css/index.css", LittleFS, "/ui/css/index.css");
+      http.serveStatic("/assets/bundle.js", LittleFS, "/ui/assets/bundle.js");
 
       ws.onEvent([this](AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len) {
           this->_onWsEvent(server, client, type, arg, data, len);
