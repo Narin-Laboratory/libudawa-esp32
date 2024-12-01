@@ -66,9 +66,6 @@ void Udawa::begin(){
     
     logger->setLogLevel((LogLevel)config.state.logLev);
     setAlarm(0, 0, 3, 50);
-    #ifdef USE_WIFI_LOGGER
-    wiFiLogger->setConfig(config.state.logIP, config.state.logPort, WIFI_LOGGER_BUFFER_SIZE);
-    #endif
 
     #ifdef USE_I2C
     Wire.begin();
@@ -96,17 +93,23 @@ void Udawa::begin(){
     _crashStateTruthKeeper(1);
     if(crashState.rtcp < 30000){
         crashState.crashCnt++;
-        if(crashState.crashCnt >= 10){
+        if(crashState.crashCnt >= MAX_CRASH_COUNTER){
             crashState.fSafeMode = true;
             logger->warn(PSTR(__func__), PSTR("** SAFEMODE ACTIVATED **\n"));
         }
     }
     logger->debug(PSTR(__func__), PSTR("Runtime Counter: %d, Crash Counter: %d, Safemode Status: %s\n"), crashState.rtcp, crashState.crashCnt, crashState.fSafeMode ? PSTR("ENABLED") : PSTR("DISABLED"));
 
-    if(_xHandleAlarm == NULL){
-      _xReturnedAlarm = xTaskCreatePinnedToCore(_alarmTaskRoutine, PSTR("alarmTaskRoutine"), ALARM_STACKSIZE, this, 1, &_xHandleAlarm, 1);
-      if(_xReturnedAlarm == pdPASS){
-        logger->warn(PSTR(__func__), PSTR("Task alarmTaskRoutine has been created.\n"));
+    if (!crashState.fSafeMode){
+      #ifdef USE_WIFI_LOGGER
+      wiFiLogger->setConfig(config.state.logIP, config.state.logPort, WIFI_LOGGER_BUFFER_SIZE);
+      #endif
+      
+      if(_xHandleAlarm == NULL){
+        _xReturnedAlarm = xTaskCreatePinnedToCore(_alarmTaskRoutine, PSTR("alarmTaskRoutine"), ALARM_STACKSIZE, this, 1, &_xHandleAlarm, 1);
+        if(_xReturnedAlarm == pdPASS){
+          logger->warn(PSTR(__func__), PSTR("Task alarmTaskRoutine has been created.\n"));
+        }
       }
     }
 
@@ -613,9 +616,6 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
           logger->error(PSTR(__func__), PSTR("Failed to parse JSON.\n"));
           return;
         }*/
-        
-        serializeJsonPretty(doc, Serial);
-
         // If client is not authenticated, check credentials
         if(!_wsClientAuthenticationStatus[client->id()] && config.state.fInit) {
           logger->verbose(PSTR(__func__), PSTR("Client is NOT authenticated (%i) AND fInit is TRUE (%i)\n"), _wsClientAuthenticationStatus[client->id()], config.state.fInit);
