@@ -648,7 +648,7 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
             
             if (_wsClientSalts[client->id()] == clientSalt) {
                 // Compute expected HMAC with stored salt
-                String expectedAuth = hmacSha256(config.state.htP, _wsClientSalts[client->id()]);
+                String expectedAuth = hmacSha256(htP, _wsClientSalts[client->id()]);
 
                 // Check if the HMACs match
                 //logger->verbose(PSTR(__func__), PSTR("\nhtP:\t%s \n\nclientAuth:\t%s\n\nexpectedAuth:\t%s\n"), config.state.htP, clientAuth.c_str(), expectedAuth.c_str());
