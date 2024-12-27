@@ -991,10 +991,12 @@ void Udawa::_processThingsboardRPCReboot(const JsonVariantConst &data, JsonDocum
   else{
     reboot(0);
   }
+  response.set(PSTR("OK"));
 }
 
 void Udawa::_processThingsboardRPCConfigSave(const JsonVariantConst &data, JsonDocument &response) {
   config.save();
+  response.set(PSTR("OK"));
 }
 
 void Udawa::_processIoTUpdaterFirmwareCheckAttributesRequest(const JsonObjectConst &data){

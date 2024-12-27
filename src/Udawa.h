@@ -240,6 +240,7 @@ class Udawa {
 
             void _processThingsboardRPCConfigSave(const JsonVariantConst &data, JsonDocument &response);
             std::function<void(const JsonVariantConst &data, JsonDocument &response)> _thingsboardRPCConfigSaveHandler;
+            
             #ifdef USE_IOT_OTA
             Espressif_Updater _iotUpdater;
             void _iotUpdaterUpdatedCallback(const bool& success);
