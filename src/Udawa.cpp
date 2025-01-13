@@ -62,7 +62,7 @@ Udawa::Udawa() : config(PSTR("/config.json")), _crashStateConfig(PSTR("/crash.js
 void Udawa::begin(){
     _xQueueAlarm = xQueueCreate( 10, sizeof( struct AlarmMessage ) );
     logger->debug(PSTR(__func__), PSTR("Initializing LittleFS: %d\n"), config.begin());
-    config.load();
+    bool configLoadStatus = config.load();
     
     logger->setLogLevel((LogLevel)config.state.logLev);
     setAlarm(0, 0, 3, 50);
@@ -117,6 +117,10 @@ void Udawa::begin(){
 
     crashState.rtcp = 0;
     _crashStateTruthKeeper(2);
+
+    if(!configLoadStatus){
+      crashState.fFSDownloading = true;
+    }
 }
 
 void Udawa::run(){
@@ -156,7 +160,15 @@ void Udawa::run(){
         logger->warn(PSTR(__func__), PSTR("Planned reboot in %d.\n"), crashState.plannedRebootCountDown);
         crashState.plannedRebootTimer = now;
       }
-    }    
+    }
+
+    if(crashState.fFSDownloading){
+      if(WiFi.status() == WL_CONNECTED){
+        logger->warn(PSTR(__func__), PSTR("Filesystem update is started.\n"));
+        crashState.fFSDownloading = false;
+        FSDownloader();
+      }
+    }
 }
 
 void Udawa::_setLEDBuzzer(uint8_t color, uint8_t isBlink, int32_t blinkCount, uint16_t blinkDelay){
@@ -400,7 +412,7 @@ void Udawa::_startServices(){
     #endif
 
     #ifdef USE_IOT
-    if(config.state.fIoT && iotState.xHandleIoT == NULL && !crashState.fSafeMode){
+    if(config.state.fIoT && iotState.xHandleIoT == NULL && !crashState.fSafeMode && !crashState.fFSDownloading){
       iotState.xReturnedIoT = xTaskCreatePinnedToCore(_pvTaskCodeThingsboardTaskWrapper, PSTR("Thingsboard"), IOT_STACKSIZE_TB, this, 1, &iotState.xHandleIoT, 1);
       if(iotState.xReturnedIoT == pdPASS){
         logger->warn(PSTR(__func__), PSTR("Task Thingsboard has been created.\n"));
@@ -705,6 +717,22 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
                 strlcpy(config.state.htP, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("htP")].as<const char*>(), sizeof(config.state.htP));
                 logger->debug(PSTR(__func__), PSTR("htP: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("htP")].as<const char*>());
               }
+              if (doc[PSTR("setConfig")][PSTR("cfg")].containsKey(PSTR("binURL")) && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("binURL")].as<const char*>()) > 0) {
+                strlcpy(config.state.binURL, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("binURL")].as<const char*>(), sizeof(config.state.binURL));
+                logger->debug(PSTR(__func__), PSTR("binURL: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("binURL")].as<const char*>());
+              }
+              if (doc[PSTR("setConfig")][PSTR("tbAddr")].containsKey(PSTR("tbAddr")) && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("tbAddr")].as<const char*>()) > 0) {
+                strlcpy(config.state.tbAddr, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("tbAddr")].as<const char*>(), sizeof(config.state.tbAddr));
+                logger->debug(PSTR(__func__), PSTR("tbAddr: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("tbAddr")].as<const char*>());
+              }
+              if (doc[PSTR("setConfig")][PSTR("cfg")].containsKey(PSTR("tbPort"))) {
+                config.state.gmtOff = doc[PSTR("setConfig")][PSTR("cfg")][PSTR("tbPort")].as<uint16_t>();
+                logger->debug(PSTR(__func__), PSTR("tbPort: %d\n"), config.state.tbPort); 
+              }
+              if (doc[PSTR("setConfig")][PSTR("cfg")].containsKey(PSTR("fIoT"))) {
+                config.state.fIoT = doc[PSTR("setConfig")][PSTR("cfg")][PSTR("fIoT")].as<bool>();
+                logger->debug(PSTR(__func__), PSTR("fIoT: %d\n"), config.state.fIoT); 
+              }
             }
             config.save();
             }
@@ -740,9 +768,11 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
           }
 
           else if(doc[PSTR("reboot")]){
-            if(doc[PSTR("reboot")].containsKey(PSTR("cdown"))){
-              reboot(doc[PSTR("reboot")][PSTR("cdown")].as<int>());
-            }
+            reboot(doc[PSTR("reboot")].as<int>());
+          }
+
+          else if(doc[PSTR("FSUpdate")]){
+            crashState.fFSDownloading = true;
           }
 
           for (auto callback : _onWSEventCallbacks) { 
@@ -1187,11 +1217,15 @@ void Udawa::addOnSyncClientAttributesCallback(SyncClientAttributesCallback callb
   _onSyncClientAttributesCallback.push_back(callback);
 }
 
+void Udawa::addOnFSDownloadedCallback(FSDownloadedCallback callback){
+  _onFSDownloadedCallback.push_back(callback);
+}
+
 void Udawa::syncClientAttr(uint8_t direction){
   String ip = WiFi.localIP().toString();
   
   JsonDocument doc;
-  char buffer[384];
+  char buffer[512];
 
   #ifdef USE_IOT
   if(tb.connected() && (direction == 0 || direction == 1) ){
@@ -1218,6 +1252,8 @@ void Udawa::syncClientAttr(uint8_t direction){
     doc[PSTR("group")] = config.state.group;
     doc[PSTR("tbAddr")] = config.state.tbAddr;
     doc[PSTR("tbPort")] = config.state.tbPort;
+    doc[PSTR("fIoT")] = config.state.fIoT;
+    doc[PSTR("binURL")] = config.state.binURL;
     serializeJson(doc, buffer);
     iotSendAttributes(buffer);
     doc.clear();
@@ -1279,6 +1315,10 @@ void Udawa::syncClientAttr(uint8_t direction){
     cfg[PSTR("wssid")] = config.state.wssid;
     cfg[PSTR("wpass")] = config.state.wpass;
     cfg[PSTR("fInit")] = config.state.fInit;
+    cfg[PSTR("fIoT")] = config.state.fIoT;
+    cfg[PSTR("tbPort")] = config.state.tbPort;
+    cfg[PSTR("tbAddr")] = config.state.tbAddr;
+    cfg[PSTR("binURL")] = config.state.binURL;
     serializeJson(doc, buffer);
     wsBroadcast(buffer);
   }
@@ -1309,4 +1349,146 @@ void Udawa::I2CScanner(){
       logger->debug(PSTR(__func__), PSTR("I2C device found at address 0x%02X\n"), i);
     }
   }
+}
+
+void Udawa::FSDownloader(){
+  if (iotState.xHandleIoT != NULL) {
+    vTaskDelete(iotState.xHandleIoT);
+    iotState.xHandleIoT = NULL;
+    logger->info(PSTR(__func__), PSTR("IoT task stopped.\n"));
+  }
+  HTTPClient http;
+
+  logger->info(PSTR(__func__), PSTR("Downloading SPIFFS: %s.\n"), config.state.binURL);
+
+  http.begin( config.state.binURL );
+
+  const char* get_headers[] = { "Content-Length", "Content-type", "Accept-Ranges" };
+  http.collectHeaders( get_headers, sizeof(get_headers)/sizeof(const char*) );
+
+  int64_t updateSize = 0;
+  int httpCode = http.GET();
+  String contentType;
+
+  if( httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY ) {
+      updateSize = http.getSize();
+      contentType = http.header( "Content-type" );
+      String acceptRange = http.header( "Accept-Ranges" );
+      if( acceptRange == "bytes" ) {
+          logger->info(PSTR(__func__), PSTR("This server supports resume!\n"));
+      } else {
+          logger->info(PSTR(__func__), PSTR("This server dose not supports resume!\n"));
+      }
+  } else {
+      logger->info(PSTR(__func__), PSTR("Server responded with HTTP Status %s.\n"), String(httpCode).c_str());
+      reboot(300);
+      return;
+  }
+
+  // TODO: Not all streams respond with a content length.
+  // TODO: Set updateSize to UPDATE_SIZE_UNKNOWN when content type is valid.
+
+  // check updateSize and content type
+  if( updateSize<=0 ) {
+      logger->info(PSTR(__func__), PSTR("Response is empty! updateSize: %d, contentType: %s\n"), (int)updateSize, contentType.c_str());
+      reboot(3);
+      return;
+  }
+
+  logger->info(PSTR(__func__), PSTR("updateSize: %d, contentType: %s\n"), (int)updateSize, contentType.c_str());
+
+  Stream* stream = http.getStreamPtr();
+  if( updateSize<=0 || stream == nullptr ) {
+      logger->warn(PSTR(__func__), PSTR("HTTP Error.\n"));
+      reboot(3);
+      return;
+  }
+
+  // some network streams (e.g. Ethernet) can be laggy and need to 'breathe'
+  if( !stream->available() ) {
+      uint32_t timeout = millis() + 3000;
+      while( stream->available() ) {
+          if( millis()>timeout ) {
+              logger->warn(PSTR(__func__), PSTR("Stream timed out!\n"));
+              reboot(3);
+              return;
+          }
+          vTaskDelay((const TickType_t)10 / portTICK_PERIOD_MS);
+      }
+  }
+
+  // If using compression, the size is implicitely unknown
+  size_t fwsize = updateSize;       // fw_size is unknown if we have a compressed image
+
+  bool canBegin = Update.begin(updateSize, U_SPIFFS);
+
+  if( !canBegin ) {
+      logger->warn(PSTR(__func__), PSTR("Not enough space to begin OTA, partition size mismatch?\n"));
+      Update.abort();
+      reboot(3);
+      return;
+  }
+
+  Update.onProgress( [](size_t progress, size_t size) {
+    Serial.printf("LittleFS Updater: %d/%d\n", (int)progress, (int)size);
+  });
+
+  logger->info(PSTR(__func__), PSTR("Begin LittleFS OTA. This may take 2 - 5 mins to complete. Things might be quiet for a while.. Patience!\n"));
+  // Some activity may appear in the Serial monitor during the update (depends on Update.onProgress)
+  size_t written = 0;
+  while (written < updateSize) {
+      size_t bytesWritten = Update.writeStream(*stream);
+      if (bytesWritten == 0) {
+          logger->warn(PSTR(__func__), PSTR("Stream write error.\n"));
+          Update.abort();
+          config.save();
+          for (auto callback : _onFSDownloadedCallback) { 
+            callback(); // Call each callback
+          }
+          reboot(3);
+          return;
+      }
+      written += bytesWritten;
+      logger->info(PSTR(__func__), PSTR("Written : %d / %d.\n"), (int)written, (int)updateSize);
+  }
+
+  if (written == updateSize) {
+      logger->info(PSTR(__func__), PSTR("Written : %d successfully. \n"), (int)written);
+  } else {
+      logger->warn(PSTR(__func__), PSTR("Written only : %d / %d. Premature end of stream?\n"), (int)written, (int)updateSize);
+      Update.abort();
+      config.save();
+      for (auto callback : _onFSDownloadedCallback) { 
+        callback(); // Call each callback
+      }
+      reboot(3);
+      return;
+  }
+
+  if (!Update.end()) {
+      logger->warn(PSTR(__func__), PSTR("An Update Error Occurred: %d\n"), Update.getError());
+      config.save();
+      for (auto callback : _onFSDownloadedCallback) { 
+        callback(); // Call each callback
+      }
+      reboot(3);
+      return;
+  }
+  if (Update.isFinished()) {
+      logger->info(PSTR(__func__), PSTR("Update completed successfully.\n"));
+      config.save();
+      for (auto callback : _onFSDownloadedCallback) { 
+        callback(); // Call each callback
+      }
+      delay(1000); // Ensure configuration is saved before reboot
+      reboot(3);
+  } else {
+      config.save();
+      for (auto callback : _onFSDownloadedCallback) { 
+        callback(); // Call each callback
+      }
+      logger->warn(PSTR(__func__), PSTR("Update not finished! Something went wrong!\n"));
+      reboot(3);
+  }
+  reboot(3);
 }

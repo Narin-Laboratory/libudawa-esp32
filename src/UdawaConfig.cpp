@@ -91,6 +91,7 @@ bool UdawaConfig::load(){
                 if(data.containsKey(PSTR("provSent"))){state.provSent = data[PSTR("provSent")].as<bool>();}
                 if(data.containsKey(PSTR("fIoT"))){state.fIoT = data[PSTR("fIoT")].as<bool>();}
                 if(data.containsKey(PSTR("tbAddr"))){strlcpy(state.tbAddr, data[PSTR("tbAddr")].as<const char*>(), sizeof(state.tbAddr));}
+                if(data.containsKey(PSTR("binURL"))){strlcpy(state.binURL, data[PSTR("binURL")].as<const char*>(), sizeof(state.binURL));}
                 #endif
             }
             else{
@@ -127,14 +128,18 @@ bool UdawaConfig::load(){
                 state.pinBuzz = pinBuzz;
 
                 #ifdef USE_IOT
-                strlcpy(state.accTkn, accTkn, sizeof(state.accTkn));
-                strlcpy(state.provDK, provDK, sizeof(state.provDK));
-                strlcpy(state.provDS, provDS, sizeof(state.provDS));
+                strlcpy(state.accTkn, accTkn, sizeof(accTkn));
+                strlcpy(state.provDK, provDK, sizeof(provDK));
+                strlcpy(state.provDS, provDS, sizeof(provDS));
                 state.provSent = false;
                 state.fIoT = fIoT;
-                strlcpy(state.tbAddr, tbAddr, sizeof(state.tbAddr));
+                strlcpy(state.tbAddr, tbAddr, sizeof(tbAddr));
+                strlcpy(state.binURL, binURL, sizeof(binURL));
                 state.tbPort = tbPort;
                 #endif
+                file.close();
+                xSemaphoreGive( xSemaphoreConfig );
+                return false;
             }
         
             file.close();
@@ -186,6 +191,7 @@ bool UdawaConfig::save(){
         data[PSTR("fIoT")] = state.fIoT;
         data[PSTR("tbAddr")] = state.tbAddr;
         data[PSTR("tbPort")] = state.tbPort;
+        data[PSTR("binURL")] = state.binURL;
         #endif
         data[PSTR("gmtOff")] = state.gmtOff;
         data[PSTR("fWOTA")] = state.fWOTA;
@@ -234,6 +240,8 @@ bool GenericConfig::load(JsonDocument &data){
             else
             {
                 _logger->warn(PSTR(__func__),PSTR("%s size is abnormal: %d!\n"), _path, file.size());
+                xSemaphoreGive( xSemaphoreConfig );
+                return false;
             }
 
             DeserializationError err = deserializeJson(data, file);

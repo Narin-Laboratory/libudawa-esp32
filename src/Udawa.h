@@ -51,6 +51,8 @@
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/entropy.h>
 #endif
+#include <HTTPClient.h>
+#include <Update.h>
 
 #define countof(a) (sizeof(a) / sizeof(a[0]))
 
@@ -66,6 +68,7 @@ struct CrashState{
     bool fRTCHwDetected = false;
     unsigned long lastRecordedDatetime = 0;
     unsigned long lastRecordedDatetimeSavedTimer = 0;
+    bool fFSDownloading = false;
 };
 
 struct AlarmMessage
@@ -130,6 +133,7 @@ class Udawa {
         Udawa();
         void run();
         void begin();
+        void FSDownloader();
         #ifdef USE_LOCAL_WEB_INTERFACE
         typedef std::function<void(AsyncWebSocket * server, AsyncWebSocketClient * client, 
                           AwsEventType type, void * arg, uint8_t *data, size_t len)> 
@@ -185,6 +189,11 @@ class Udawa {
         typedef std::function<void(uint8_t direction)> SyncClientAttributesCallback;
         void addOnSyncClientAttributesCallback(SyncClientAttributesCallback callback);
         std::vector<SyncClientAttributesCallback> _onSyncClientAttributesCallback;
+
+        typedef std::function<void()> FSDownloadedCallback;
+        void addOnFSDownloadedCallback(FSDownloadedCallback callback);
+        std::vector<FSDownloadedCallback> _onFSDownloadedCallback;
+
         void I2CScanner(JsonDocument &doc);
         void I2CScanner();
 
