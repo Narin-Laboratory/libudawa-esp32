@@ -1003,6 +1003,8 @@ void Udawa::_pvTaskCodeThingsboard(void *pvParameters){
           }
           #endif
 
+          syncClientAttr(1);
+
           for (auto callback : _onThingsboardConnectedCallbacks) { 
             callback(); // Call each callback
           }
@@ -1274,16 +1276,14 @@ void Udawa::syncClientAttr(uint8_t direction){
     doc[PSTR("fmVersion")] = CURRENT_FIRMWARE_VERSION;
     doc[PSTR("stamac")] = WiFi.macAddress();
     doc[PSTR("apmac")] = WiFi.softAPmacAddress();
-    serializeJson(doc, buffer);
-    iotSendAttributes(buffer);
+    iotSendAttributes(doc);
     doc.clear();
     doc[PSTR("flFree")] = ESP.getFreeSketchSpace();
     doc[PSTR("fwSize")] = ESP.getSketchSize();
     doc[PSTR("flSize")] = ESP.getFlashChipSize();
     doc[PSTR("dSize")] = (int)LittleFS.totalBytes(); 
     doc[PSTR("dUsed")] = (int)LittleFS.usedBytes();
-    serializeJson(doc, buffer);
-    iotSendAttributes(buffer);
+    iotSendAttributes(doc);
     doc.clear();
     doc[PSTR("sdkVer")] = ESP.getSdkVersion();
     doc[PSTR("model")] = config.state.model;
@@ -1293,8 +1293,7 @@ void Udawa::syncClientAttr(uint8_t direction){
     doc[PSTR("tbPort")] = config.state.tbPort;
     doc[PSTR("fIoT")] = config.state.fIoT;
     doc[PSTR("binURL")] = config.state.binURL;
-    serializeJson(doc, buffer);
-    iotSendAttributes(buffer);
+    iotSendAttributes(doc);
     doc.clear();
     doc[PSTR("wssid")] = config.state.wssid;
     doc[PSTR("ap")] = WiFi.SSID();
@@ -1303,15 +1302,13 @@ void Udawa::syncClientAttr(uint8_t direction){
     doc[PSTR("dpass")] = config.state.dpass;
     doc[PSTR("upass")] = config.state.upass;
     doc[PSTR("accTkn")] = config.state.accTkn;
-    serializeJson(doc, buffer);
-    iotSendAttributes(buffer);
+    iotSendAttributes(doc);
     doc.clear();
     doc[PSTR("provDK")] = config.state.provDK;
     doc[PSTR("provDS")] = config.state.provDS;
     doc[PSTR("logLev")] = config.state.logLev;
     doc[PSTR("gmtOff")] = config.state.gmtOff;
-    serializeJson(doc, buffer);
-    iotSendAttributes(buffer);
+    iotSendAttributes(doc);
     doc.clear();
     doc[PSTR("fWOTA")] = (int)config.state.fWOTA;
     doc[PSTR("fWeb")] = (int)config.state.fWeb;
@@ -1320,8 +1317,7 @@ void Udawa::syncClientAttr(uint8_t direction){
     doc[PSTR("logPort")] = config.state.logPort;
     doc[PSTR("htU")] = config.state.htU;
     doc[PSTR("htP")] = config.state.htP;
-    serializeJson(doc, buffer);
-    iotSendAttributes(buffer);
+    iotSendAttributes(doc);
     doc.clear();
   }
   #endif
