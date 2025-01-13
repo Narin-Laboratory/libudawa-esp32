@@ -168,6 +168,9 @@ void Udawa::run(){
         crashState.fFSDownloading = false;
         FSDownloader();
       }
+      else{
+        logger->warn(PSTR(__func__), PSTR("Filesystem update is postponed until WiFi is available.\n"));
+      }
     }
 }
 
