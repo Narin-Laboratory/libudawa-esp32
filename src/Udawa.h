@@ -84,7 +84,7 @@ struct AlarmMessage
 
 #ifdef USE_IOT
 struct IoTState{
-    TaskHandle_t xHandleIoT;
+    TaskHandle_t xHandleIoT = NULL;
     BaseType_t xReturnedIoT;
     SemaphoreHandle_t xSemaphoreThingsboard = NULL;
     bool fSharedAttributesSubscribed = false;
@@ -133,7 +133,7 @@ Attribute_Request_Callback createFirmwareCheckCallback(
 
 class Udawa {
     public:
-        Udawa();
+        static Udawa* getInstance();
         void run();
         void begin();
         void FSDownloader();
@@ -201,6 +201,8 @@ class Udawa {
         void I2CScanner();
 
     private:
+        static Udawa* instance;
+        Udawa();
         void _onWiFiConnected();
         void _onWiFiDisconnected();
         void _onWiFiGotIP();

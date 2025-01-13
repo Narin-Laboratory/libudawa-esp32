@@ -1,5 +1,14 @@
 #include "Udawa.h"
 
+Udawa* Udawa::instance = nullptr;
+
+Udawa* Udawa::getInstance() {
+  if (instance == nullptr) {
+    instance = new Udawa();
+  }
+  return instance;
+}
+
 Udawa::Udawa() : config(PSTR("/config.json")), _crashStateConfig(PSTR("/crash.json"))
   ,RTC(0)
   #ifdef USE_LOCAL_WEB_INTERFACE
@@ -106,13 +115,14 @@ void Udawa::begin(){
       #ifdef USE_WIFI_LOGGER
       wiFiLogger->setConfig(config.state.logIP, config.state.logPort, WIFI_LOGGER_BUFFER_SIZE);
       #endif
-      
+
       if(_xHandleAlarm == NULL){
         _xReturnedAlarm = xTaskCreatePinnedToCore(_alarmTaskRoutine, PSTR("alarmTaskRoutine"), ALARM_STACKSIZE, this, 1, &_xHandleAlarm, 1);
         if(_xReturnedAlarm == pdPASS){
           logger->warn(PSTR(__func__), PSTR("Task alarmTaskRoutine has been created.\n"));
         }
       }
+
     }
 
     crashState.rtcp = 0;
@@ -429,7 +439,7 @@ void Udawa::_startServices(){
     }
     #endif
 
-    #ifdef USE_IOT
+    #ifdef USE_IOT    
     if(config.state.fIoT && iotState.xHandleIoT == NULL && !crashState.fSafeMode && !crashState.fFSDownloading){
       iotState.xReturnedIoT = xTaskCreatePinnedToCore(_pvTaskCodeThingsboardTaskWrapper, PSTR("Thingsboard"), IOT_STACKSIZE_TB, this, 1, &iotState.xHandleIoT, 1);
       if(iotState.xReturnedIoT == pdPASS){
@@ -556,6 +566,7 @@ void Udawa::wsBroadcast(const char *buffer){
       if( xSemaphoreTake( xSemaphoreWSBroadcast, ( TickType_t ) 1000 ) == pdTRUE )
       {
         ws.textAll(buffer);
+        //logger->verbose(PSTR(__func__), PSTR("Broadcasting message: %s\n"), buffer);
         xSemaphoreGive( xSemaphoreWSBroadcast );
       }
       else
@@ -574,6 +585,7 @@ void Udawa::wsBroadcast(JsonDocument &doc){
         String buffer;
         serializeJson(doc, buffer);
         ws.textAll(buffer);
+        //logger->verbose(PSTR(__func__), PSTR("Broadcasting message: %s\n"), buffer.c_str());
         xSemaphoreGive( xSemaphoreWSBroadcast );
       }
       else
@@ -705,61 +717,69 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
           // The client is already authenticated or fInit is false, you can process the received data
           //...
 
-          if (doc.containsKey(PSTR("setConfig"))) {
-            if (doc[PSTR("setConfig")].containsKey(PSTR("cfg"))) {
-              if (doc[PSTR("setConfig")][PSTR("cfg")].containsKey(PSTR("wssid")) && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wssid")].as<const char*>()) > 0) {
-              strlcpy(config.state.wssid, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wssid")].as<const char*>(), sizeof(config.state.wssid));
-              logger->debug(PSTR(__func__), PSTR("wssid: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wssid")].as<const char*>());
-              }
-              if (doc[PSTR("setConfig")][PSTR("cfg")].containsKey(PSTR("wpass")) && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wpass")].as<const char*>()) > 0) {
-                strlcpy(config.state.wpass, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wpass")].as<const char*>(), sizeof(config.state.wpass));
-                logger->debug(PSTR(__func__), PSTR("wpass: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wpass")].as<const char*>());
-              }
-              if (doc[PSTR("setConfig")][PSTR("cfg")].containsKey(PSTR("gmtOff"))) {
-                config.state.gmtOff = doc[PSTR("setConfig")][PSTR("cfg")][PSTR("gmtOff")].as<int>();
-                logger->debug(PSTR(__func__), PSTR("gmtOff: %d\n"), config.state.gmtOff);  // Display as integer
-              }
-              if (doc[PSTR("setConfig")][PSTR("cfg")].containsKey(PSTR("group")) && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("group")].as<const char*>()) > 0) {
-                strlcpy(config.state.group, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("group")].as<const char*>(), sizeof(config.state.group));
-                logger->debug(PSTR(__func__), PSTR("group: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("group")].as<const char*>());
-              }
-              if (doc[PSTR("setConfig")][PSTR("cfg")].containsKey(PSTR("name")) && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("name")].as<const char*>()) > 0) {
-                strlcpy(config.state.name, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("name")].as<const char*>(), sizeof(config.state.name));
-                logger->debug(PSTR(__func__), PSTR("name: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("name")].as<const char*>());
-              }
-              if (doc[PSTR("setConfig")][PSTR("cfg")].containsKey(PSTR("hname")) && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("hname")].as<const char*>()) > 0) {
-                strlcpy(config.state.hname, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("hname")].as<const char*>(), sizeof(config.state.hname));
-                logger->debug(PSTR(__func__), PSTR("hname: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("hname")].as<const char*>());
-              }
-              if (doc[PSTR("setConfig")][PSTR("cfg")].containsKey(PSTR("htP")) && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("htP")].as<const char*>()) > 0) {
-                strlcpy(config.state.htP, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("htP")].as<const char*>(), sizeof(config.state.htP));
-                logger->debug(PSTR(__func__), PSTR("htP: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("htP")].as<const char*>());
-              }
-              if (doc[PSTR("setConfig")][PSTR("cfg")].containsKey(PSTR("binURL")) && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("binURL")].as<const char*>()) > 0) {
-                strlcpy(config.state.binURL, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("binURL")].as<const char*>(), sizeof(config.state.binURL));
-                logger->debug(PSTR(__func__), PSTR("binURL: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("binURL")].as<const char*>());
-              }
-              if (doc[PSTR("setConfig")][PSTR("tbAddr")].containsKey(PSTR("tbAddr")) && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("tbAddr")].as<const char*>()) > 0) {
-                strlcpy(config.state.tbAddr, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("tbAddr")].as<const char*>(), sizeof(config.state.tbAddr));
-                logger->debug(PSTR(__func__), PSTR("tbAddr: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("tbAddr")].as<const char*>());
-              }
-              if (doc[PSTR("setConfig")][PSTR("cfg")].containsKey(PSTR("tbPort"))) {
-                config.state.gmtOff = doc[PSTR("setConfig")][PSTR("cfg")][PSTR("tbPort")].as<uint16_t>();
-                logger->debug(PSTR(__func__), PSTR("tbPort: %d\n"), config.state.tbPort); 
-              }
-              if (doc[PSTR("setConfig")][PSTR("cfg")].containsKey(PSTR("fIoT"))) {
-                config.state.fIoT = doc[PSTR("setConfig")][PSTR("cfg")][PSTR("fIoT")].as<bool>();
-                logger->debug(PSTR(__func__), PSTR("fIoT: %d\n"), config.state.fIoT); 
-              }
+        if (doc[PSTR("setConfig")].is<JsonObject>()) {
+          if (doc[PSTR("setConfig")][PSTR("cfg")].is<JsonObject>()) {
+            if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wssid")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wssid")].as<const char*>()) > 0) {
+            strlcpy(config.state.wssid, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wssid")].as<const char*>(), sizeof(config.state.wssid));
+            logger->debug(PSTR(__func__), PSTR("wssid: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wssid")].as<const char*>());
             }
-            config.save();
+            if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wpass")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wpass")].as<const char*>()) > 0) {
+            strlcpy(config.state.wpass, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wpass")].as<const char*>(), sizeof(config.state.wpass));
+            logger->debug(PSTR(__func__), PSTR("wpass: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wpass")].as<const char*>());
             }
+            if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("gmtOff")].is<int>()) {
+            config.state.gmtOff = doc[PSTR("setConfig")][PSTR("cfg")][PSTR("gmtOff")].as<int>();
+            logger->debug(PSTR(__func__), PSTR("gmtOff: %d\n"), config.state.gmtOff);  // Display as integer
+            }
+            if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("group")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("group")].as<const char*>()) > 0) {
+            strlcpy(config.state.group, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("group")].as<const char*>(), sizeof(config.state.group));
+            logger->debug(PSTR(__func__), PSTR("group: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("group")].as<const char*>());
+            }
+            if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("name")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("name")].as<const char*>()) > 0) {
+            strlcpy(config.state.name, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("name")].as<const char*>(), sizeof(config.state.name));
+            logger->debug(PSTR(__func__), PSTR("name: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("name")].as<const char*>());
+            }
+            if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("hname")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("hname")].as<const char*>()) > 0) {
+            strlcpy(config.state.hname, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("hname")].as<const char*>(), sizeof(config.state.hname));
+            logger->debug(PSTR(__func__), PSTR("hname: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("hname")].as<const char*>());
+            }
+            if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("htP")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("htP")].as<const char*>()) > 0) {
+            strlcpy(config.state.htP, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("htP")].as<const char*>(), sizeof(config.state.htP));
+            logger->debug(PSTR(__func__), PSTR("htP: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("htP")].as<const char*>());
+            }
+            if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("binURL")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("binURL")].as<const char*>()) > 0) {
+            strlcpy(config.state.binURL, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("binURL")].as<const char*>(), sizeof(config.state.binURL));
+            logger->debug(PSTR(__func__), PSTR("binURL: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("binURL")].as<const char*>());
+            }
+            if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("tbAddr")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("tbAddr")].as<const char*>()) > 0) {
+            strlcpy(config.state.tbAddr, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("tbAddr")].as<const char*>(), sizeof(config.state.tbAddr));
+            logger->debug(PSTR(__func__), PSTR("tbAddr: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("tbAddr")].as<const char*>());
+            }
+            if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("tbPort")].is<uint16_t>()) {
+            config.state.tbPort = doc[PSTR("setConfig")][PSTR("cfg")][PSTR("tbPort")].as<uint16_t>();
+            logger->debug(PSTR(__func__), PSTR("tbPort: %d\n"), config.state.tbPort); 
+            }
+            if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("fIoT")].is<bool>()) {
+            config.state.fIoT = doc[PSTR("setConfig")][PSTR("cfg")][PSTR("fIoT")].as<bool>();
+            logger->debug(PSTR(__func__), PSTR("fIoT: %d\n"), config.state.fIoT); 
+            }
+            if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("provDK")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("provDK")].as<const char*>()) > 0) {
+            strlcpy(config.state.provDK, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("provDK")].as<const char*>(), sizeof(config.state.provDK));
+            logger->debug(PSTR(__func__), PSTR("provDK: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("provDK")].as<const char*>());
+            }
+            if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("provDS")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("provDS")].as<const char*>()) > 0) {
+            strlcpy(config.state.provDS, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("provDS")].as<const char*>(), sizeof(config.state.provDS));
+            logger->debug(PSTR(__func__), PSTR("provDS: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("provDS")].as<const char*>());
+            }
+          }
+          config.save();
+          }
 
-          else if(doc.containsKey(PSTR("getConfig"))){
+          else if(doc[PSTR("getConfig")].is<const char*>()){
             syncClientAttr(2);
           }
 
-          else if(doc.containsKey(PSTR("getAvailableWiFi"))){
+          else if(doc[PSTR("getAvailableWiFi")].is<const char*>()){
             JsonDocument doc;
             JsonDocument WiFiList;
             File file = LittleFS.open("/WiFiList.json", FILE_READ);
@@ -771,25 +791,25 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
             wsBroadcast(data.c_str());
           }
 
-          else if(doc[PSTR("setFInit")]){
-            if(doc[PSTR("setFInit")].containsKey(PSTR("fInit"))){
+          else if(doc[PSTR("setFInit")].is<JsonObject>()){
+            if(doc[PSTR("setFInit")][PSTR("fInit")].is<bool>()){
               syncClientAttr(2);
               _setFInit(doc[PSTR("setFInit")][PSTR("fInit")].as<bool>());
             }
             reboot(3);
           }
 
-          else if(doc[PSTR("setRTCUpdate")]){
-            if(doc[PSTR("setRTCUpdate")].containsKey(PSTR("ts"))){
+          else if(doc[PSTR("setRTCUpdate")].is<JsonObject>()){
+            if(doc[PSTR("setRTCUpdate")][PSTR("ts")].is<unsigned long>()){
               rtcUpdate(doc[PSTR("setRTCUpdate")][PSTR("ts")].as<unsigned long>());
             }
           }
 
-          else if(doc[PSTR("reboot")]){
+          else if(doc[PSTR("reboot")].is<int>()){
             reboot(doc[PSTR("reboot")].as<int>());
           }
 
-          else if(doc[PSTR("FSUpdate")]){
+          else if(doc[PSTR("FSUpdate")].is<bool>()){
             crashState.fFSDownloading = true;
           }
 
@@ -886,6 +906,7 @@ void Udawa::_processThingsboardProvisionResponse(const JsonObjectConst &data){
 void Udawa::_pvTaskCodeThingsboard(void *pvParameters){
   #ifdef USE_IOT_SECURE
   _tcpClient.setCACert(CA_CERT);
+  //_tcpClient.setInsecure();
   const char *ssl_protos[] = {PSTR("mqtt")};
   _tcpClient.setAlpnProtocols(ssl_protos);
   #endif
@@ -906,6 +927,9 @@ void Udawa::_pvTaskCodeThingsboard(void *pvParameters){
         {
           logger->info(PSTR(__func__),PSTR("Connected to provisioning server: %s:%d. Sending provisioning response: DK: %s, DS: %s, Id: %s \n"),  
             config.state.tbAddr, config.state.tbPort, config.state.provDK, config.state.provDS, config.state.hwid);
+        }
+        else{
+          logger->warn(PSTR(__func__), PSTR("Provision request failed: %s:%d DK:%s DS:%s ID:%S\n"), config.state.tbAddr, config.state.tbPort, config.state.provDK, config.state.provDS, config.state.hwid);
         }
       }
       else
@@ -1011,7 +1035,8 @@ void Udawa::_pvTaskCodeThingsboard(void *pvParameters){
 }
 
 void Udawa::_pvTaskCodeThingsboardTaskWrapper(void* pvParameters) {  // Define as static
-  Udawa* udawaInstance = static_cast<Udawa*>(pvParameters);
+  Udawa* udawaInstance = Udawa::getInstance();
+  udawaInstance->logger->debug(PSTR(__func__), PSTR("Starting Thingsboard task wrapper.\n"));
   udawaInstance->_pvTaskCodeThingsboard(pvParameters); 
 }
 
@@ -1055,9 +1080,9 @@ void Udawa::_processIoTUpdaterFirmwareCheckAttributesRequest(const JsonObjectCon
   if( iotState.xSemaphoreThingsboard != NULL && WiFi.isConnected() && config.state.provSent && tb.connected()){
     if( xSemaphoreTake( iotState.xSemaphoreThingsboard, ( TickType_t ) 5000 ) == pdTRUE )
     {
-      if(data.containsKey("fw_version")){
-        logger->info(PSTR(__func__), PSTR("Firmware check local: %s vs cloud: %s\n"), CURRENT_FIRMWARE_VERSION, data["fw_version"].as<const char*>());
-        if(strcmp(data["fw_version"].as<const char*>(), CURRENT_FIRMWARE_VERSION)){
+      if(data[PSTR("fw_version")].is<const char*>()){
+        logger->info(PSTR(__func__), PSTR("Firmware check local: %s vs cloud: %s\n"), CURRENT_FIRMWARE_VERSION, data[PSTR("fw_version")].as<const char*>());
+        if(strcmp(data[PSTR("fw_version")].as<const char*>(), CURRENT_FIRMWARE_VERSION)){
           logger->debug(PSTR(__func__), PSTR("Updating firmware...\n"));
           iotState.fIoTUpdateStarted = true;
         }else{

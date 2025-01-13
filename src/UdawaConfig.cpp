@@ -56,42 +56,40 @@ bool UdawaConfig::load(){
             if(err == DeserializationError::Ok){
                 _logger->debug(PSTR(__func__), PSTR("%s is valid JSON.\n"), _path);
                 
-                if(data.containsKey(("fInit"))){state.fInit = data[PSTR("fInit")].as<bool>();}
-                if(data.containsKey(PSTR("hwid"))){strlcpy(state.hwid, data[PSTR("hwid")].as<const char*>(), sizeof(state.hwid));}
-                if(data.containsKey(PSTR("name"))){strlcpy(state.name, data[PSTR("name")].as<const char*>(), sizeof(state.name));}
-                if(data.containsKey(PSTR("model"))){strlcpy(state.model, data[PSTR("model")].as<const char*>(), sizeof(state.model));}
-                if(data.containsKey(PSTR("group"))){strlcpy(state.group, data[PSTR("group")].as<const char*>(), sizeof(state.group));}
-                if(data.containsKey(PSTR("wssid"))){strlcpy(state.wssid, data[PSTR("wssid")].as<const char*>(), sizeof(state.wssid));}
-                if(data.containsKey(PSTR("wpass"))){strlcpy(state.wpass, data[PSTR("wpass")].as<const char*>(), sizeof(state.wpass));}
-                if(data.containsKey(PSTR("dssid"))){strlcpy(state.dssid, data[PSTR("dssid")].as<const char*>(), sizeof(state.dssid));}
-                if(data.containsKey(PSTR("dpass"))){strlcpy(state.dpass, data[PSTR("dpass")].as<const char*>(), sizeof(state.dpass));}
-                if(data.containsKey(PSTR("upass"))){strlcpy(state.upass, data[PSTR("upass")].as<const char*>(), sizeof(state.upass));}
-                if(data.containsKey(PSTR("hname"))){strlcpy(state.hname, data[PSTR("hname")].as<const char*>(), sizeof(state.hname));}
-                if(data.containsKey(PSTR("htU"))){strlcpy(state.htU, data[PSTR("htU")].as<const char*>(), sizeof(state.htU));}
-                if(data.containsKey(PSTR("htP"))){strlcpy(state.htP, data[PSTR("htP")].as<const char*>(), sizeof(state.htP));}
-                if(data.containsKey(PSTR("logIP"))){strlcpy(state.logIP, data[PSTR("logIP")].as<const char*>(), sizeof(state.logIP));}
-                if(data.containsKey(PSTR("htU"))){strlcpy(state.htU, data[PSTR("htU")].as<const char*>(), sizeof(state.htU));}
-                if(data.containsKey(PSTR("htP"))){strlcpy(state.htP, data[PSTR("htP")].as<const char*>(), sizeof(state.htP));}
-                if(data.containsKey(PSTR("logLev"))){state.logLev = data[PSTR("logLev")].as<uint8_t>();}                
-                if(data.containsKey(PSTR("fWOTA"))){state.fWOTA = data[PSTR("fWOTA")].as<bool>();}
-                if(data.containsKey(PSTR("fWeb"))){state.fWeb = data[PSTR("fWeb")].as<bool>();}
-                if(data.containsKey(PSTR("gmtOff"))){state.gmtOff = data[PSTR("gmtOff")].as<int>();}
-                if(data.containsKey(PSTR("logPort"))){state.logPort = data[PSTR("logPort")].as<uint16_t>();}
-                if(data.containsKey(PSTR("LEDOn"))){state.LEDOn = data[PSTR("LEDOn")].as<bool>();}
-                if(data.containsKey(PSTR("pinLEDR"))){state.pinLEDR = data[PSTR("pinLEDR")].as<uint8_t>();}
-                if(data.containsKey(PSTR("pinLEDG"))){state.pinLEDG = data[PSTR("pinLEDG")].as<uint8_t>();}
-                if(data.containsKey(PSTR("pinLEDB"))){state.pinLEDB = data[PSTR("pinLEDB")].as<uint8_t>();}
-                if(data.containsKey(PSTR("pinBuzz"))){state.pinBuzz = data[PSTR("pinBuzz")].as<uint8_t>();}
+                if(data[PSTR("fInit")].is<bool>()){state.fInit = data[PSTR("fInit")].as<bool>();}
+                if(data[PSTR("hwid")].is<const char*>()){strlcpy(state.hwid, data[PSTR("hwid")].as<const char*>(), sizeof(state.hwid));}
+                if(data[PSTR("name")].is<const char*>()){strlcpy(state.name, data[PSTR("name")].as<const char*>(), sizeof(state.name));}
+                if(data[PSTR("model")].is<const char*>()){strlcpy(state.model, data[PSTR("model")].as<const char*>(), sizeof(state.model));}
+                if(data[PSTR("group")].is<const char*>()){strlcpy(state.group, data[PSTR("group")].as<const char*>(), sizeof(state.group));}
+                if(data[PSTR("wssid")].is<const char*>()){strlcpy(state.wssid, data[PSTR("wssid")].as<const char*>(), sizeof(state.wssid));}
+                if(data[PSTR("wpass")].is<const char*>()){strlcpy(state.wpass, data[PSTR("wpass")].as<const char*>(), sizeof(state.wpass));}
+                if(data[PSTR("dssid")].is<const char*>()){strlcpy(state.dssid, data[PSTR("dssid")].as<const char*>(), sizeof(state.dssid));}
+                if(data[PSTR("dpass")].is<const char*>()){strlcpy(state.dpass, data[PSTR("dpass")].as<const char*>(), sizeof(state.dpass));}
+                if(data[PSTR("upass")].is<const char*>()){strlcpy(state.upass, data[PSTR("upass")].as<const char*>(), sizeof(state.upass));}
+                if(data[PSTR("hname")].is<const char*>()){strlcpy(state.hname, data[PSTR("hname")].as<const char*>(), sizeof(state.hname));}
+                if(data[PSTR("htU")].is<const char*>()){strlcpy(state.htU, data[PSTR("htU")].as<const char*>(), sizeof(state.htU));}
+                if(data[PSTR("htP")].is<const char*>()){strlcpy(state.htP, data[PSTR("htP")].as<const char*>(), sizeof(state.htP));}
+                if(data[PSTR("logIP")].is<const char*>()){strlcpy(state.logIP, data[PSTR("logIP")].as<const char*>(), sizeof(state.logIP));}
+                if(data[PSTR("logLev")].is<uint8_t>()){state.logLev = data[PSTR("logLev")].as<uint8_t>();}                
+                if(data[PSTR("fWOTA")].is<bool>()){state.fWOTA = data[PSTR("fWOTA")].as<bool>();}
+                if(data[PSTR("fWeb")].is<bool>()){state.fWeb = data[PSTR("fWeb")].as<bool>();}
+                if(data[PSTR("gmtOff")].is<int>()){state.gmtOff = data[PSTR("gmtOff")].as<int>();}
+                if(data[PSTR("logPort")].is<uint16_t>()){state.logPort = data[PSTR("logPort")].as<uint16_t>();}
+                if(data[PSTR("LEDOn")].is<bool>()){state.LEDOn = data[PSTR("LEDOn")].as<bool>();}
+                if(data[PSTR("pinLEDR")].is<uint8_t>()){state.pinLEDR = data[PSTR("pinLEDR")].as<uint8_t>();}
+                if(data[PSTR("pinLEDG")].is<uint8_t>()){state.pinLEDG = data[PSTR("pinLEDG")].as<uint8_t>();}
+                if(data[PSTR("pinLEDB")].is<uint8_t>()){state.pinLEDB = data[PSTR("pinLEDB")].as<uint8_t>();}
+                if(data[PSTR("pinBuzz")].is<uint8_t>()){state.pinBuzz = data[PSTR("pinBuzz")].as<uint8_t>();}
                 
                 #ifdef USE_IOT
-                if(data.containsKey(PSTR("accTkn"))){strlcpy(state.accTkn, data[PSTR("accTkn")].as<const char*>(), sizeof(state.accTkn));}
-                if(data.containsKey(PSTR("provDK"))){strlcpy(state.provDK, data[PSTR("provDK")].as<const char*>(), sizeof(state.provDK));}
-                if(data.containsKey(PSTR("provDS"))){strlcpy(state.provDS, data[PSTR("provDS")].as<const char*>(), sizeof(state.provDS));}
-                if(data.containsKey(PSTR("tbPort"))){state.tbPort = data[PSTR("tbPort")].as<uint16_t>();}
-                if(data.containsKey(PSTR("provSent"))){state.provSent = data[PSTR("provSent")].as<bool>();}
-                if(data.containsKey(PSTR("fIoT"))){state.fIoT = data[PSTR("fIoT")].as<bool>();}
-                if(data.containsKey(PSTR("tbAddr"))){strlcpy(state.tbAddr, data[PSTR("tbAddr")].as<const char*>(), sizeof(state.tbAddr));}
-                if(data.containsKey(PSTR("binURL"))){strlcpy(state.binURL, data[PSTR("binURL")].as<const char*>(), sizeof(state.binURL));}
+                if(data[PSTR("accTkn")].is<const char*>()){strlcpy(state.accTkn, data[PSTR("accTkn")].as<const char*>(), sizeof(state.accTkn));}
+                if(data[PSTR("provDK")].is<const char*>()){strlcpy(state.provDK, data[PSTR("provDK")].as<const char*>(), sizeof(state.provDK));}
+                if(data[PSTR("provDS")].is<const char*>()){strlcpy(state.provDS, data[PSTR("provDS")].as<const char*>(), sizeof(state.provDS));}
+                if(data[PSTR("tbPort")].is<uint16_t>()){state.tbPort = data[PSTR("tbPort")].as<uint16_t>();}
+                if(data[PSTR("provSent")].is<bool>()){state.provSent = data[PSTR("provSent")].as<bool>();}
+                if(data[PSTR("fIoT")].is<bool>()){state.fIoT = data[PSTR("fIoT")].as<bool>();}
+                if(data[PSTR("tbAddr")].is<const char*>()){strlcpy(state.tbAddr, data[PSTR("tbAddr")].as<const char*>(), sizeof(state.tbAddr));}
+                if(data[PSTR("binURL")].is<const char*>()){strlcpy(state.binURL, data[PSTR("binURL")].as<const char*>(), sizeof(state.binURL));}
                 #endif
             }
             else{
