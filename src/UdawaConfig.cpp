@@ -238,6 +238,7 @@ bool GenericConfig::load(JsonDocument &data){
             else
             {
                 _logger->warn(PSTR(__func__),PSTR("%s size is abnormal: %d!\n"), _path, file.size());
+                file.close();
                 xSemaphoreGive( xSemaphoreConfig );
                 return false;
             }

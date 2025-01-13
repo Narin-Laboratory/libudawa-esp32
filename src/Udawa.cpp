@@ -71,7 +71,7 @@ Udawa::Udawa() : config(PSTR("/config.json")), _crashStateConfig(PSTR("/crash.js
 void Udawa::begin(){
     _xQueueAlarm = xQueueCreate( 10, sizeof( struct AlarmMessage ) );
     logger->debug(PSTR(__func__), PSTR("Initializing LittleFS: %d\n"), config.begin());
-    bool configLoadStatus = config.load();
+    config.load();
     
     logger->setLogLevel((LogLevel)config.state.logLev);
     setAlarm(0, 0, 3, 50);
@@ -127,10 +127,6 @@ void Udawa::begin(){
 
     crashState.rtcp = 0;
     _crashStateTruthKeeper(2);
-
-    if(!configLoadStatus){
-      crashState.fFSDownloading = true;
-    }
 }
 
 void Udawa::run(){
