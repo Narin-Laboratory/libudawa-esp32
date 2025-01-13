@@ -56,41 +56,41 @@ bool UdawaConfig::load(){
             if(err == DeserializationError::Ok){
                 _logger->debug(PSTR(__func__), PSTR("%s is valid JSON.\n"), _path);
                 
-                if(data[PSTR("fInit")] != nullptr){state.fInit = data[PSTR("fInit")].as<bool>();}
-                if(data[PSTR("hwid")] != nullptr){strlcpy(state.hwid, data[PSTR("hwid")].as<const char*>(), sizeof(state.hwid));}
-                if(data[PSTR("name")] != nullptr){strlcpy(state.name, data[PSTR("name")].as<const char*>(), sizeof(state.name));}
-                if(data[PSTR("model")] != nullptr){strlcpy(state.model, data[PSTR("model")].as<const char*>(), sizeof(state.model));}
-                if(data[PSTR("group")] != nullptr){strlcpy(state.group, data[PSTR("group")].as<const char*>(), sizeof(state.group));}
-                if(data[PSTR("wssid")] != nullptr){strlcpy(state.wssid, data[PSTR("wssid")].as<const char*>(), sizeof(state.wssid));}
-                if(data[PSTR("wpass")] != nullptr){strlcpy(state.wpass, data[PSTR("wpass")].as<const char*>(), sizeof(state.wpass));}
-                if(data[PSTR("dssid")] != nullptr){strlcpy(state.dssid, data[PSTR("dssid")].as<const char*>(), sizeof(state.dssid));}
-                if(data[PSTR("dpass")] != nullptr){strlcpy(state.dpass, data[PSTR("dpass")].as<const char*>(), sizeof(state.dpass));}
-                if(data[PSTR("upass")] != nullptr){strlcpy(state.upass, data[PSTR("upass")].as<const char*>(), sizeof(state.upass));}
-                if(data[PSTR("hname")] != nullptr){strlcpy(state.hname, data[PSTR("hname")].as<const char*>(), sizeof(state.hname));}
-                if(data[PSTR("htU")] != nullptr){strlcpy(state.htU, data[PSTR("htU")].as<const char*>(), sizeof(state.htU));}
-                if(data[PSTR("htP")] != nullptr){strlcpy(state.htP, data[PSTR("htP")].as<const char*>(), sizeof(state.htP));}
-                if(data[PSTR("logIP")] != nullptr){strlcpy(state.logIP, data[PSTR("logIP")].as<const char*>(), sizeof(state.logIP));}
-                if(data[PSTR("htU")] != nullptr){strlcpy(state.htU, data[PSTR("htU")].as<const char*>(), sizeof(state.htU));}
-                if(data[PSTR("htP")] != nullptr){strlcpy(state.htP, data[PSTR("htP")].as<const char*>(), sizeof(state.htP));}
-                if(data[PSTR("logLev")] != nullptr){state.logLev = data[PSTR("logLev")].as<uint8_t>();}                
-                if(data[PSTR("fWOTA")] != nullptr){state.fWOTA = data[PSTR("fWOTA")].as<bool>();}
-                if(data[PSTR("fWeb")] != nullptr){state.fWeb = data[PSTR("fWeb")].as<bool>();}
-                if(data[PSTR("gmtOff")] != nullptr){state.gmtOff = data[PSTR("gmtOff")].as<int>();}
-                if(data[PSTR("logPort")] != nullptr){state.logPort = data[PSTR("logPort")].as<uint16_t>();}
-                if(data[PSTR("LEDOn")] != nullptr){state.LEDOn = data[PSTR("LEDOn")].as<bool>();}
-                if(data[PSTR("pinLEDR")] != nullptr){state.pinLEDR = data[PSTR("pinLEDR")].as<uint8_t>();}
-                if(data[PSTR("pinLEDG")] != nullptr){state.pinLEDG = data[PSTR("pinLEDG")].as<uint8_t>();}
-                if(data[PSTR("pinLEDB")] != nullptr){state.pinLEDB = data[PSTR("pinLEDB")].as<uint8_t>();}
-                if(data[PSTR("pinBuzz")] != nullptr){state.pinBuzz = data[PSTR("pinBuzz")].as<uint8_t>();}
+                if(data.containsKey(("fInit"))){state.fInit = data[PSTR("fInit")].as<bool>();}
+                if(data.containsKey(PSTR("hwid"))){strlcpy(state.hwid, data[PSTR("hwid")].as<const char*>(), sizeof(state.hwid));}
+                if(data.containsKey(PSTR("name"))){strlcpy(state.name, data[PSTR("name")].as<const char*>(), sizeof(state.name));}
+                if(data.containsKey(PSTR("model"))){strlcpy(state.model, data[PSTR("model")].as<const char*>(), sizeof(state.model));}
+                if(data.containsKey(PSTR("group"))){strlcpy(state.group, data[PSTR("group")].as<const char*>(), sizeof(state.group));}
+                if(data.containsKey(PSTR("wssid"))){strlcpy(state.wssid, data[PSTR("wssid")].as<const char*>(), sizeof(state.wssid));}
+                if(data.containsKey(PSTR("wpass"))){strlcpy(state.wpass, data[PSTR("wpass")].as<const char*>(), sizeof(state.wpass));}
+                if(data.containsKey(PSTR("dssid"))){strlcpy(state.dssid, data[PSTR("dssid")].as<const char*>(), sizeof(state.dssid));}
+                if(data.containsKey(PSTR("dpass"))){strlcpy(state.dpass, data[PSTR("dpass")].as<const char*>(), sizeof(state.dpass));}
+                if(data.containsKey(PSTR("upass"))){strlcpy(state.upass, data[PSTR("upass")].as<const char*>(), sizeof(state.upass));}
+                if(data.containsKey(PSTR("hname"))){strlcpy(state.hname, data[PSTR("hname")].as<const char*>(), sizeof(state.hname));}
+                if(data.containsKey(PSTR("htU"))){strlcpy(state.htU, data[PSTR("htU")].as<const char*>(), sizeof(state.htU));}
+                if(data.containsKey(PSTR("htP"))){strlcpy(state.htP, data[PSTR("htP")].as<const char*>(), sizeof(state.htP));}
+                if(data.containsKey(PSTR("logIP"))){strlcpy(state.logIP, data[PSTR("logIP")].as<const char*>(), sizeof(state.logIP));}
+                if(data.containsKey(PSTR("htU"))){strlcpy(state.htU, data[PSTR("htU")].as<const char*>(), sizeof(state.htU));}
+                if(data.containsKey(PSTR("htP"))){strlcpy(state.htP, data[PSTR("htP")].as<const char*>(), sizeof(state.htP));}
+                if(data.containsKey(PSTR("logLev"))){state.logLev = data[PSTR("logLev")].as<uint8_t>();}                
+                if(data.containsKey(PSTR("fWOTA"))){state.fWOTA = data[PSTR("fWOTA")].as<bool>();}
+                if(data.containsKey(PSTR("fWeb"))){state.fWeb = data[PSTR("fWeb")].as<bool>();}
+                if(data.containsKey(PSTR("gmtOff"))){state.gmtOff = data[PSTR("gmtOff")].as<int>();}
+                if(data.containsKey(PSTR("logPort"))){state.logPort = data[PSTR("logPort")].as<uint16_t>();}
+                if(data.containsKey(PSTR("LEDOn"))){state.LEDOn = data[PSTR("LEDOn")].as<bool>();}
+                if(data.containsKey(PSTR("pinLEDR"))){state.pinLEDR = data[PSTR("pinLEDR")].as<uint8_t>();}
+                if(data.containsKey(PSTR("pinLEDG"))){state.pinLEDG = data[PSTR("pinLEDG")].as<uint8_t>();}
+                if(data.containsKey(PSTR("pinLEDB"))){state.pinLEDB = data[PSTR("pinLEDB")].as<uint8_t>();}
+                if(data.containsKey(PSTR("pinBuzz"))){state.pinBuzz = data[PSTR("pinBuzz")].as<uint8_t>();}
                 
                 #ifdef USE_IOT
-                if(data[PSTR("accTkn")] != nullptr){strlcpy(state.accTkn, data[PSTR("accTkn")].as<const char*>(), sizeof(state.accTkn));}
-                if(data[PSTR("provDK")] != nullptr){strlcpy(state.provDK, data[PSTR("provDK")].as<const char*>(), sizeof(state.provDK));}
-                if(data[PSTR("provDS")] != nullptr){strlcpy(state.provDS, data[PSTR("provDS")].as<const char*>(), sizeof(state.provDS));}
-                if(data[PSTR("tbPort")] != nullptr){state.tbPort = data[PSTR("tbPort")].as<uint16_t>();}
-                if(data[PSTR("provSent")] != nullptr){state.provSent = data[PSTR("provSent")].as<bool>();}
-                if(data[PSTR("fIoT")] != nullptr){state.fIoT = data[PSTR("fIoT")].as<bool>();}
-                if(data[PSTR("tbAddr")] != nullptr){strlcpy(state.tbAddr, data[PSTR("tbAddr")].as<const char*>(), sizeof(state.tbAddr));}
+                if(data.containsKey(PSTR("accTkn"))){strlcpy(state.accTkn, data[PSTR("accTkn")].as<const char*>(), sizeof(state.accTkn));}
+                if(data.containsKey(PSTR("provDK"))){strlcpy(state.provDK, data[PSTR("provDK")].as<const char*>(), sizeof(state.provDK));}
+                if(data.containsKey(PSTR("provDS"))){strlcpy(state.provDS, data[PSTR("provDS")].as<const char*>(), sizeof(state.provDS));}
+                if(data.containsKey(PSTR("tbPort"))){state.tbPort = data[PSTR("tbPort")].as<uint16_t>();}
+                if(data.containsKey(PSTR("provSent"))){state.provSent = data[PSTR("provSent")].as<bool>();}
+                if(data.containsKey(PSTR("fIoT"))){state.fIoT = data[PSTR("fIoT")].as<bool>();}
+                if(data.containsKey(PSTR("tbAddr"))){strlcpy(state.tbAddr, data[PSTR("tbAddr")].as<const char*>(), sizeof(state.tbAddr));}
                 #endif
             }
             else{
