@@ -172,6 +172,21 @@ void Udawa::run(){
         logger->warn(PSTR(__func__), PSTR("Filesystem update is postponed until WiFi is available.\n"));
       }
     }
+
+    if(crashState.fStartServices){
+      crashState.fStartServices = false;
+      _startServices();
+    }
+
+    if(crashState.fStopServices){
+      crashState.fStopServices = false;
+      _stopServices();
+    }
+
+    if(crashState.fDoInit){
+      crashState.fDoInit = false;
+      _doInit();
+    }
 }
 
 void Udawa::_setLEDBuzzer(uint8_t color, uint8_t isBlink, int32_t blinkCount, uint16_t blinkDelay){
@@ -459,12 +474,12 @@ void Udawa::_onWiFiAPNewClientIP(){
 }
 
 void Udawa::_onWiFiAPStart(){
-  _doInit(); 
+  crashState.fDoInit = true;
   setAlarm(0, 0, 3, 50);
 }
 
 void Udawa::_onWiFiGotIP(){
-  _startServices();
+  crashState.fStartServices = true;
   setAlarm(0, 0, 3, 50);
 }
 
