@@ -153,13 +153,13 @@ bool UdawaConfig::save(){
       if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 5000 ) == pdTRUE )
       {
         if(!LittleFS.remove(_path)){
-            _logger->warn(PSTR(__func__),PSTR("Failed to delete the old configFile: %s\n"), _path);
+            _logger->warn(PSTR(__func__),PSTR("Failed to delete the old file: %s\n"), _path);
         }
         
         File file = LittleFS.open(_path, FILE_WRITE);
         
         if (!file){
-            _logger->error(PSTR(__func__),PSTR("Failed to open the old configFile: %s\n"), _path);
+            _logger->error(PSTR(__func__),PSTR("Failed to open the old file: %s\n"), _path);
             file.close();
             xSemaphoreGive( xSemaphoreConfig );
             return false;
@@ -259,13 +259,13 @@ bool GenericConfig::save(JsonDocument &data){
       {
         if(!LittleFS.remove(_path)){
             Serial.println(_path);
-            _logger->warn(PSTR(__func__),PSTR("Failed to delete the old configFile: %s\n"), _path);
+            _logger->warn(PSTR(__func__),PSTR("Failed to delete the old file: %s\n"), _path);
         }
         
         File file = LittleFS.open(_path, FILE_WRITE);
         
         if (!file){
-            _logger->error(PSTR(__func__),PSTR("Failed to open the old configFile: %s\n"), _path);
+            _logger->error(PSTR(__func__),PSTR("Failed to open the old file: %s\n"), _path);
             file.close();
             xSemaphoreGive( xSemaphoreConfig );
             return false;

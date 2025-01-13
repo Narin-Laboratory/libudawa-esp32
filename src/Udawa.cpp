@@ -101,6 +101,8 @@ void Udawa::begin(){
     logger->debug(PSTR(__func__), PSTR("Runtime Counter: %d, Crash Counter: %d, Safemode Status: %s\n"), crashState.rtcp, crashState.crashCnt, crashState.fSafeMode ? PSTR("ENABLED") : PSTR("DISABLED"));
 
     if (!crashState.fSafeMode){
+      logger->info(PSTR(__func__), PSTR("Hardware ID: %s\n"), (String(config.state.model) + String(config.state.hwid)).c_str() );
+
       #ifdef USE_WIFI_LOGGER
       wiFiLogger->setConfig(config.state.logIP, config.state.logPort, WIFI_LOGGER_BUFFER_SIZE);
       #endif
@@ -375,7 +377,7 @@ void Udawa::_startServices(){
         logger->error(PSTR(__func__), PSTR("Error setting up MDNS responder!\n"));
     }
     else{
-        logger->debug(PSTR(__func__), PSTR("mDNS responder started at %s.\n"), config.state.hname);
+        logger->debug(PSTR(__func__), PSTR("mDNS responder started at %s\n"), config.state.hname);
     }
 
     MDNS.addService("http", "tcp", 80);
@@ -841,7 +843,7 @@ void Udawa::_pvTaskCodeThingsboard(void *pvParameters){
   #endif
   while(true){
     if(!config.state.provSent){
-      if (tb.connect(config.state.tbAddr, "provision", config.state.tbPort)) {
+      if (tb.connect(config.state.tbAddr, PSTR("provision"), config.state.tbPort)) {
         const Provision_Callback provisionCallback(
             Access_Token(),
             [this](const JsonObjectConst &data) {
@@ -850,12 +852,12 @@ void Udawa::_pvTaskCodeThingsboard(void *pvParameters){
             ,
             config.state.provDK,
             config.state.provDS,
-            config.state.name
+            config.state.hwid
         );
         if(tb.Provision_Request(provisionCallback))
         {
-          logger->info(PSTR(__func__),PSTR("Connected to provisioning server: %s:%d. Sending provisioning response: DK: %s, DS: %s, Name: %s \n"),  
-            config.state.tbAddr, config.state.tbPort, config.state.provDK, config.state.provDS, config.state.name);
+          logger->info(PSTR(__func__),PSTR("Connected to provisioning server: %s:%d. Sending provisioning response: DK: %s, DS: %s, Id: %s \n"),  
+            config.state.tbAddr, config.state.tbPort, config.state.provDK, config.state.provDS, config.state.hwid);
         }
       }
       else
@@ -879,15 +881,17 @@ void Udawa::_pvTaskCodeThingsboard(void *pvParameters){
         //onTbDisconnectedCb();
         logger->info(PSTR(__func__),PSTR("Connecting to broker %s:%d\n"), config.state.tbAddr, config.state.tbPort);
         uint8_t tbDisco = 0;
-        while(!tb.connect(config.state.tbAddr, config.state.accTkn, config.state.tbPort, config.state.name)){  
+        const uint8_t maxRetries = 12;
+        const TickType_t retryDelay = 5000 / portTICK_PERIOD_MS;
+        while(!tb.connect(config.state.tbAddr, config.state.accTkn, config.state.tbPort, config.state.hwid)){  
           tbDisco++;
           logger->warn(PSTR(__func__),PSTR("Failed to connect to IoT Broker %s (%d)\n"), config.state.tbAddr, tbDisco);
-          if(tbDisco >= 12){
+          if(tbDisco >= maxRetries){
             config.state.provSent = false;
             tbDisco = 0;
             break;
           }
-          vTaskDelay((const TickType_t)5000 / portTICK_PERIOD_MS);
+          vTaskDelay(retryDelay); 
         }
 
         if(tb.connected()){

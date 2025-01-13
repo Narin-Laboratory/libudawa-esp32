@@ -23,7 +23,11 @@ void UdawaWiFiHelper::modeAP(bool open){
     WiFi.enableSTA(false);
     WiFi.enableAP(true);
     WiFi.mode(WIFI_MODE_AP);
-    WiFi.softAP(_hname, _htP);
+    if(open){
+        WiFi.softAP(_hname);
+    }else{  
+        WiFi.softAP(_hname, _htP);
+    }
     _logger->debug(PSTR(__func__), PSTR("SoftAP %s started with IP address: %s\n"), _hname, WiFi.softAPIP().toString().c_str());
     _state.softAPstartTime = millis();
     _state.softAPClientAvailCheckstartTime = millis();
