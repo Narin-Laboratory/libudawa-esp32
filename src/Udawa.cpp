@@ -16,6 +16,8 @@ Udawa::Udawa() : config(PSTR("/config.json")), _crashStateConfig(PSTR("/crash.js
   ,ws(PSTR("/ws"))
   #endif
   #ifdef USE_IOT
+  ,_mqttClient(_tcpClient), 
+  tb(_mqttClient, IOT_MAX_MESSAGE_RECEIVE_SIZE, IOT_MAX_MESSAGE_SEND_SIZE, IOT_DEFAULT_MAX_STACK_SIZE)
   #endif
   #ifdef USE_IOT_OTA
   
@@ -810,17 +812,6 @@ void Udawa::_crashStateTruthKeeper(uint8_t direction){
 }
 
 #ifdef USE_IOT
-
-
-void Udawa::_pvTaskCodeThingsboard(void *pvParameters){
-  #ifdef USE_IOT_SECURE
-  
-  #endif
-  while(true){
-   
-    vTaskDelay((const TickType_t) 1 / portTICK_PERIOD_MS);
-  }
-}
 
 
 

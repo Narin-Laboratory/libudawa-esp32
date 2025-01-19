@@ -22,6 +22,7 @@
 #include <Shared_Attribute_Callback.h>
 #include <Shared_Attribute_Update.h>
 #include <OTA_Update_Callback.h>
+#include <Provision.h>
 #ifdef USE_IOT_OTA
 #include <Espressif_Updater.h>
 #include <OTA_Firmware_Update.h>
@@ -182,11 +183,11 @@ class Udawa {
             #ifdef USE_IOT_SECURE
                 WiFiClientSecure _tcpClient;
                 Arduino_MQTT_Client _mqttClient;
-                
+                ThingsBoardSized<UdawaThingsboardLogger> tb;
             #else
                 WiFiClient _tcpClient;
                 Arduino_MQTT_Client _mqttClient;
-                
+                ThingsBoardSized<UdawaThingsboardLogger> tb;
             #endif
             IoTState iotState;
         #endif
@@ -238,10 +239,14 @@ class Udawa {
         void _crashStateTruthKeeper(uint8_t direction);
         GenericConfig _crashStateConfig;
         #ifdef USE_IOT
+            Provision<UdawaThingsboardLogger> _prov;
+            const std::array<IAPI_Implementation*, 1U> _TBAPI = {
+                &_prov
+            };
             std::vector<ThingsboardOnConnectedCallback> _onThingsboardConnectedCallbacks;
             std::vector<ThingsboardOnDisconnectedCallback> _onThingsboardDisconnectedCallbacks;
             std::vector<ThingsboardOnSharedAttributesReceivedCallback> _onThingsboardSharedAttributesReceivedCallbacks;
-            void _pvTaskCodeThingsboard(void *pvParameters);
+            void _tbTaskRoutine(void *pvParameters);
             #ifdef USE_IOT_OTA
             
             #endif
