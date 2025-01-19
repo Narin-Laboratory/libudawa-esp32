@@ -103,11 +103,11 @@ int UdawaWiFiHelper::rssiToPercent(int rssi) {
   return percentage;
 }
 
-void UdawaWiFiHelper::getAvailableWiFi(JsonDocument &doc){
+void UdawaWiFiHelper::getAvailableWiFi(DynamicJsonDocument &doc){
     _logger->debug(PSTR(__func__), PSTR("Starting WiFi scanner...\n"));
     int num = WiFi.scanNetworks();
     _logger->debug(PSTR(__func__), PSTR("Scan finished.\n"));
-    JsonDocument object;
+    DynamicJsonDocument object(JSON_DOC_XLARGE);
     JsonObject obj = object.to<JsonObject>();
 
     for(int i = 0; i < num; i++){

@@ -18,8 +18,13 @@
 #ifdef USE_IOT
 #include <Arduino_MQTT_Client.h>
 #include <ThingsBoard.h>
+#include <Attribute_Request.h>
+#include <Shared_Attribute_Callback.h>
+#include <Shared_Attribute_Update.h>
+#include <OTA_Update_Callback.h>
 #ifdef USE_IOT_OTA
 #include <Espressif_Updater.h>
+#include <OTA_Firmware_Update.h>
 #endif
 #endif
 #ifdef USE_IOT_SECURE
@@ -119,7 +124,7 @@ class UdawaThingsboardLogger{
 };
 #ifdef USE_IOT_OTA
 constexpr std::array<const char*, 1U> REQUESTED_FW_CHECK_SHARED_ATTRIBUTES = {
-    FW_VER_KEY
+    PSTR("fw_version")
 };
 
 template <size_t N>
@@ -146,9 +151,9 @@ class Udawa {
         typedef std::function<void()> ThingsboardOnConnectedCallback;
         typedef std::function<void()> ThingsboardOnDisconnectedCallback;
         typedef std::function<void(const JsonObjectConst &data)> ThingsboardOnSharedAttributesReceivedCallback;
-        bool iotSendAttributes(JsonDocument &doc);
+        bool iotSendAttributes(StaticJsonDocument<JSON_DOC_XLARGE> &doc);
         bool iotSendAttributes(const char *buffer);
-        bool iotSendTelemetry(JsonDocument &doc);
+        bool iotSendTelemetry(StaticJsonDocument<JSON_DOC_XLARGE> &doc);
         bool iotSendTelemetry(const char *buffer);
         #endif
         UdawaLogger *logger = UdawaLogger::getInstance(LogLevel::VERBOSE);
@@ -167,7 +172,7 @@ class Udawa {
             AsyncWebSocket ws;
             void addOnWsEvent(WsOnEventCallback callback);
             void wsBroadcast(const char *buffer);
-            void wsBroadcast(JsonDocument &doc);
+            void wsBroadcast(StaticJsonDocument<JSON_DOC_XLARGE> &doc);
             SemaphoreHandle_t xSemaphoreWSBroadcast;
         #endif
         #ifdef USE_IOT
@@ -177,11 +182,11 @@ class Udawa {
             #ifdef USE_IOT_SECURE
                 WiFiClientSecure _tcpClient;
                 Arduino_MQTT_Client _mqttClient;
-                ThingsBoardSized<UdawaThingsboardLogger> tb;
+                
             #else
                 WiFiClient _tcpClient;
                 Arduino_MQTT_Client _mqttClient;
-                ThingsBoardSized<UdawaThingsboardLogger> tb;
+                
             #endif
             IoTState iotState;
         #endif
@@ -197,7 +202,7 @@ class Udawa {
         void addOnFSDownloadedCallback(FSDownloadedCallback callback);
         std::vector<FSDownloadedCallback> _onFSDownloadedCallback;
 
-        void I2CScanner(JsonDocument &doc);
+        void I2CScanner(StaticJsonDocument<JSON_DOC_MEDIUM> &doc);
         void I2CScanner();
 
     private:
@@ -233,35 +238,12 @@ class Udawa {
         void _crashStateTruthKeeper(uint8_t direction);
         GenericConfig _crashStateConfig;
         #ifdef USE_IOT
-            static void _pvTaskCodeThingsboardTaskWrapper(void* pvParameters);
-            void _pvTaskCodeThingsboard(void *pvParameters);
-            void _processThingsboardProvisionResponse(const JsonObjectConst &data);
             std::vector<ThingsboardOnConnectedCallback> _onThingsboardConnectedCallbacks;
             std::vector<ThingsboardOnDisconnectedCallback> _onThingsboardDisconnectedCallbacks;
             std::vector<ThingsboardOnSharedAttributesReceivedCallback> _onThingsboardSharedAttributesReceivedCallbacks;
-            static void _processThingsboardSharedAttributesUpdateWrapper(void* context, const JsonObjectConst &data) {
-                // Retrieve the Udawa instance
-                Udawa *instance = static_cast<Udawa*>(context);
-                // Call the non-static method using the lambda
-                instance->_processThingsboardSharedAttributesUpdate(data);
-            }
-            // Declaration of the callback object (within the class)
-            Shared_Attribute_Callback _thingsboardSharedAttributesUpdateCallback;
-            void _processThingsboardSharedAttributesUpdate(const JsonObjectConst &data);
-            
-            void _processThingsboardRPCReboot(const JsonVariantConst &data, JsonDocument &response);
-            std::function<void(const JsonVariantConst &data, JsonDocument &response)> _thingsboardRPCRebootHandler;
-
-            void _processThingsboardRPCConfigSave(const JsonVariantConst &data, JsonDocument &response);
-            std::function<void(const JsonVariantConst &data, JsonDocument &response)> _thingsboardRPCConfigSaveHandler;
-            
+            void _pvTaskCodeThingsboard(void *pvParameters);
             #ifdef USE_IOT_OTA
-            Espressif_Updater _iotUpdater;
-            void _iotUpdaterUpdatedCallback(const bool& success);
-            void _iotUpdaterProgressCallback(const size_t& currentChunk, const size_t& totalChuncks);
-            void _processIoTUpdaterFirmwareCheckAttributesRequest(const JsonObjectConst &data);
-            const Attribute_Request_Callback _iotUpdaterFirmwareCheckCallback; //(&_processIoTUpdaterFirmwareCheckAttributesRequest, "fw_version");
-            const OTA_Update_Callback _iotUpdaterOTACallback; //(&_iotUpdaterProgressCallback, &_iotUpdaterUpdatedCallback, CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION, &_iotUpdater, IOT_FIRMWARE_FAILURE_RETRIES, IOT_FIRMWARE_PACKET_SIZE);            
+            
             #endif
         #endif
         #ifdef USE_HW_RTC
