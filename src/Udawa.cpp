@@ -48,7 +48,7 @@ void Udawa::begin(){
     #endif
 
 
-    StaticJsonDocument doc(JSON_DOC_XLARGE);
+    StaticJsonDocument<JSON_DOC_SIZE> doc;
     wiFiHelper.getAvailableWiFi(doc);
     File file = LittleFS.open("/WiFiList.json", FILE_WRITE);
     serializeJson(doc, file);
@@ -266,8 +266,8 @@ void Udawa::_alarmTaskRoutine(void *arg){
       if( xQueueReceive( self->_xQueueAlarm,  &( alarmMsg ), ( TickType_t ) 100 ) == pdPASS )
       {
         if(alarmMsg.code > 0){
-          StaticJsonDocument doc(JSON_DOC_SMALL);
-          JsonObject alarm = doc[PSTR("alarm")].to<JsonObject>();
+          StaticJsonDocument<JSON_DOC_SIZE> doc;
+          JsonObject alarm = doc[PSTR("alarm")].createNestedObject();
           alarm[PSTR("code")] = alarmMsg.code;
           alarm[PSTR("time")] = self->RTC.getDateTime();
 
@@ -276,9 +276,7 @@ void Udawa::_alarmTaskRoutine(void *arg){
           #endif
           
           #ifdef USE_IOT
-          doc.clear();
-          doc[PSTR("alarm")] = alarmMsg.code;
-          self->iotSendTelemetry(doc);
+          
           #endif
         }
         self->_setLEDBuzzer(alarmMsg.color, alarmMsg.blinkCount > 0 ? true : false, alarmMsg.blinkCount, alarmMsg.blinkDelay);
@@ -296,7 +294,7 @@ void Udawa::_setFInit(bool fInit){
 
   #ifdef USE_LOCAL_WEB_INTERFACE
     if(config.state.fWeb && !crashState.fSafeMode){
-      StaticJsonDocument doc(JSON_DOC_SMALL);
+      StaticJsonDocument<JSON_DOC_SIZE> doc;
       doc[PSTR("setFinishedSetup")][PSTR("fInit")] = config.state.fInit;
       wsBroadcast(doc);
     }
@@ -534,7 +532,7 @@ void Udawa::wsBroadcast(const char *buffer){
   }
 }
 
-void Udawa::wsBroadcast(StaticJsonDocument<JSON_DOC_XLARGE> &doc){
+void Udawa::wsBroadcast(StaticJsonDocument<JSON_DOC_SIZE> &doc){
   if(config.state.fWeb){
     if( xSemaphoreWSBroadcast != NULL){
       if( xSemaphoreTake( xSemaphoreWSBroadcast, ( TickType_t ) 1000 ) == pdTRUE )
@@ -596,7 +594,7 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
           _wsClientSalts[client->id()] = saltHex;
 
           // Send salt to the client
-          StaticJsonDocument doc(JSON_DOC_MEDIUM);
+          StaticJsonDocument<JSON_DOC_SIZE> doc;
           JsonObject setSalt = doc[PSTR("setSalt")].to<JsonObject>();
           setSalt[PSTR("salt")] = saltHex;
           setSalt[PSTR("name")] = config.state.name;
@@ -611,7 +609,7 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
       break;
     case WS_EVT_DATA:
       {
-        StaticJsonDocument doc(JSON_DOC_XLARGE);
+        StaticJsonDocument<JSON_DOC_SIZE> doc;
         DeserializationError err = deserializeJson(doc, data);
         /*if(err != DeserializationError::Ok){
           logger->error(PSTR(__func__), PSTR("Failed to parse JSON.\n"));
@@ -737,8 +735,8 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
           }
 
           else if(doc[PSTR("getAvailableWiFi")].is<const char*>()){
-            StaticJsonDocument doc(JSON_DOC_XLARGE);
-            StaticJsonDocument WiFiList;
+            StaticJsonDocument<JSON_DOC_SIZE> doc;
+            StaticJsonDocument<JSON_DOC_SIZE> WiFiList;
             File file = LittleFS.open("/WiFiList.json", FILE_READ);
             deserializeJson(WiFiList, file);
             file.close();
@@ -791,7 +789,7 @@ void Udawa::addOnWsEvent(WsOnEventCallback callback) {
 #endif
 
 void Udawa::_crashStateTruthKeeper(uint8_t direction){
-  StaticJsonDocument crashStateDoc;
+  StaticJsonDocument<JSON_DOC_SIZE> crashStateDoc;
   crashState.rtcp = millis();
 
   if(direction == 1 || direction == 3){
@@ -861,7 +859,7 @@ bool Udawa::iotSendAttributes(const char *buffer){
   return res;
 }
 
-bool Udawa::iotSendAttributes(StaticJsonDocument &doc){
+bool Udawa::iotSendAttributes(StaticJsonDocument<JSON_DOC_SIZE> &doc){
   bool res = false;
   String buffer;
   serializeJson(doc, buffer);
@@ -907,7 +905,7 @@ bool Udawa::iotSendTelemetry(const char *buffer){
   return res;
 }
 
-bool Udawa::iotSendTelemetry(StaticJsonDocument<JSON_DOC_LARGE> &doc){
+bool Udawa::iotSendTelemetry(StaticJsonDocument<JSON_DOC_SIZE> &doc){
   bool res = false;
   String buffer;
   serializeJson(doc, buffer);
@@ -989,8 +987,8 @@ void Udawa::addOnFSDownloadedCallback(FSDownloadedCallback callback){
 void Udawa::syncClientAttr(uint8_t direction){
   String ip = WiFi.localIP().toString();
   
-  StaticJsonDocument doc(JSON_DOC_LARGE);
-  char buffer[512];
+  StaticJsonDocument<JSON_DOC_SIZE> doc;
+  char buffer[JSON_DOC_SIZE];
 
   #ifdef USE_IOT
   if((direction == 0 || direction == 1) ){
@@ -1048,7 +1046,7 @@ void Udawa::syncClientAttr(uint8_t direction){
 
   #ifdef USE_LOCAL_WEB_INTERFACE
   if((direction == 0 || direction == 2)){
-    JsonObject attr = doc["attr"].to<JsonObject>(); 
+    JsonObject attr = doc["attr"].createNestedObject(); 
     attr[PSTR("ipad")] = ip.c_str();
     attr[PSTR("compdate")] = COMPILED;
     attr[PSTR("fmTitle")] = CURRENT_FIRMWARE_TITLE;
@@ -1064,7 +1062,7 @@ void Udawa::syncClientAttr(uint8_t direction){
     serializeJson(doc, buffer);
     wsBroadcast(buffer);
     doc.clear();
-    JsonObject cfg = doc[PSTR("cfg")].to<JsonObject>(); 
+    JsonObject cfg = doc[PSTR("cfg")].createNestedObject(); 
     cfg[PSTR("name")] = config.state.name;
     cfg[PSTR("model")] = config.state.model;
     cfg[PSTR("group")] = config.state.group;
@@ -1088,7 +1086,7 @@ void Udawa::syncClientAttr(uint8_t direction){
   }
 }
 
-void Udawa::I2CScanner(StaticJsonDocument &doc){
+void Udawa::I2CScanner(StaticJsonDocument<JSON_DOC_SIZE> &doc){
   JsonArray i2c = doc[PSTR("i2c")].to<JsonArray>();
   for (uint8_t i = 0; i < 127; i++) {
     Wire.beginTransmission(i);

@@ -70,8 +70,8 @@ class UdawaConfig{
 class GenericConfig{
   public:
     GenericConfig(const char* path);
-    bool load(JsonDocument &data);
-    bool save(JsonDocument &data);
+    bool load(StaticJsonDocument<JSON_DOC_SIZE> &data);
+    bool save(StaticJsonDocument<JSON_DOC_SIZE> &data);
   private:
     UdawaLogger *_logger = UdawaLogger::getInstance(LogLevel::VERBOSE);
     const char *_path;

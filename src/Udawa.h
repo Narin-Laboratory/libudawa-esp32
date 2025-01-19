@@ -151,9 +151,9 @@ class Udawa {
         typedef std::function<void()> ThingsboardOnConnectedCallback;
         typedef std::function<void()> ThingsboardOnDisconnectedCallback;
         typedef std::function<void(const JsonObjectConst &data)> ThingsboardOnSharedAttributesReceivedCallback;
-        bool iotSendAttributes(StaticJsonDocument<JSON_DOC_XLARGE> &doc);
+        bool iotSendAttributes(StaticJsonDocument<JSON_DOC_SIZE> &doc);
         bool iotSendAttributes(const char *buffer);
-        bool iotSendTelemetry(StaticJsonDocument<JSON_DOC_XLARGE> &doc);
+        bool iotSendTelemetry(StaticJsonDocument<JSON_DOC_SIZE> &doc);
         bool iotSendTelemetry(const char *buffer);
         #endif
         UdawaLogger *logger = UdawaLogger::getInstance(LogLevel::VERBOSE);
@@ -172,7 +172,7 @@ class Udawa {
             AsyncWebSocket ws;
             void addOnWsEvent(WsOnEventCallback callback);
             void wsBroadcast(const char *buffer);
-            void wsBroadcast(StaticJsonDocument<JSON_DOC_XLARGE> &doc);
+            void wsBroadcast(StaticJsonDocument<JSON_DOC_SIZE> &doc);
             SemaphoreHandle_t xSemaphoreWSBroadcast;
         #endif
         #ifdef USE_IOT
@@ -202,7 +202,7 @@ class Udawa {
         void addOnFSDownloadedCallback(FSDownloadedCallback callback);
         std::vector<FSDownloadedCallback> _onFSDownloadedCallback;
 
-        void I2CScanner(StaticJsonDocument<JSON_DOC_MEDIUM> &doc);
+        void I2CScanner(StaticJsonDocument<JSON_DOC_SIZE> &doc);
         void I2CScanner();
 
     private:
