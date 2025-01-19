@@ -8,7 +8,6 @@
 #include <vector>
 #include <DNSServer.h>
 #include <ArduinoJson.h>
-#include <params.h>
 
 struct WiFiHelperState {
     unsigned long softAPstartTime = 0;
@@ -38,7 +37,7 @@ class UdawaWiFiHelper{
             const char* dssid, const char* dpass, const char* hname, const char* htP);
         void setInitState (bool fInit);
         void run();
-        void getAvailableWiFi(StaticJsonDocument<JSON_DOC_SIZE> &doc);
+        void getAvailableWiFi(JsonDocument &doc);
         int rssiToPercent(int rssi);
     private:
         WiFiHelperState _state;
