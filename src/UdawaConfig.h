@@ -31,8 +31,8 @@ struct UdawaConfigStruct{
   bool provSent;
   char provDK[32];
   char provDS[32];
-  char binURL[192];
   #endif
+  char binURL[192];
 
   int gmtOff;
 

@@ -89,8 +89,8 @@ bool UdawaConfig::load(){
                 if(data[PSTR("provSent")].is<bool>()){state.provSent = data[PSTR("provSent")].as<bool>();}
                 if(data[PSTR("fIoT")].is<bool>()){state.fIoT = data[PSTR("fIoT")].as<bool>();}
                 if(data[PSTR("tbAddr")].is<const char*>()){strlcpy(state.tbAddr, data[PSTR("tbAddr")].as<const char*>(), sizeof(state.tbAddr));}
-                if(data[PSTR("binURL")].is<const char*>()){strlcpy(state.binURL, data[PSTR("binURL")].as<const char*>(), sizeof(state.binURL));}
                 #endif
+                if(data[PSTR("binURL")].is<const char*>()){strlcpy(state.binURL, data[PSTR("binURL")].as<const char*>(), sizeof(state.binURL));}
             }
             else{
                 _logger->error(PSTR(__func__), PSTR("%s is not valid JSON!\n"), _path);
@@ -132,9 +132,9 @@ bool UdawaConfig::load(){
                 state.provSent = false;
                 state.fIoT = fIoT;
                 strlcpy(state.tbAddr, tbAddr, sizeof(tbAddr));
-                strlcpy(state.binURL, binURL, sizeof(binURL));
                 state.tbPort = tbPort;
                 #endif
+                strlcpy(state.binURL, binURL, sizeof(binURL));
                 file.close();
                 xSemaphoreGive( xSemaphoreConfig );
                 return false;
@@ -189,8 +189,8 @@ bool UdawaConfig::save(){
         data[PSTR("fIoT")] = state.fIoT;
         data[PSTR("tbAddr")] = state.tbAddr;
         data[PSTR("tbPort")] = state.tbPort;
-        data[PSTR("binURL")] = state.binURL;
         #endif
+        data[PSTR("binURL")] = state.binURL;
         data[PSTR("gmtOff")] = state.gmtOff;
         data[PSTR("fWOTA")] = state.fWOTA;
         data[PSTR("fWeb")] = state.fWeb;

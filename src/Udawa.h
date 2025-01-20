@@ -18,8 +18,16 @@
 #ifdef USE_IOT
 #include <Arduino_MQTT_Client.h>
 #include <ThingsBoard.h>
+#include <Provision.h>
+#include <Attribute_Request.h>
+#include <Shared_Attribute_Callback.h>
+#include <Shared_Attribute_Update.h>
+#include <OTA_Update_Callback.h>
+#include <RPC_Callback.h>
+#include <Server_Side_RPC.h>
 #ifdef USE_IOT_OTA
 #include <Espressif_Updater.h>
+#include <OTA_Firmware_Update.h>
 #endif
 #endif
 #ifdef USE_IOT_SECURE
@@ -118,9 +126,6 @@ class UdawaThingsboardLogger{
         }
 };
 #ifdef USE_IOT_OTA
-constexpr std::array<const char*, 1U> REQUESTED_FW_CHECK_SHARED_ATTRIBUTES = {
-    FW_VER_KEY
-};
 
 template <size_t N>
 Attribute_Request_Callback createFirmwareCheckCallback(
@@ -177,11 +182,11 @@ class Udawa {
             #ifdef USE_IOT_SECURE
                 WiFiClientSecure _tcpClient;
                 Arduino_MQTT_Client _mqttClient;
-                ThingsBoardSized<UdawaThingsboardLogger> tb;
+                ThingsBoardSized<10, 10, UdawaThingsboardLogger>  tb;
             #else
                 WiFiClient _tcpClient;
                 Arduino_MQTT_Client _mqttClient;
-                ThingsBoardSized<UdawaThingsboardLogger> tb;
+                ThingsBoardSized<UdawaThingsboardLogger>  tb;
             #endif
             IoTState iotState;
         #endif
@@ -233,9 +238,13 @@ class Udawa {
         void _crashStateTruthKeeper(uint8_t direction);
         GenericConfig _crashStateConfig;
         #ifdef USE_IOT
+            Server_Side_RPC<> _IAPIRPC;
+            Provision<> _IAPIProv;
+            Shared_Attribute_Update<> _IAPISharedAttr;
+            Attribute_Request<> _IAPISharedAttrReq;
             static void _pvTaskCodeThingsboardTaskWrapper(void* pvParameters);
             void _pvTaskCodeThingsboard(void *pvParameters);
-            void _processThingsboardProvisionResponse(const JsonObjectConst &data);
+            void _processThingsboardProvisionResponse(const JsonDocument &data);
             std::vector<ThingsboardOnConnectedCallback> _onThingsboardConnectedCallbacks;
             std::vector<ThingsboardOnDisconnectedCallback> _onThingsboardDisconnectedCallbacks;
             std::vector<ThingsboardOnSharedAttributesReceivedCallback> _onThingsboardSharedAttributesReceivedCallbacks;
@@ -256,12 +265,13 @@ class Udawa {
             std::function<void(const JsonVariantConst &data, JsonDocument &response)> _thingsboardRPCConfigSaveHandler;
             
             #ifdef USE_IOT_OTA
-            Espressif_Updater _iotUpdater;
-            void _iotUpdaterUpdatedCallback(const bool& success);
+            Espressif_Updater<> _iotUpdater;
+            OTA_Firmware_Update<> _IAPIOta;
+            void _iotUpdaterFinishedCallback(const bool& success);
             void _iotUpdaterProgressCallback(const size_t& currentChunk, const size_t& totalChuncks);
             void _processIoTUpdaterFirmwareCheckAttributesRequest(const JsonObjectConst &data);
             const Attribute_Request_Callback _iotUpdaterFirmwareCheckCallback; //(&_processIoTUpdaterFirmwareCheckAttributesRequest, "fw_version");
-            const OTA_Update_Callback _iotUpdaterOTACallback; //(&_iotUpdaterProgressCallback, &_iotUpdaterUpdatedCallback, CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION, &_iotUpdater, IOT_FIRMWARE_FAILURE_RETRIES, IOT_FIRMWARE_PACKET_SIZE);            
+            const OTA_Update_Callback _iotUpdaterOTACallback; //(&_iotUpdaterProgressCallback, &_iotUpdaterFinishedCallback, CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION, &_iotUpdater, IOT_FIRMWARE_FAILURE_RETRIES, IOT_FIRMWARE_PACKET_SIZE);            
             #endif
         #endif
         #ifdef USE_HW_RTC
