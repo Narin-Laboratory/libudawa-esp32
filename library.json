@@ -7,7 +7,7 @@
       "url": "https://github.com/Narin-Laboratory/libudawa-esp32.git#gigarefactor"
   },
   "dependencies": {
-      "bblanchon/ArduinoJson": "^6.21.5",
+      "bblanchon/ArduinoJson": "^7.3.0 ",
       "mathieucarbou/ESPAsyncWebServer": "https://github.com/mathieucarbou/ESPAsyncWebServer",
       "Narin-Laboratory/thingsboard-arduino-sdk":"https://github.com/Narin-Laboratory/thingsboard-arduino-sdk.git",
       "Narin-Laboratory/pubsubclient": "https://github.com/Narin-Laboratory/pubsubclient.git#master",
