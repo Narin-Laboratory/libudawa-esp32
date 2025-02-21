@@ -20,7 +20,7 @@ Udawa::Udawa() : config(PSTR("/config.json")), _crashStateConfig(PSTR("/crash.js
   tb(_mqttClient, 1024, 1024, 1024, 2048)
   #endif
   #ifdef USE_IOT_OTA
-  ,_iotUpdaterFirmwareCheckCallback(
+  /*,_iotUpdaterFirmwareCheckCallback(
         createFirmwareCheckCallback(
             [this](const JsonObjectConst& data) {
                 this->_processIoTUpdaterFirmwareCheckAttributesRequest(data);
@@ -39,7 +39,7 @@ Udawa::Udawa() : config(PSTR("/config.json")), _crashStateConfig(PSTR("/crash.js
     [this](const size_t& total, const size_t& progress) { 
         this->_iotUpdaterProgressCallback(total, progress);
     }
-  ) 
+  ) */
   #endif
   {
     logger->addLogger(serialLogger);
@@ -923,9 +923,8 @@ void Udawa::_processThingsboardProvisionResponse(const JsonDocument &data){
 void Udawa::_pvTaskCodeThingsboard(void *pvParameters){
   #ifdef USE_IOT_SECURE
   _tcpClient.setCACert(CA_CERT);
-  //_tcpClient.setInsecure();
-  const char *ssl_protos[] = {PSTR("mqtt")};
-  _tcpClient.setAlpnProtocols(ssl_protos);
+   const char *alpnProtocols[] = {"mqtt", NULL}; // Ensure NULL-terminated array
+  _tcpClient.setAlpnProtocols(alpnProtocols);
   #endif
   while(true){
     if(!config.state.provSent){
@@ -1021,7 +1020,7 @@ void Udawa::_pvTaskCodeThingsboard(void *pvParameters){
           iotState.fIoTCurrentFWSent = _IAPIOta.Firmware_Send_Info(CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION) && _IAPIOta.Firmware_Send_State(PSTR("UPDATED"));
           if(iotState.fIoTCurrentFWSent){
           //if(true){
-            _IAPISharedAttrReq.Shared_Attributes_Request(_iotUpdaterFirmwareCheckCallback);
+            //_IAPISharedAttrReq.Shared_Attributes_Request(_iotUpdaterFirmwareCheckCallback);
           }
           #endif
 

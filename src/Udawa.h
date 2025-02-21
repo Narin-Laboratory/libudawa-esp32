@@ -125,14 +125,14 @@ class UdawaThingsboardLogger{
             return 1U;
         }
 };
-#ifdef USE_IOT_OTA
 
-template <size_t N>
+#ifdef USE_IOT_OTA
+/*template <size_t N>
 Attribute_Request_Callback createFirmwareCheckCallback(
     std::function<void(const JsonObjectConst&)> callback,
     const std::array<const char*, N>& attributes) {
     return Attribute_Request_Callback(callback, attributes.begin(), attributes.end());
-}
+}*/
 #endif
 #endif
 
@@ -182,7 +182,7 @@ class Udawa {
             #ifdef USE_IOT_SECURE
                 WiFiClientSecure _tcpClient;
                 Arduino_MQTT_Client _mqttClient;
-                ThingsBoardSized<10, 10, UdawaThingsboardLogger>  tb;
+                ThingsBoardSized<UdawaThingsboardLogger>  tb;
             #else
                 WiFiClient _tcpClient;
                 Arduino_MQTT_Client _mqttClient;
@@ -270,7 +270,7 @@ class Udawa {
             void _iotUpdaterFinishedCallback(const bool& success);
             void _iotUpdaterProgressCallback(const size_t& currentChunk, const size_t& totalChuncks);
             void _processIoTUpdaterFirmwareCheckAttributesRequest(const JsonObjectConst &data);
-            const Attribute_Request_Callback _iotUpdaterFirmwareCheckCallback; //(&_processIoTUpdaterFirmwareCheckAttributesRequest, "fw_version");
+            //const Attribute_Request_Callback _iotUpdaterFirmwareCheckCallback; //(&_processIoTUpdaterFirmwareCheckAttributesRequest, "fw_version");
             const OTA_Update_Callback _iotUpdaterOTACallback; //(&_iotUpdaterProgressCallback, &_iotUpdaterFinishedCallback, CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION, &_iotUpdater, IOT_FIRMWARE_FAILURE_RETRIES, IOT_FIRMWARE_PACKET_SIZE);            
             #endif
         #endif
