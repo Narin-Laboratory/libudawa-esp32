@@ -44,7 +44,8 @@
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/entropy.h>
 #endif
-#include <HTTPClient.h>
+#include <ArduinoHttpClient.h>
+#include "URLParser.h"
 #include <Update.h>
 
 #define countof(a) (sizeof(a) / sizeof(a[0]))

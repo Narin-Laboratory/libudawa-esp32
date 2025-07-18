@@ -906,139 +906,137 @@ void Udawa::I2CScanner(){
   }
 }
 
-void Udawa::FSDownloader(){
-  HTTPClient http;
+void Udawa::FSDownloader() {
+    // We need a WiFiClient for ArduinoHttpClient
+    WiFiClient wifi;
 
-  logger->info(PSTR(__func__), PSTR("Downloading SPIFFS: %s.\n"), config.state.binURL);
+    // --- New code for URL Parsing ---
+    // The ArduinoHttpClient needs the host, port, and path separately.
+    // We use the ParsedUrl helper to get these from the full URL.
+    ParsedUrl parsedUrl(config.state.binURL);
+    if (!parsedUrl.host()) {
+        logger->error(PSTR(__func__), PSTR("Failed to parse URL: %s\n"), config.state.binURL);
+        reboot(300);
+        return;
+    }
+    // --- End of new code ---
 
-  http.begin( config.state.binURL );
+    // Create the HttpClient instance with the WiFiClient and parsed server details
+    HttpClient http(wifi, parsedUrl.host(), parsedUrl.port());
 
-  const char* get_headers[] = { "Content-Length", "Content-type", "Accept-Ranges" };
-  http.collectHeaders( get_headers, sizeof(get_headers)/sizeof(const char*) );
+    logger->info(PSTR(__func__), PSTR("Downloading SPIFFS from host: %s, port: %d, path: %s\n"), parsedUrl.host(), parsedUrl.port(), parsedUrl.path());
 
-  int64_t updateSize = 0;
-  int httpCode = http.GET();
-  String contentType;
+    // Make the GET request
+    http.get(parsedUrl.path());
 
-  if( httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY ) {
-      updateSize = http.getSize();
-      contentType = http.header( "Content-type" );
-      String acceptRange = http.header( "Accept-Ranges" );
-      if( acceptRange == "bytes" ) {
-          logger->info(PSTR(__func__), PSTR("This server supports resume!\n"));
-      } else {
-          logger->info(PSTR(__func__), PSTR("This server dose not supports resume!\n"));
-      }
-  } else {
-      logger->info(PSTR(__func__), PSTR("Server responded with HTTP Status %s.\n"), String(httpCode).c_str());
-      reboot(300);
-      return;
-  }
+    // Get the status code from the response
+    int httpCode = http.responseStatusCode();
 
-  // TODO: Not all streams respond with a content length.
-  // TODO: Set updateSize to UPDATE_SIZE_UNKNOWN when content type is valid.
+    int64_t updateSize = 0;
+    String contentType;
+    String acceptRange;
 
-  // check updateSize and content type
-  if( updateSize<=0 ) {
-      logger->info(PSTR(__func__), PSTR("Response is empty! updateSize: %d, contentType: %s\n"), (int)updateSize, contentType.c_str());
-      reboot(3);
-      return;
-  }
+    if (httpCode == 200) { // HTTP_CODE_OK
+        // --- Header processing is now done in a loop ---
+        while (http.headerAvailable()) {
+            String headerName = http.readHeaderName();
+            String headerValue = http.readHeaderValue();
 
-  logger->info(PSTR(__func__), PSTR("updateSize: %d, contentType: %s\n"), (int)updateSize, contentType.c_str());
+            if (headerName.equalsIgnoreCase("Content-Length")) {
+                updateSize = headerValue.toInt();
+            } else if (headerName.equalsIgnoreCase("Content-Type")) {
+                contentType = headerValue;
+            } else if (headerName.equalsIgnoreCase("Accept-Ranges")) {
+                acceptRange = headerValue;
+            }
+        }
+        // --- End of new header logic ---
 
-  Stream* stream = http.getStreamPtr();
-  if( updateSize<=0 || stream == nullptr ) {
-      logger->warn(PSTR(__func__), PSTR("HTTP Error.\n"));
-      reboot(3);
-      return;
-  }
+        if (acceptRange == "bytes") {
+            logger->info(PSTR(__func__), PSTR("This server supports resume!\n"));
+        } else {
+            logger->info(PSTR(__func__), PSTR("This server does not support resume!\n"));
+        }
 
-  // some network streams (e.g. Ethernet) can be laggy and need to 'breathe'
-  if( !stream->available() ) {
-      uint32_t timeout = millis() + 3000;
-      while( stream->available() ) {
-          if( millis()>timeout ) {
-              logger->warn(PSTR(__func__), PSTR("Stream timed out!\n"));
-              reboot(3);
-              return;
-          }
-          vTaskDelay((const TickType_t)10 / portTICK_PERIOD_MS);
-      }
-  }
+    } else {
+        logger->error(PSTR(__func__), PSTR("Server responded with HTTP Status %d.\n"), httpCode);
+        reboot(300);
+        return;
+    }
 
-  // If using compression, the size is implicitely unknown
-  size_t fwsize = updateSize;       // fw_size is unknown if we have a compressed image
+    // After reading headers, get the total body length.
+    // This will be the same as updateSize if the Content-Length header was present.
+    updateSize = http.contentLength();
 
-  bool canBegin = Update.begin(updateSize, U_SPIFFS);
+    // Check updateSize and content type
+    if (updateSize <= 0) {
+        logger->error(PSTR(__func__), PSTR("Response is empty or invalid! updateSize: %d, contentType: %s\n"), (int)updateSize, contentType.c_str());
+        reboot(3);
+        return;
+    }
 
-  if( !canBegin ) {
-      logger->warn(PSTR(__func__), PSTR("Not enough space to begin OTA, partition size mismatch?\n"));
-      Update.abort();
-      reboot(3);
-      return;
-  }
+    logger->info(PSTR(__func__), PSTR("updateSize: %d, contentType: %s\n"), (int)updateSize, contentType.c_str());
+    
+    // --- The http object itself is the stream ---
+    // No need for getStreamPtr(). We pass the client object directly.
+    bool canBegin = Update.begin(updateSize, U_SPIFFS);
 
-  Update.onProgress( [](size_t progress, size_t size) {
-    Serial.printf("LittleFS Updater: %d/%d\n", (int)progress, (int)size);
-  });
+    if (!canBegin) {
+        logger->warn(PSTR(__func__), PSTR("Not enough space to begin OTA, partition size mismatch?\n"));
+        Update.abort();
+        reboot(3);
+        return;
+    }
 
-  logger->info(PSTR(__func__), PSTR("Begin LittleFS OTA. This may take 2 - 5 mins to complete. Things might be quiet for a while.. Patience!\n"));
-  // Some activity may appear in the Serial monitor during the update (depends on Update.onProgress)
-  size_t written = 0;
-  while (written < updateSize) {
-      size_t bytesWritten = Update.writeStream(*stream);
-      if (bytesWritten == 0) {
-          logger->warn(PSTR(__func__), PSTR("Stream write error.\n"));
-          Update.abort();
-          config.save();
-          for (auto callback : _onFSDownloadedCallback) { 
-            callback(); // Call each callback
-          }
-          reboot(3);
-          return;
-      }
-      written += bytesWritten;
-      logger->info(PSTR(__func__), PSTR("Written : %d / %d.\n"), (int)written, (int)updateSize);
-  }
+    Update.onProgress([](size_t progress, size_t size) {
+        Serial.printf("LittleFS Updater: %d/%d\n", (int)progress, (int)size);
+    });
 
-  if (written == updateSize) {
-      logger->info(PSTR(__func__), PSTR("Written : %d successfully. \n"), (int)written);
-  } else {
-      logger->warn(PSTR(__func__), PSTR("Written only : %d / %d. Premature end of stream?\n"), (int)written, (int)updateSize);
-      Update.abort();
-      config.save();
-      for (auto callback : _onFSDownloadedCallback) { 
-        callback(); // Call each callback
-      }
-      reboot(3);
-      return;
-  }
+    logger->info(PSTR(__func__), PSTR("Begin LittleFS OTA. This may take 2 - 5 mins to complete. Things might be quiet for a while.. Patience!\n"));
 
-  if (!Update.end()) {
-      logger->warn(PSTR(__func__), PSTR("An Update Error Occurred: %d\n"), Update.getError());
-      config.save();
-      for (auto callback : _onFSDownloadedCallback) { 
-        callback(); // Call each callback
-      }
-      reboot(3);
-      return;
-  }
-  if (Update.isFinished()) {
-      logger->info(PSTR(__func__), PSTR("Update completed successfully.\n"));
-      config.save();
-      for (auto callback : _onFSDownloadedCallback) { 
-        callback(); // Call each callback
-      }
-      delay(1000); // Ensure configuration is saved before reboot
-      reboot(3);
-  } else {
-      config.save();
-      for (auto callback : _onFSDownloadedCallback) { 
-        callback(); // Call each callback
-      }
-      logger->warn(PSTR(__func__), PSTR("Update not finished! Something went wrong!\n"));
-      reboot(3);
-  }
-  reboot(3);
+    // --- Use the 'http' object directly as the stream ---
+    size_t written = Update.writeStream(http);
+
+    if (written == updateSize) {
+        logger->info(PSTR(__func__), PSTR("Written : %d successfully.\n"), (int)written);
+    } else {
+        logger->warn(PSTR(__func__), PSTR("Written only : %d / %d. Premature end of stream? Error: %s\n"), (int)written, (int)updateSize, Update.errorString());
+        Update.abort();
+        config.save();
+        for (auto callback : _onFSDownloadedCallback) {
+            callback();
+        }
+        reboot(3);
+        return;
+    }
+
+    if (!Update.end()) {
+        logger->warn(PSTR(__func__), PSTR("An Update Error Occurred: %d\n"), Update.getError());
+        config.save();
+        for (auto callback : _onFSDownloadedCallback) {
+            callback();
+        }
+        reboot(3);
+        return;
+    }
+    
+    if (Update.isFinished()) {
+        logger->info(PSTR(__func__), PSTR("Update completed successfully.\n"));
+        config.save();
+        for (auto callback : _onFSDownloadedCallback) {
+            callback();
+        }
+        delay(1000); // Ensure configuration is saved before reboot
+        reboot(3);
+    } else {
+        config.save();
+        for (auto callback : _onFSDownloadedCallback) {
+            callback();
+        }
+        logger->warn(PSTR(__func__), PSTR("Update not finished! Something went wrong!\n"));
+        reboot(3);
+    }
+
+    // The code should reboot from one of the conditions above, but as a fallback:
+    reboot(3);
 }
