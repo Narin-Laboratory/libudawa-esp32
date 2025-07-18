@@ -1,9 +1,9 @@
 #include "UdawaConfig.h"
 
-SemaphoreHandle_t xSemaphoreConfig = NULL; 
+SemaphoreHandle_t xSemaphoreConfig = NULL;
 
 UdawaConfig::UdawaConfig(const char* path) : _path(path){
-    
+
 }
 
 bool UdawaConfig::begin(){
@@ -14,7 +14,7 @@ bool UdawaConfig::begin(){
       {
         if(!LittleFS.begin(true)){
             _logger->error(PSTR(__func__), PSTR("Problem with the LittleFS file system.\n"));
-            
+
             xSemaphoreGive( xSemaphoreConfig );
             return false;
         }else{
@@ -55,7 +55,7 @@ bool UdawaConfig::load(){
 
             if(err == DeserializationError::Ok){
                 _logger->debug(PSTR(__func__), PSTR("%s is valid JSON.\n"), _path);
-                
+
                 if(data[PSTR("fInit")].is<bool>()){state.fInit = data[PSTR("fInit")].as<bool>();}
                 if(data[PSTR("hwid")].is<const char*>()){strlcpy(state.hwid, data[PSTR("hwid")].as<const char*>(), sizeof(state.hwid));}
                 if(data[PSTR("name")].is<const char*>()){strlcpy(state.name, data[PSTR("name")].as<const char*>(), sizeof(state.name));}
@@ -70,7 +70,7 @@ bool UdawaConfig::load(){
                 if(data[PSTR("htU")].is<const char*>()){strlcpy(state.htU, data[PSTR("htU")].as<const char*>(), sizeof(state.htU));}
                 if(data[PSTR("htP")].is<const char*>()){strlcpy(state.htP, data[PSTR("htP")].as<const char*>(), sizeof(state.htP));}
                 if(data[PSTR("logIP")].is<const char*>()){strlcpy(state.logIP, data[PSTR("logIP")].as<const char*>(), sizeof(state.logIP));}
-                if(data[PSTR("logLev")].is<uint8_t>()){state.logLev = data[PSTR("logLev")].as<uint8_t>();}                
+                if(data[PSTR("logLev")].is<uint8_t>()){state.logLev = data[PSTR("logLev")].as<uint8_t>();}
                 if(data[PSTR("fWOTA")].is<bool>()){state.fWOTA = data[PSTR("fWOTA")].as<bool>();}
                 if(data[PSTR("fWeb")].is<bool>()){state.fWeb = data[PSTR("fWeb")].as<bool>();}
                 if(data[PSTR("gmtOff")].is<int>()){state.gmtOff = data[PSTR("gmtOff")].as<int>();}
@@ -81,15 +81,6 @@ bool UdawaConfig::load(){
                 if(data[PSTR("pinLEDB")].is<uint8_t>()){state.pinLEDB = data[PSTR("pinLEDB")].as<uint8_t>();}
                 if(data[PSTR("pinBuzz")].is<uint8_t>()){state.pinBuzz = data[PSTR("pinBuzz")].as<uint8_t>();}
                 
-                #ifdef USE_IOT
-                if(data[PSTR("accTkn")].is<const char*>()){strlcpy(state.accTkn, data[PSTR("accTkn")].as<const char*>(), sizeof(state.accTkn));}
-                if(data[PSTR("provDK")].is<const char*>()){strlcpy(state.provDK, data[PSTR("provDK")].as<const char*>(), sizeof(state.provDK));}
-                if(data[PSTR("provDS")].is<const char*>()){strlcpy(state.provDS, data[PSTR("provDS")].as<const char*>(), sizeof(state.provDS));}
-                if(data[PSTR("tbPort")].is<uint16_t>()){state.tbPort = data[PSTR("tbPort")].as<uint16_t>();}
-                if(data[PSTR("provSent")].is<bool>()){state.provSent = data[PSTR("provSent")].as<bool>();}
-                if(data[PSTR("fIoT")].is<bool>()){state.fIoT = data[PSTR("fIoT")].as<bool>();}
-                if(data[PSTR("tbAddr")].is<const char*>()){strlcpy(state.tbAddr, data[PSTR("tbAddr")].as<const char*>(), sizeof(state.tbAddr));}
-                #endif
                 if(data[PSTR("binURL")].is<const char*>()){strlcpy(state.binURL, data[PSTR("binURL")].as<const char*>(), sizeof(state.binURL));}
             }
             else{
@@ -125,21 +116,12 @@ bool UdawaConfig::load(){
                 state.pinLEDB = pinLEDB;
                 state.pinBuzz = pinBuzz;
 
-                #ifdef USE_IOT
-                strlcpy(state.accTkn, accTkn, sizeof(accTkn));
-                strlcpy(state.provDK, provDK, sizeof(provDK));
-                strlcpy(state.provDS, provDS, sizeof(provDS));
-                state.provSent = false;
-                state.fIoT = fIoT;
-                strlcpy(state.tbAddr, tbAddr, sizeof(tbAddr));
-                state.tbPort = tbPort;
-                #endif
                 strlcpy(state.binURL, binURL, sizeof(binURL));
                 file.close();
                 xSemaphoreGive( xSemaphoreConfig );
                 return false;
             }
-        
+
             file.close();
             xSemaphoreGive( xSemaphoreConfig );
             return true;
@@ -158,9 +140,9 @@ bool UdawaConfig::save(){
         if(!LittleFS.remove(_path)){
             _logger->warn(PSTR(__func__),PSTR("Failed to delete the old file: %s\n"), _path);
         }
-        
+
         File file = LittleFS.open(_path, FILE_WRITE);
-        
+
         if (!file){
             _logger->error(PSTR(__func__),PSTR("Failed to open the old file: %s\n"), _path);
             file.close();
@@ -181,15 +163,6 @@ bool UdawaConfig::save(){
         data[PSTR("dssid")] = state.dssid;
         data[PSTR("dpass")] = state.dpass;
         data[PSTR("upass")] = state.upass;
-        #ifdef USE_IOT
-        data[PSTR("accTkn")] = state.accTkn;
-        data[PSTR("provSent")] = state.provSent;
-        data[PSTR("provDK")] = state.provDK;
-        data[PSTR("provDS")] = state.provDS;
-        data[PSTR("fIoT")] = state.fIoT;
-        data[PSTR("tbAddr")] = state.tbAddr;
-        data[PSTR("tbPort")] = state.tbPort;
-        #endif
         data[PSTR("binURL")] = state.binURL;
         data[PSTR("gmtOff")] = state.gmtOff;
         data[PSTR("fWOTA")] = state.fWOTA;
@@ -209,80 +182,7 @@ bool UdawaConfig::save(){
 
         _logger->debug(PSTR(__func__),PSTR("%s saved successfully.\n"), _path);
 
-        file.close();        
-        xSemaphoreGive( xSemaphoreConfig );
-        return true;
-      }
-      else
-      {
-        _logger->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
-      }
-    }
-
-    return false;
-}
-
-GenericConfig::GenericConfig(const char* path) : _path(path) {
-
-}
-
-bool GenericConfig::load(JsonDocument &data){
-    if( xSemaphoreConfig != NULL ){
-        if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 5000 ) == pdTRUE ){
-            _logger->info(PSTR(__func__),PSTR("Loading %s.\n"), _path);
-            File file = LittleFS.open(_path, FILE_READ);
-            if(file.size() > 1)
-            {
-                _logger->info(PSTR(__func__),PSTR("%s size is normal: %d.\n"), _path, file.size());
-            }
-            else
-            {
-                _logger->warn(PSTR(__func__),PSTR("%s size is abnormal: %d!\n"), _path, file.size());
-                file.close();
-                xSemaphoreGive( xSemaphoreConfig );
-                return false;
-            }
-
-            DeserializationError err = deserializeJson(data, file);
-
-            if(err == DeserializationError::Ok){
-                _logger->debug(PSTR(__func__), PSTR("%s is valid JSON.\n"), _path);                
-            }
-            
-            file.close();
-            xSemaphoreGive( xSemaphoreConfig );
-            return true;
-        }
-        else{
-            _logger->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
-        }
-    }
-    return false;
-}
-
-bool GenericConfig::save(JsonDocument &data){
-    if( xSemaphoreConfig != NULL ){
-      if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 5000 ) == pdTRUE )
-      {
-        if(!LittleFS.remove(_path)){
-            Serial.println(_path);
-            _logger->warn(PSTR(__func__),PSTR("Failed to delete the old file: %s\n"), _path);
-        }
-        
-        File file = LittleFS.open(_path, FILE_WRITE);
-        
-        if (!file){
-            _logger->error(PSTR(__func__),PSTR("Failed to open the old file: %s\n"), _path);
-            file.close();
-            xSemaphoreGive( xSemaphoreConfig );
-            return false;
-        }
-
-        serializeJson(data, file);
-
-        _logger->debug(PSTR(__func__),PSTR("%s saved successfully.\n"), _path);
-
-        file.close();        
+        file.close();
         xSemaphoreGive( xSemaphoreConfig );
         return true;
       }

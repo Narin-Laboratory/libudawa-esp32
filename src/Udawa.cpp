@@ -15,32 +15,6 @@ Udawa::Udawa() : config(PSTR("/config.json")), _crashStateConfig(PSTR("/crash.js
   ,http(80) 
   ,ws(PSTR("/ws"))
   #endif
-  #ifdef USE_IOT
-  ,_mqttClient(_tcpClient), 
-  tb(_mqttClient, 1024, 1024, 1024, 2048)
-  #endif
-  #ifdef USE_IOT_OTA
-  /*,_iotUpdaterFirmwareCheckCallback(
-        createFirmwareCheckCallback(
-            [this](const JsonObjectConst& data) {
-                this->_processIoTUpdaterFirmwareCheckAttributesRequest(data);
-            },
-            std::array<const char*, 1>{FW_VER_KEY}
-        )
-    ),
-
-  _iotUpdaterOTACallback(
-    CURRENT_FIRMWARE_TITLE, 
-    CURRENT_FIRMWARE_VERSION, 
-    &_iotUpdater,
-    [this](const bool& result) {
-        this->_iotUpdaterFinishedCallback(result);
-    }, 
-    [this](const size_t& total, const size_t& progress) { 
-        this->_iotUpdaterProgressCallback(total, progress);
-    }
-  ) */
-  #endif
   {
     logger->addLogger(serialLogger);
     logger->setLogLevel(LogLevel::VERBOSE);
@@ -48,25 +22,6 @@ Udawa::Udawa() : config(PSTR("/config.json")), _crashStateConfig(PSTR("/crash.js
     #ifdef USE_LOCAL_WEB_INTERFACE
     xSemaphoreWSBroadcast = NULL;
     if(xSemaphoreWSBroadcast == NULL){xSemaphoreWSBroadcast = xSemaphoreCreateMutex();}
-    #endif
-
-    #ifdef USE_IOT
-    tb.setBufferSize(IOT_SEND_BUFFER_SIZE, IOT_RECV_BUFFER_SIZE);
-    tb.Subscribe_API_Implementation(_IAPIRPC);
-    tb.Subscribe_API_Implementation(_IAPIProv);
-    tb.Subscribe_API_Implementation(_IAPISharedAttr);
-    tb.Subscribe_API_Implementation(_IAPISharedAttrReq);
-    if(iotState.xSemaphoreThingsboard == NULL){iotState.xSemaphoreThingsboard = xSemaphoreCreateMutex();}
-    // Initialize Shared_Attribute_Callback with the correct arguments
-    _thingsboardSharedAttributesUpdateCallback = Shared_Attribute_Callback([this](const JsonObjectConst &data) {
-        this->_processThingsboardSharedAttributesUpdateWrapper(this, data); 
-    });
-    _thingsboardRPCRebootHandler = [this](const JsonVariantConst &data, JsonDocument &response) {
-       return this->_processThingsboardRPCReboot(data, response);
-    };
-    _thingsboardRPCConfigSaveHandler = [this](const JsonVariantConst &data, JsonDocument &response) {
-       return this->_processThingsboardRPCConfigSave(data, response);
-    };
     #endif
 }
 
@@ -220,11 +175,7 @@ void Udawa::_setLEDBuzzer(uint8_t color, uint8_t isBlink, int32_t blinkCount, ui
   {
   //Auto by network
   case 0:
-    #ifdef USE_IOT
-    if(tb.connected()){
-    #else
     if(false){
-    #endif
       r = config.state.LEDOn == false ? true : false;
       g = config.state.LEDOn == false ? true : false;
       b = config.state.LEDOn;
@@ -326,12 +277,6 @@ void Udawa::_alarmTaskRoutine(void *arg){
 
           #ifdef USE_LOCAL_WEB_INTERFACE
           self->wsBroadcast(doc);
-          #endif
-          
-          #ifdef USE_IOT
-          doc.clear();
-          doc[PSTR("alarm")] = alarmMsg.code;
-          self->iotSendTelemetry(doc);
           #endif
         }
         self->_setLEDBuzzer(alarmMsg.color, alarmMsg.blinkCount > 0 ? true : false, alarmMsg.blinkCount, alarmMsg.blinkDelay);
@@ -451,15 +396,6 @@ void Udawa::_startServices(){
 
       http.addHandler(&ws);
       http.begin();
-    }
-    #endif
-
-    #ifdef USE_IOT    
-    if(config.state.fIoT && iotState.xHandleIoT == NULL && !crashState.fSafeMode && !crashState.fFSDownloading){
-      iotState.xReturnedIoT = xTaskCreatePinnedToCore(_pvTaskCodeThingsboardTaskWrapper, PSTR("Thingsboard"), IOT_STACKSIZE_TB, this, 1, &iotState.xHandleIoT, 1);
-      if(iotState.xReturnedIoT == pdPASS){
-        logger->warn(PSTR(__func__), PSTR("Task Thingsboard has been created.\n"));
-      }
     }
     #endif
 }
@@ -766,28 +702,6 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
             strlcpy(config.state.binURL, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("binURL")].as<const char*>(), sizeof(config.state.binURL));
             logger->debug(PSTR(__func__), PSTR("binURL: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("binURL")].as<const char*>());
             }
-            #ifdef USE_IOT
-            if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("tbAddr")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("tbAddr")].as<const char*>()) > 0) {
-            strlcpy(config.state.tbAddr, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("tbAddr")].as<const char*>(), sizeof(config.state.tbAddr));
-            logger->debug(PSTR(__func__), PSTR("tbAddr: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("tbAddr")].as<const char*>());
-            }
-            if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("tbPort")].is<uint16_t>()) {
-            config.state.tbPort = doc[PSTR("setConfig")][PSTR("cfg")][PSTR("tbPort")].as<uint16_t>();
-            logger->debug(PSTR(__func__), PSTR("tbPort: %d\n"), config.state.tbPort); 
-            }
-            if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("fIoT")].is<bool>()) {
-            config.state.fIoT = doc[PSTR("setConfig")][PSTR("cfg")][PSTR("fIoT")].as<bool>();
-            logger->debug(PSTR(__func__), PSTR("fIoT: %d\n"), config.state.fIoT); 
-            }
-            if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("provDK")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("provDK")].as<const char*>()) > 0) {
-            strlcpy(config.state.provDK, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("provDK")].as<const char*>(), sizeof(config.state.provDK));
-            logger->debug(PSTR(__func__), PSTR("provDK: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("provDK")].as<const char*>());
-            }
-            if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("provDS")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("provDS")].as<const char*>()) > 0) {
-            strlcpy(config.state.provDS, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("provDS")].as<const char*>(), sizeof(config.state.provDS));
-            logger->debug(PSTR(__func__), PSTR("provDS: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("provDS")].as<const char*>());
-            }
-            #endif
           }
           config.save();
           }
@@ -871,359 +785,6 @@ void Udawa::_crashStateTruthKeeper(uint8_t direction){
   }
 }
 
-#ifdef USE_IOT
-void Udawa::_processThingsboardProvisionResponse(const JsonDocument &data){
-  if( iotState.xSemaphoreThingsboard != NULL && WiFi.isConnected() && !config.state.provSent && tb.connected()){
-    if( xSemaphoreTake( iotState.xSemaphoreThingsboard, ( TickType_t ) 1000 ) == pdTRUE )
-    {
-      constexpr char CREDENTIALS_TYPE[] PROGMEM = "credentialsType";
-      constexpr char CREDENTIALS_VALUE[] PROGMEM = "credentialsValue";
-      String _data;
-      serializeJson(data, _data);
-      logger->verbose(PSTR(__func__),PSTR("Received device provision response: %s\n"), _data.c_str());
-
-      if (strncmp(data["status"], "SUCCESS", strlen("SUCCESS")) != 0) {
-        logger->error(PSTR(__func__),PSTR("Provision response contains the error: (%s)\n"), data["errorMsg"].as<const char*>());
-      }
-      else
-      {
-        if (strncmp(data[CREDENTIALS_TYPE], PSTR("ACCESS_TOKEN"), strlen(PSTR("ACCESS_TOKEN"))) == 0) {
-          strlcpy(config.state.accTkn, data[CREDENTIALS_VALUE].as<std::string>().c_str(), sizeof(config.state.accTkn));
-          config.state.provSent = true;  
-          config.save();
-          logger->verbose(PSTR(__func__),PSTR("Access token provision response saved.\n"));
-        }
-        else if (strncmp(data[CREDENTIALS_TYPE], PSTR("MQTT_BASIC"), strlen(PSTR("MQTT_BASIC"))) == 0) {
-          /*auto credentials_value = data[CREDENTIALS_VALUE].as<JsonObjectConst>();
-          credentials.client_id = credentials_value[CLIENT_ID].as<std::string>();
-          credentials.username = credentials_value[CLIENT_USERNAME].as<std::string>();
-          credentials.password = credentials_value[CLIENT_PASSWORD].as<std::string>();*/
-        }
-        else {
-          logger->warn(PSTR(__func__),PSTR("Unexpected provision credentialsType: (%s)\n"), data[CREDENTIALS_TYPE].as<const char*>());
-
-        }
-      }
-
-      // Disconnect from the cloud client connected to the provision account, because it is no longer needed the device has been provisioned
-      // and we can reconnect to the cloud with the newly generated credentials.
-      if (tb.connected()) {
-        tb.disconnect();
-      }
-      xSemaphoreGive( iotState.xSemaphoreThingsboard );
-    }
-    else
-    {
-      logger->error(PSTR(__func__), PSTR("No semaphore available.\n"));
-    }
-  }
-}
-
-
-void Udawa::_pvTaskCodeThingsboard(void *pvParameters){
-  #ifdef USE_IOT_SECURE
-  _tcpClient.setCACert(CA_CERT);
-   const char *alpnProtocols[] = {"mqtt", NULL}; // Ensure NULL-terminated array
-  _tcpClient.setAlpnProtocols(alpnProtocols);
-  #endif
-  while(true){
-    if(!config.state.provSent){
-      if (tb.connect(config.state.tbAddr, PSTR("provision"), config.state.tbPort)) {
-        //const Provision_Callback provisionCallback(Access_Token(), &processProvisionResponse, PROVISION_DEVICE_KEY, PROVISION_DEVICE_SECRET, device_name.c_str(), REQUEST_TIMEOUT_MICROSECONDS, &requestTimedOut);
-        const Provision_Callback provisionCallback(
-            Access_Token(),
-            [this](const JsonDocument &data) {
-                this->_processThingsboardProvisionResponse(data);
-            }
-            ,
-            config.state.provDK,
-            config.state.provDS,
-            config.state.hwid
-        );
-        if(_IAPIProv.Provision_Request(provisionCallback))
-        {
-          logger->info(PSTR(__func__),PSTR("Connected to provisioning server: %s:%d. Sending provisioning response: DK: %s, DS: %s, Id: %s \n"),  
-            config.state.tbAddr, config.state.tbPort, config.state.provDK, config.state.provDS, config.state.hwid);
-        }
-        else{
-          logger->warn(PSTR(__func__), PSTR("Provision request failed: %s:%d DK:%s DS:%s ID:%S\n"), config.state.tbAddr, config.state.tbPort, config.state.provDK, config.state.provDS, config.state.hwid);
-        }
-      }
-      else
-      {
-        logger->warn(PSTR(__func__),PSTR("Failed to connect to provisioning server: %s:%d\n"),  config.state.tbAddr, config.state.tbPort);
-      }
-      unsigned long timer = millis();
-      while(true){
-        tb.loop();
-        if(config.state.provSent || (millis() - timer) > 10000){break;}
-        vTaskDelay((const TickType_t)10 / portTICK_PERIOD_MS);
-      }
-    }
-    else{
-      if(!tb.connected() && WiFi.isConnected())
-      {
-        for (auto callback : _onThingsboardDisconnectedCallbacks) { 
-          callback(); // Call each callback
-        }
-        logger->warn(PSTR(__func__),PSTR("IoT disconnected!\n"));
-        //onTbDisconnectedCb();
-        logger->info(PSTR(__func__),PSTR("Connecting to broker %s:%d\n"), config.state.tbAddr, config.state.tbPort);
-        uint8_t tbDisco = 0;
-        const uint8_t maxRetries = 12;
-        const TickType_t retryDelay = 5000 / portTICK_PERIOD_MS;
-        while(!tb.connect(config.state.tbAddr, config.state.accTkn, config.state.tbPort, config.state.hwid)){  
-          tbDisco++;
-          logger->warn(PSTR(__func__),PSTR("Failed to connect to IoT Broker %s (%d)\n"), config.state.tbAddr, tbDisco);
-          if(tbDisco >= maxRetries){
-            config.state.provSent = false;
-            tbDisco = 0;
-            break;
-          }
-          vTaskDelay(retryDelay); 
-        }
-
-        if(tb.connected()){
-          if(!iotState.fSharedAttributesSubscribed){
-            iotState.fSharedAttributesSubscribed = _IAPISharedAttr.Shared_Attributes_Subscribe(_thingsboardSharedAttributesUpdateCallback);
-            if (iotState.fSharedAttributesSubscribed){
-              logger->verbose(PSTR(__func__), PSTR("Thingsboard shared attributes update subscribed successfuly.\n"));
-            }
-            else{
-              logger->warn(PSTR(__func__), PSTR("Failed to subscribe Thingsboard shared attributes update.\n"));
-            }
-          }
-
-          if(!iotState.fRebootRPCSubscribed){
-            RPC_Callback rebootCallback("reboot", _thingsboardRPCRebootHandler);
-            iotState.fRebootRPCSubscribed = _IAPIRPC.RPC_Subscribe(rebootCallback); // Pass the callback directly
-            if(iotState.fRebootRPCSubscribed){
-              logger->verbose(PSTR(__func__), PSTR("reboot RPC subscribed successfuly.\n"));
-            }
-            else{
-              logger->warn(PSTR(__func__), PSTR("Failed to subscribe reboot RPC.\n"));
-            }
-          }
-
-          if(!iotState.fConfigSaveRPCSubscribed){
-            RPC_Callback configSaveCallback("configSave", _thingsboardRPCConfigSaveHandler);
-            iotState.fConfigSaveRPCSubscribed = _IAPIRPC.RPC_Subscribe(configSaveCallback); // Pass the callback directly
-            if(iotState.fConfigSaveRPCSubscribed){
-              logger->verbose(PSTR(__func__), PSTR("configSave RPC subscribed successfuly.\n"));
-            }
-            else{
-              logger->warn(PSTR(__func__), PSTR("Failed to subscribe configSave RPC.\n"));
-            }
-          }
-
-          #ifdef USE_IOT_OTA
-          iotState.fIoTCurrentFWSent = _IAPIOta.Firmware_Send_Info(CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION) && _IAPIOta.Firmware_Send_State(PSTR("UPDATED"));
-          if(iotState.fIoTCurrentFWSent){
-          //if(true){
-            //_IAPISharedAttrReq.Shared_Attributes_Request(_iotUpdaterFirmwareCheckCallback);
-          }
-          #endif
-
-          for (auto callback : _onThingsboardConnectedCallbacks) { 
-            callback(); // Call each callback
-          }
-          logger->info(PSTR(__func__),PSTR("IoT Connected!\n"));
-        }
-      }
-      else{
-        if(iotState.fIoTUpdateStarted){
-          _IAPIOta.Firmware_Send_Info(CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION) && _IAPIOta.Firmware_Send_State(PSTR("UPDATED"));
-          if (_IAPIOta.Subscribe_Firmware_Update(_iotUpdaterOTACallback) && _IAPIOta.Start_Firmware_Update(_iotUpdaterOTACallback)) {
-              logger->debug(PSTR(__func__), PSTR("Firmware update started.\n"));
-              // Firmware update started successfully
-              // Continue with the update process
-          } else {
-              logger->error(PSTR(__func__), PSTR("Firmware update failed to start.\n"));
-              // Handle the update failure
-          }
-          iotState.fIoTUpdateStarted = false;
-        }
-      }
-    }
-
-    tb.loop();
-    vTaskDelay((const TickType_t) 1 / portTICK_PERIOD_MS);
-  }
-}
-
-void Udawa::_pvTaskCodeThingsboardTaskWrapper(void* pvParameters) {  // Define as static
-  Udawa* udawaInstance = Udawa::getInstance();
-  udawaInstance->logger->debug(PSTR(__func__), PSTR("Starting Thingsboard task wrapper.\n"));
-  udawaInstance->_pvTaskCodeThingsboard(pvParameters); 
-}
-
-void Udawa::_processThingsboardSharedAttributesUpdate(const JsonObjectConst &data){
-  String _data;
-  serializeJson(data, _data);
-  logger->debug(PSTR(__func__), PSTR("%s\n"), _data.c_str());
-  for (auto callback : _onThingsboardSharedAttributesReceivedCallbacks) { 
-    callback(data); // Call each callback
-  }
-}
-
-void Udawa::addOnThingsboardConnected(ThingsboardOnConnectedCallback callback){
-  _onThingsboardConnectedCallbacks.push_back(callback);
-}
-
-void Udawa::addOnThingsboardDisconnected(ThingsboardOnDisconnectedCallback callback){
-  _onThingsboardDisconnectedCallbacks.push_back(callback);
-}
-
-void Udawa::addOnThingsboardSharedAttributesReceived(ThingsboardOnSharedAttributesReceivedCallback callback) {
-    _onThingsboardSharedAttributesReceivedCallbacks.push_back(callback);
-}
-
-void Udawa::_processThingsboardRPCReboot(const JsonVariantConst &data, JsonDocument &response) {
-  if(data != nullptr && data.as<int>() >= 0){
-    reboot(data.as<int>());
-  }
-  else{
-    reboot(0);
-  }
-  response.set(PSTR("OK"));
-}
-
-void Udawa::_processThingsboardRPCConfigSave(const JsonVariantConst &data, JsonDocument &response) {
-  config.save();
-  response.set(PSTR("OK"));
-}
-
-void Udawa::_processIoTUpdaterFirmwareCheckAttributesRequest(const JsonObjectConst &data){
-  if( iotState.xSemaphoreThingsboard != NULL && WiFi.isConnected() && config.state.provSent && tb.connected()){
-    if( xSemaphoreTake( iotState.xSemaphoreThingsboard, ( TickType_t ) 5000 ) == pdTRUE )
-    {
-      if(data[PSTR("fw_version")].is<const char*>()){
-        logger->info(PSTR(__func__), PSTR("Firmware check local: %s vs cloud: %s\n"), CURRENT_FIRMWARE_VERSION, data[PSTR("fw_version")].as<const char*>());
-        if(strcmp(data[PSTR("fw_version")].as<const char*>(), CURRENT_FIRMWARE_VERSION)){
-          logger->debug(PSTR(__func__), PSTR("Updating firmware...\n"));
-          iotState.fIoTUpdateStarted = true;
-        }else{
-          logger->debug(PSTR(__func__), PSTR("No need to update firmware.\n"));
-          iotState.fIoTUpdateStarted = false;
-        }
-      }
-      xSemaphoreGive( iotState.xSemaphoreThingsboard );
-    }
-    else
-    {
-      logger->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
-    }
-  }
-}
-
-void Udawa::_iotUpdaterFinishedCallback(const bool& success){
-  if(success){
-    logger->info(PSTR(__func__), PSTR("IoT OTA Update done!\n"));
-    reboot(10);
-  }
-  else{
-    logger->warn(PSTR(__func__), PSTR("IoT OTA Update failed!\n"));
-    reboot(10);
-  }
-}
-
-void Udawa::_iotUpdaterProgressCallback(const size_t& currentChunk, const size_t& totalChuncks){
-  if( xSemaphoreTake( iotState.xSemaphoreThingsboard, ( TickType_t ) 5000 ) == pdTRUE ) {
-    logger->debug(PSTR(__func__), PSTR("IoT OTA Progress: %.2f%%\n"),  static_cast<float>(currentChunk * 100U) / totalChuncks);
-    xSemaphoreGive( iotState.xSemaphoreThingsboard );   
-  }
-}
-
-bool Udawa::iotSendAttributes(const char *buffer){
-  bool res = false;
-  int length = strlen(buffer);
-  if (buffer[length - 1] != '}') {
-      logger->verbose(PSTR(__func__),PSTR("The buffer is not JSON formatted!\n"));
-      return false;
-  }
-  if( iotState.xSemaphoreThingsboard != NULL && WiFi.isConnected() && config.state.provSent && tb.connected() && config.state.accTkn != NULL){
-    if( xSemaphoreTake( iotState.xSemaphoreThingsboard, ( TickType_t ) 10000 ) == pdTRUE )
-    {
-      logger->verbose(PSTR(__func__), PSTR("Sending attribute to broker: %s\n"), buffer);
-      res = tb.sendAttributeString(buffer);
-      xSemaphoreGive( iotState.xSemaphoreThingsboard );
-    }
-    else
-    {
-      logger->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
-    }
-  }
-  return res;
-}
-
-bool Udawa::iotSendAttributes(JsonDocument &doc){
-  bool res = false;
-  //String buffer;
-  //serializeJson(doc, buffer);
-  //int length = strlen(buffer.c_str());
-  //if (buffer[length - 1] != '}') {
-  //    logger->verbose(PSTR(__func__),PSTR("The buffer is not JSON formatted!\n"));
-  //    return false;
-  //}
-  if( iotState.xSemaphoreThingsboard != NULL && WiFi.isConnected() && config.state.provSent && tb.connected() && config.state.accTkn != NULL){
-    if( xSemaphoreTake( iotState.xSemaphoreThingsboard, ( TickType_t ) 10000 ) == pdTRUE )
-    {
-      res = tb.sendAttributeJson(doc, doc.size());
-      xSemaphoreGive( iotState.xSemaphoreThingsboard );
-    }
-    else
-    {
-      logger->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
-    }
-  }
-  return res;
-}
-
-bool Udawa::iotSendTelemetry(const char *buffer){
-  bool res = false;
-  int length = strlen(buffer);
-  if (buffer[length - 1] != '}') {
-      logger->verbose(PSTR(__func__),PSTR("The buffer is not JSON formatted!\n"));
-      return false;
-  }
-  if( iotState.xSemaphoreThingsboard != NULL && WiFi.isConnected() && config.state.provSent && tb.connected() && config.state.accTkn != NULL){
-    if( xSemaphoreTake( iotState.xSemaphoreThingsboard, ( TickType_t ) 10000 ) == pdTRUE )
-    {
-      res = tb.sendTelemetryString(buffer); 
-      xSemaphoreGive( iotState.xSemaphoreThingsboard );
-    }
-    else
-    {
-      logger->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
-    }   
-  }
-  return res;
-}
-
-bool Udawa::iotSendTelemetry(JsonDocument &doc){
-  bool res = false;
-  /*String buffer;
-  serializeJson(doc, buffer);
-  int length = strlen(buffer.c_str());
-  if (buffer[length - 1] != '}') {
-      logger->verbose(PSTR(__func__),PSTR("The buffer is not JSON formatted!\n"));
-      return false;
-  }*/
-  if( iotState.xSemaphoreThingsboard != NULL && WiFi.isConnected() && config.state.provSent && tb.connected() && config.state.accTkn != NULL){
-    if( xSemaphoreTake( iotState.xSemaphoreThingsboard, ( TickType_t ) 10000 ) == pdTRUE )
-    {
-      res = tb.sendTelemetryJson(doc, doc.size()); 
-      xSemaphoreGive( iotState.xSemaphoreThingsboard );
-    }
-    else
-    {
-      logger->verbose(PSTR(__func__), PSTR("No semaphore available.\n"));
-    }   
-  }
-  return res;
-}
-#endif
-
 void Udawa::rtcUpdate(long ts){
   #ifdef USE_HW_RTC
   crashState.fRTCHwDetected = false;
@@ -1284,66 +845,6 @@ void Udawa::syncClientAttr(uint8_t direction){
   JsonDocument doc;
   char buffer[512];
 
-  #ifdef USE_IOT
-  if(tb.connected() && (direction == 0 || direction == 1) ){
-    doc[PSTR("ipad")] = ip;
-    doc[PSTR("compdate")] = COMPILED;
-    doc[PSTR("fmTitle")] = CURRENT_FIRMWARE_TITLE;
-    doc[PSTR("fmVersion")] = CURRENT_FIRMWARE_VERSION;
-    doc[PSTR("stamac")] = WiFi.macAddress();
-    doc[PSTR("apmac")] = WiFi.softAPmacAddress();
-    serializeJson(doc, buffer);
-    iotSendAttributes(buffer);
-    doc.clear();
-    doc[PSTR("flFree")] = ESP.getFreeSketchSpace();
-    doc[PSTR("fwSize")] = ESP.getSketchSize();
-    doc[PSTR("flSize")] = ESP.getFlashChipSize();
-    doc[PSTR("dSize")] = (int)LittleFS.totalBytes(); 
-    doc[PSTR("dUsed")] = (int)LittleFS.usedBytes();
-    serializeJson(doc, buffer);
-    iotSendAttributes(buffer);
-    doc.clear();
-    doc[PSTR("sdkVer")] = ESP.getSdkVersion();
-    doc[PSTR("model")] = config.state.model;
-    doc[PSTR("name")] = config.state.name;
-    doc[PSTR("group")] = config.state.group;
-    doc[PSTR("tbAddr")] = config.state.tbAddr;
-    doc[PSTR("tbPort")] = config.state.tbPort;
-    doc[PSTR("fIoT")] = config.state.fIoT;
-    doc[PSTR("binURL")] = config.state.binURL;
-    serializeJson(doc, buffer);
-    iotSendAttributes(buffer);
-    doc.clear();
-    doc[PSTR("wssid")] = config.state.wssid;
-    doc[PSTR("ap")] = WiFi.SSID();
-    doc[PSTR("wpass")] = config.state.wpass;
-    doc[PSTR("dssid")] = config.state.dssid;
-    doc[PSTR("dpass")] = config.state.dpass;
-    doc[PSTR("upass")] = config.state.upass;
-    doc[PSTR("accTkn")] = config.state.accTkn;
-    serializeJson(doc, buffer);
-    iotSendAttributes(buffer);
-    doc.clear();
-    doc[PSTR("provDK")] = config.state.provDK;
-    doc[PSTR("provDS")] = config.state.provDS;
-    doc[PSTR("logLev")] = config.state.logLev;
-    doc[PSTR("gmtOff")] = config.state.gmtOff;
-    serializeJson(doc, buffer);
-    iotSendAttributes(buffer);
-    doc.clear();
-    doc[PSTR("fWOTA")] = (int)config.state.fWOTA;
-    doc[PSTR("fWeb")] = (int)config.state.fWeb;
-    doc[PSTR("hname")] = config.state.hname;
-    doc[PSTR("logIP")] = config.state.logIP;
-    doc[PSTR("logPort")] = config.state.logPort;
-    doc[PSTR("htU")] = config.state.htU;
-    doc[PSTR("htP")] = config.state.htP;
-    serializeJson(doc, buffer);
-    iotSendAttributes(buffer);
-    doc.clear();
-  }
-  #endif
-
   #ifdef USE_LOCAL_WEB_INTERFACE
   if((direction == 0 || direction == 2)){
     JsonObject attr = doc["attr"].to<JsonObject>(); 
@@ -1372,11 +873,6 @@ void Udawa::syncClientAttr(uint8_t direction){
     cfg[PSTR("wssid")] = config.state.wssid;
     cfg[PSTR("wpass")] = config.state.wpass;
     cfg[PSTR("fInit")] = config.state.fInit;
-    #ifdef USE_IOT
-    cfg[PSTR("fIoT")] = config.state.fIoT;
-    cfg[PSTR("tbPort")] = config.state.tbPort;
-    cfg[PSTR("tbAddr")] = config.state.tbAddr;
-    #endif
     cfg[PSTR("binURL")] = config.state.binURL;
     serializeJson(doc, buffer);
     wsBroadcast(buffer);
@@ -1411,13 +907,6 @@ void Udawa::I2CScanner(){
 }
 
 void Udawa::FSDownloader(){
-  #ifdef USE_IOT
-  if (iotState.xHandleIoT != NULL) {
-    vTaskDelete(iotState.xHandleIoT);
-    iotState.xHandleIoT = NULL;
-    logger->info(PSTR(__func__), PSTR("IoT task stopped.\n"));
-  }
-  #endif
   HTTPClient http;
 
   logger->info(PSTR(__func__), PSTR("Downloading SPIFFS: %s.\n"), config.state.binURL);

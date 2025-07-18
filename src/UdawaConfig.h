@@ -7,7 +7,7 @@
 #include <LittleFS.h>
 #include "secret.h"
 #include "params.h"
-#include <functional> 
+#include <functional>
 #include <vector>
 
 struct UdawaConfigStruct{
@@ -25,13 +25,6 @@ struct UdawaConfigStruct{
   char dssid[64];
   char dpass[64];
   char upass[64];
-  #ifdef USE_IOT
-  bool fIoT;
-  char accTkn[32];
-  bool provSent;
-  char provDK[32];
-  char provDS[32];
-  #endif
   char binURL[192];
 
   int gmtOff;
@@ -52,19 +45,19 @@ struct UdawaConfigStruct{
   uint8_t pinBuzz = 32;
 };
 
-extern SemaphoreHandle_t xSemaphoreConfig; 
+extern SemaphoreHandle_t xSemaphoreConfig;
 
 class UdawaConfig{
     public:
         UdawaConfig(const char* path);
         bool begin();
-        bool load();        
+        bool load();
         bool save();
         UdawaConfigStruct state;
     private:
         UdawaLogger *_logger = UdawaLogger::getInstance(LogLevel::VERBOSE);
         const char *_path;
-        
+
 };
 
 class GenericConfig{
