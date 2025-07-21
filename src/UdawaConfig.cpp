@@ -50,7 +50,7 @@ bool UdawaConfig::load(){
             }
 
 
-            JsonDocument data;
+            StaticJsonDocument<JSON_DOC_SIZE_XLARGE> data;
             DeserializationError err = deserializeJson(data, file);
 
             if(err == DeserializationError::Ok){
@@ -168,7 +168,7 @@ bool UdawaConfig::save(){
             return false;
         }
 
-        JsonDocument data;
+        StaticJsonDocument<JSON_DOC_SIZE_XLARGE> data;
 
         data[PSTR("fInit")] = state.fInit;
         data[PSTR("hwid")] = state.hwid;
@@ -226,7 +226,7 @@ GenericConfig::GenericConfig(const char* path) : _path(path) {
 
 }
 
-bool GenericConfig::load(JsonDocument &data){
+bool GenericConfig::load(StaticJsonDocument<JSON_DOC_SIZE_XLARGE> &data){
     if( xSemaphoreConfig != NULL ){
         if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 5000 ) == pdTRUE ){
             _logger->info(PSTR(__func__),PSTR("Loading %s.\n"), _path);
@@ -260,7 +260,7 @@ bool GenericConfig::load(JsonDocument &data){
     return false;
 }
 
-bool GenericConfig::save(JsonDocument &data){
+bool GenericConfig::save(StaticJsonDocument<JSON_DOC_SIZE_XLARGE> &data){
     if( xSemaphoreConfig != NULL ){
       if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 5000 ) == pdTRUE )
       {

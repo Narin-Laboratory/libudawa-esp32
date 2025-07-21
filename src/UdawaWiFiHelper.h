@@ -8,6 +8,7 @@
 #include <vector>
 #include <DNSServer.h>
 #include <ArduinoJson.h>
+#include <params.h>
 
 struct WiFiHelperState {
     unsigned long softAPstartTime = 0;

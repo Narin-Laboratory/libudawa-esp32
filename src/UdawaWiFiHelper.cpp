@@ -107,7 +107,7 @@ void UdawaWiFiHelper::getAvailableWiFi(JsonDocument &doc){
     _logger->debug(PSTR(__func__), PSTR("Starting WiFi scanner...\n"));
     int num = WiFi.scanNetworks();
     _logger->debug(PSTR(__func__), PSTR("Scan finished.\n"));
-    JsonDocument object;
+    StaticJsonDocument<JSON_DOC_SIZE_XLARGE> object;
     JsonObject obj = object.to<JsonObject>();
 
     for(int i = 0; i < num; i++){
