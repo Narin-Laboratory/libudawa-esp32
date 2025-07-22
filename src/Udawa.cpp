@@ -551,6 +551,8 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
         _wsClientAuthenticationStatus[client->id()] = false;
         _wsClientAuthAttemptTimestamps[clientIP] = millis();
 
+        
+        logger->warn(PSTR(__func__), PSTR("*** FINIT:  %d*** \n"), config.state.fInit);
         if(config.state.fInit){
           // Generate a random salt
           unsigned char salt[16];
@@ -693,7 +695,7 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
           }
 
           else if(doc[PSTR("getConfig")].is<const char*>()){
-            syncClientAttr(2);
+            syncClientAttr(1);
           }
 
           else if(doc[PSTR("getAvailableWiFi")].is<const char*>()){
@@ -710,7 +712,7 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
 
           else if(doc[PSTR("setFInit")].is<JsonObject>()){
             if(doc[PSTR("setFInit")][PSTR("fInit")].is<bool>()){
-              syncClientAttr(2);
+              syncClientAttr(1);
               _setFInit(doc[PSTR("setFInit")][PSTR("fInit")].as<bool>());
             }
             reboot(3);
