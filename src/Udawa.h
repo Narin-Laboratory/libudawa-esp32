@@ -45,7 +45,6 @@
 #include <mbedtls/entropy.h>
 #endif
 #include <ArduinoHttpClient.h>
-#include "URLParser.h"
 #include <Update.h>
 
 #define countof(a) (sizeof(a) / sizeof(a[0]))
@@ -90,7 +89,7 @@ class Udawa {
         UdawaLogger *logger = UdawaLogger::getInstance(LogLevel::VERBOSE);
         UdawaSerialLogger *serialLogger = UdawaSerialLogger::getInstance(SERIAL_BAUD_RATE);
         #ifdef USE_WIFI_LOGGER
-        UdawaWiFiLogger *wiFiLogger = UdawaWiFiLogger::getInstance("255.255.255.255", 29514, 256);
+        UdawaWiFiLogger *wiFiLogger = UdawaWiFiLogger::getInstance("255.255.255.255", 29514, 1024);
         #endif
         UdawaWiFiHelper wiFiHelper;
         UdawaConfig config;
@@ -156,6 +155,7 @@ class Udawa {
         #ifdef USE_HW_RTC
         ErriezDS3231 _hwRTC;
         #endif
+        StaticJsonDocument<JSON_DOC_SIZE_XLARGE> _doc_xlarge;
 };
 
 #endif

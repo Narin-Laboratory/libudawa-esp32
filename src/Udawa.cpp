@@ -39,12 +39,11 @@ void Udawa::begin(){
     #endif
 
 
-    StaticJsonDocument<JSON_DOC_SIZE_XLARGE> doc;
-    wiFiHelper.getAvailableWiFi(doc);
+    wiFiHelper.getAvailableWiFi(_doc_xlarge);
     File file = LittleFS.open("/WiFiList.json", FILE_WRITE);
-    serializeJson(doc, file);
+    serializeJson(_doc_xlarge, file);
     file.close();
-
+    _doc_xlarge.clear();
 
     wiFiHelper.addOnConnectedCallback(std::bind(&Udawa::_onWiFiConnected, this));
     wiFiHelper.addOnGotIPCallback(std::bind(&Udawa::_onWiFiGotIP, this));
@@ -551,8 +550,6 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
         _wsClientAuthenticationStatus[client->id()] = false;
         _wsClientAuthAttemptTimestamps[clientIP] = millis();
 
-        
-        logger->warn(PSTR(__func__), PSTR("*** FINIT:  %d*** \n"), config.state.fInit);
         if(config.state.fInit){
           // Generate a random salt
           unsigned char salt[16];
@@ -578,23 +575,24 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
           _wsClientSalts[client->id()] = saltHex;
 
           // Send salt to the client
-          StaticJsonDocument<JSON_DOC_SIZE_MEDIUM> doc;
-          JsonObject setSalt = doc[PSTR("setSalt")].to<JsonObject>();
-          setSalt[PSTR("salt")] = saltHex;
-          setSalt[PSTR("name")] = config.state.name;
-          setSalt[PSTR("model")] = config.state.model;
-          setSalt[PSTR("group")] = config.state.group;
-          String message;
-          serializeJson(doc, message);
-          client->text(message);
+            _doc_xlarge.clear();
+            JsonObject setSalt = _doc_xlarge.createNestedObject(PSTR("setSalt"));
+            setSalt[PSTR("salt")] = saltHex;
+            setSalt[PSTR("name")] = config.state.name;
+            setSalt[PSTR("model")] = config.state.model;
+            setSalt[PSTR("group")] = config.state.group;
+            String message;
+            serializeJson(_doc_xlarge, message);
+            _doc_xlarge.clear();
+            client->text(message);
+            break;
+          }
+          }
           break;
-        }
-      }
-      break;
-    case WS_EVT_DATA:
-      {
-        StaticJsonDocument<JSON_DOC_SIZE_XLARGE> doc;
-        DeserializationError err = deserializeJson(doc, data);
+        case WS_EVT_DATA:
+          {
+        _doc_xlarge.clear();
+        DeserializationError err = deserializeJson(_doc_xlarge, (const char*)data, len);
         /*if(err != DeserializationError::Ok){
           logger->error(PSTR(__func__), PSTR("Failed to parse JSON.\n"));
           return;
@@ -619,14 +617,14 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
             return;
           }
           else{
-            if(doc[PSTR("auth")][PSTR("salt")] == nullptr || doc[PSTR("auth")][PSTR("hash")] == nullptr){
+            if(_doc_xlarge[PSTR("auth")][PSTR("salt")] == nullptr || _doc_xlarge[PSTR("auth")][PSTR("hash")] == nullptr){
               //client->printf(PSTR("{\"status\": {\"code\": 400, \"msg\": \"Bad request.\"}}"));
               //_wsClientAuthAttemptTimestamps[clientIP] = currentTime;
               return;
             }
 
-            String clientAuth = doc[PSTR("auth")][PSTR("hash")].as<String>();
-            String clientSalt = doc[PSTR("auth")][PSTR("salt")].as<String>();
+            String clientAuth = _doc_xlarge[PSTR("auth")][PSTR("hash")].as<String>();
+            String clientSalt = _doc_xlarge[PSTR("auth")][PSTR("salt")].as<String>();
             //logger->debug(PSTR(__func__), PSTR("\n\tserver: %s\n\tclient: %s\n\tkey: %s\n\tsalt: %s\n"), _auth.c_str(), auth.c_str(), config.state.htP, salt.c_str());
             
             if (_wsClientSalts[client->id()] == clientSalt) {
@@ -656,79 +654,108 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
           // The client is already authenticated or fInit is false, you can process the received data
           //...
 
-        if (doc[PSTR("setConfig")].is<JsonObject>()) {
-          if (doc[PSTR("setConfig")][PSTR("cfg")].is<JsonObject>()) {
-            if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wssid")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wssid")].as<const char*>()) > 0) {
-            strlcpy(config.state.wssid, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wssid")].as<const char*>(), sizeof(config.state.wssid));
-            logger->debug(PSTR(__func__), PSTR("wssid: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wssid")].as<const char*>());
+        if (_doc_xlarge[PSTR("setConfig")].is<JsonObject>()) {
+          if (_doc_xlarge[PSTR("setConfig")][PSTR("cfg")].is<JsonObject>()) {
+            if (_doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("wssid")].is<const char*>() && strlen(_doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("wssid")].as<const char*>()) > 0) {
+            strlcpy(config.state.wssid, _doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("wssid")].as<const char*>(), sizeof(config.state.wssid));
+            logger->debug(PSTR(__func__), PSTR("wssid: %s\n"), _doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("wssid")].as<const char*>());
             }
-            if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wpass")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wpass")].as<const char*>()) > 0) {
-            strlcpy(config.state.wpass, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wpass")].as<const char*>(), sizeof(config.state.wpass));
-            logger->debug(PSTR(__func__), PSTR("wpass: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wpass")].as<const char*>());
+            if (_doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("wpass")].is<const char*>() && strlen(_doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("wpass")].as<const char*>()) > 0) {
+            strlcpy(config.state.wpass, _doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("wpass")].as<const char*>(), sizeof(config.state.wpass));
+            logger->debug(PSTR(__func__), PSTR("wpass: %s\n"), _doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("wpass")].as<const char*>());
             }
-            if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("gmtOff")].is<int>()) {
-            config.state.gmtOff = doc[PSTR("setConfig")][PSTR("cfg")][PSTR("gmtOff")].as<int>();
+            if (_doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("gmtOff")].is<int>()) {
+            config.state.gmtOff = _doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("gmtOff")].as<int>();
             logger->debug(PSTR(__func__), PSTR("gmtOff: %d\n"), config.state.gmtOff);  // Display as integer
             }
-            if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("group")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("group")].as<const char*>()) > 0) {
-            strlcpy(config.state.group, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("group")].as<const char*>(), sizeof(config.state.group));
-            logger->debug(PSTR(__func__), PSTR("group: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("group")].as<const char*>());
+            if (_doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("group")].is<const char*>() && strlen(_doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("group")].as<const char*>()) > 0) {
+            strlcpy(config.state.group, _doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("group")].as<const char*>(), sizeof(config.state.group));
+            logger->debug(PSTR(__func__), PSTR("group: %s\n"), _doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("group")].as<const char*>());
             }
-            if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("name")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("name")].as<const char*>()) > 0) {
-            strlcpy(config.state.name, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("name")].as<const char*>(), sizeof(config.state.name));
-            logger->debug(PSTR(__func__), PSTR("name: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("name")].as<const char*>());
+            if (_doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("name")].is<const char*>() && strlen(_doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("name")].as<const char*>()) > 0) {
+            strlcpy(config.state.name, _doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("name")].as<const char*>(), sizeof(config.state.name));
+            logger->debug(PSTR(__func__), PSTR("name: %s\n"), _doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("name")].as<const char*>());
             }
-            if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("hname")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("hname")].as<const char*>()) > 0) {
-            strlcpy(config.state.hname, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("hname")].as<const char*>(), sizeof(config.state.hname));
-            logger->debug(PSTR(__func__), PSTR("hname: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("hname")].as<const char*>());
+            if (_doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("hname")].is<const char*>() && strlen(_doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("hname")].as<const char*>()) > 0) {
+            strlcpy(config.state.hname, _doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("hname")].as<const char*>(), sizeof(config.state.hname));
+            logger->debug(PSTR(__func__), PSTR("hname: %s\n"), _doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("hname")].as<const char*>());
             }
-            if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("htP")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("htP")].as<const char*>()) > 0) {
-            strlcpy(config.state.htP, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("htP")].as<const char*>(), sizeof(config.state.htP));
-            logger->debug(PSTR(__func__), PSTR("htP: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("htP")].as<const char*>());
+            if (_doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("htP")].is<const char*>() && strlen(_doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("htP")].as<const char*>()) > 0) {
+            strlcpy(config.state.htP, _doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("htP")].as<const char*>(), sizeof(config.state.htP));
+            logger->debug(PSTR(__func__), PSTR("htP: %s\n"), _doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("htP")].as<const char*>());
             }
-            if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("binURL")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("binURL")].as<const char*>()) > 0) {
-            strlcpy(config.state.binURL, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("binURL")].as<const char*>(), sizeof(config.state.binURL));
-            logger->debug(PSTR(__func__), PSTR("binURL: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("binURL")].as<const char*>());
+            if (_doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("binURL")].is<const char*>() && strlen(_doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("binURL")].as<const char*>()) > 0) {
+            strlcpy(config.state.binURL, _doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("binURL")].as<const char*>(), sizeof(config.state.binURL));
+            logger->debug(PSTR(__func__), PSTR("binURL: %s\n"), _doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("binURL")].as<const char*>());
             }
+            #ifdef USE_IOT
+            if (_doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("tbAddr")].is<const char*>() && strlen(_doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("tbAddr")].as<const char*>()) > 0) {
+            strlcpy(config.state.tbAddr, _doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("tbAddr")].as<const char*>(), sizeof(config.state.tbAddr));
+            logger->debug(PSTR(__func__), PSTR("tbAddr: %s\n"), _doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("tbAddr")].as<const char*>());
+            }
+            if (_doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("tbPort")].is<uint16_t>()) {
+            config.state.tbPort = _doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("tbPort")].as<uint16_t>();
+            logger->debug(PSTR(__func__), PSTR("tbPort: %d\n"), config.state.tbPort); 
+            }
+            if (_doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("fIoT")].is<bool>()) {
+            config.state.fIoT = _doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("fIoT")].as<bool>();
+            logger->debug(PSTR(__func__), PSTR("fIoT: %d\n"), config.state.fIoT); 
+            }
+            if (_doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("provDK")].is<const char*>() && strlen(_doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("provDK")].as<const char*>()) > 0) {
+            strlcpy(config.state.provDK, _doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("provDK")].as<const char*>(), sizeof(config.state.provDK));
+            logger->debug(PSTR(__func__), PSTR("provDK: %s\n"), _doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("provDK")].as<const char*>());
+            }
+            if (_doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("provDS")].is<const char*>() && strlen(_doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("provDS")].as<const char*>()) > 0) {
+            strlcpy(config.state.provDS, _doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("provDS")].as<const char*>(), sizeof(config.state.provDS));
+            logger->debug(PSTR(__func__), PSTR("provDS: %s\n"), _doc_xlarge[PSTR("setConfig")][PSTR("cfg")][PSTR("provDS")].as<const char*>());
+            }
+            #endif
           }
           config.save();
           }
 
-          else if(doc[PSTR("getConfig")].is<const char*>()){
+          else if(_doc_xlarge[PSTR("getConfig")].is<const char*>()){
             syncClientAttr(1);
           }
 
-          else if(doc[PSTR("getAvailableWiFi")].is<const char*>()){
-            StaticJsonDocument<JSON_DOC_SIZE_XLARGE> doc;
-            StaticJsonDocument<JSON_DOC_SIZE_XLARGE> WiFiList;
+          else if(_doc_xlarge[PSTR("getAvailableWiFi")].is<const char*>()){
             File file = LittleFS.open("/WiFiList.json", FILE_READ);
-            deserializeJson(WiFiList, file);
-            file.close();
-            doc[PSTR("WiFiList")] = WiFiList;
-            String data;
-            serializeJson(doc, data);
-            wsBroadcast(data.c_str());
+            if (file) {
+              size_t fileSize = file.size();
+              // Allocate buffer for {"WiFiList":} + file content + } + null terminator
+              size_t bufferSize = 13 + fileSize + 2;
+              char* buffer = new (std::nothrow) char[bufferSize];
+              if (buffer) {
+                strcpy(buffer, "{\"WiFiList\":");
+                file.readBytes(buffer + 12, fileSize);
+                buffer[12 + fileSize] = '}';
+                buffer[12 + fileSize + 1] = '\0';
+                wsBroadcast(buffer);
+                delete[] buffer;
+              }
+              file.close();
+            }
           }
 
-          else if(doc[PSTR("setFInit")].is<JsonObject>()){
-            if(doc[PSTR("setFInit")][PSTR("fInit")].is<bool>()){
+          else if(_doc_xlarge[PSTR("setFInit")].is<JsonObject>()){
+            if(_doc_xlarge[PSTR("setFInit")][PSTR("fInit")].is<bool>()){
+              _setFInit(_doc_xlarge[PSTR("setFInit")][PSTR("fInit")].as<bool>());
               syncClientAttr(1);
-              _setFInit(doc[PSTR("setFInit")][PSTR("fInit")].as<bool>());
             }
             reboot(3);
           }
 
-          else if(doc[PSTR("setRTCUpdate")].is<JsonObject>()){
-            if(doc[PSTR("setRTCUpdate")][PSTR("ts")].is<unsigned long>()){
-              rtcUpdate(doc[PSTR("setRTCUpdate")][PSTR("ts")].as<unsigned long>());
+          else if(_doc_xlarge[PSTR("setRTCUpdate")].is<JsonObject>()){
+            if(_doc_xlarge[PSTR("setRTCUpdate")][PSTR("ts")].is<unsigned long>()){
+              rtcUpdate(_doc_xlarge[PSTR("setRTCUpdate")][PSTR("ts")].as<unsigned long>());
             }
           }
 
-          else if(doc[PSTR("reboot")].is<int>()){
-            reboot(doc[PSTR("reboot")].as<int>());
+          else if(_doc_xlarge[PSTR("reboot")].is<int>()){
+            reboot(_doc_xlarge[PSTR("reboot")].as<int>());
           }
 
-          else if(doc[PSTR("FSUpdate")].is<bool>()){
+          else if(_doc_xlarge[PSTR("FSUpdate")].is<bool>()){
             crashState.fFSDownloading = true;
           }
 
@@ -736,6 +763,7 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
             callback(server, client, type, arg, data, len); // Call each callback
           }
         }
+        _doc_xlarge.clear();
       }
       break;
     case WS_EVT_ERROR:
@@ -753,24 +781,25 @@ void Udawa::addOnWsEvent(WsOnEventCallback callback) {
 #endif
 
 void Udawa::_crashStateTruthKeeper(uint8_t direction){
-  StaticJsonDocument<JSON_DOC_SIZE_XLARGE> crashStateDoc;
   crashState.rtcp = millis();
 
   if(direction == 1 || direction == 3){
-    _crashStateConfig.load(crashStateDoc);
-    crashState.rtcp = crashStateDoc[PSTR("rtcp")];
-    crashState.crashCnt = crashStateDoc[PSTR("crashCnt")];
-    crashState.fSafeMode = crashStateDoc[PSTR("fSafeMode")];
-    crashState.lastRecordedDatetime = crashStateDoc[PSTR("lastRecordedDatetime")];
+    _crashStateConfig.load(_doc_xlarge);
+    crashState.rtcp = _doc_xlarge[PSTR("rtcp")];
+    crashState.crashCnt = _doc_xlarge[PSTR("crashCnt")];
+    crashState.fSafeMode = _doc_xlarge[PSTR("fSafeMode")];
+    crashState.lastRecordedDatetime = _doc_xlarge[PSTR("lastRecordedDatetime")];
   } 
 
    if(direction == 2 || direction == 3){
-    crashStateDoc[PSTR("rtcp")] = crashState.rtcp;
-    crashStateDoc[PSTR("crashCnt")] = crashState.crashCnt;
-    crashStateDoc[PSTR("fSafeMode")] = crashState.fSafeMode;
-    crashStateDoc[PSTR("lastRecordedDatetime")] = RTC.getEpoch();
-    _crashStateConfig.save(crashStateDoc);
+    _doc_xlarge[PSTR("rtcp")] = crashState.rtcp;
+    _doc_xlarge[PSTR("crashCnt")] = crashState.crashCnt;
+    _doc_xlarge[PSTR("fSafeMode")] = crashState.fSafeMode;
+    _doc_xlarge[PSTR("lastRecordedDatetime")] = RTC.getEpoch();
+    _crashStateConfig.save(_doc_xlarge);
   }
+
+  _doc_xlarge.clear();
 }
 
 void Udawa::rtcUpdate(long ts){
@@ -830,12 +859,11 @@ void Udawa::addOnFSDownloadedCallback(FSDownloadedCallback callback){
 void Udawa::syncClientAttr(uint8_t direction){
   String ip = WiFi.localIP().toString();
   
-  StaticJsonDocument<JSON_DOC_SIZE_XLARGE> doc;
-  char buffer[JSON_DOC_SIZE_XLARGE];
+  String buffer;
 
   #ifdef USE_LOCAL_WEB_INTERFACE
   if((direction == 0 || direction == 1)){
-    JsonObject attr = doc["attr"].to<JsonObject>(); 
+    JsonObject attr = _doc_xlarge["attr"].to<JsonObject>(); 
     attr[PSTR("ipad")] = ip.c_str();
     attr[PSTR("compdate")] = COMPILED;
     attr[PSTR("fmTitle")] = CURRENT_FIRMWARE_TITLE;
@@ -848,10 +876,12 @@ void Udawa::syncClientAttr(uint8_t direction){
     attr[PSTR("dSize")] = (int)LittleFS.totalBytes(); 
     attr[PSTR("dUsed")] = (int)LittleFS.usedBytes();
     attr[PSTR("sdkVer")] = ESP.getSdkVersion();
-    serializeJson(doc, buffer);
-    wsBroadcast(buffer);
-    doc.clear();
-    JsonObject cfg = doc[PSTR("cfg")].to<JsonObject>(); 
+    serializeJson(_doc_xlarge, buffer);
+    wsBroadcast(buffer.c_str());
+    _doc_xlarge.clear();
+    buffer.clear();
+
+    JsonObject cfg = _doc_xlarge[PSTR("cfg")].to<JsonObject>(); 
     cfg[PSTR("name")] = config.state.name;
     cfg[PSTR("model")] = config.state.model;
     cfg[PSTR("group")] = config.state.group;
@@ -862,8 +892,10 @@ void Udawa::syncClientAttr(uint8_t direction){
     cfg[PSTR("wpass")] = config.state.wpass;
     cfg[PSTR("fInit")] = config.state.fInit;
     cfg[PSTR("binURL")] = config.state.binURL;
-    serializeJson(doc, buffer);
-    wsBroadcast(buffer);
+    serializeJson(_doc_xlarge, buffer);
+    wsBroadcast(buffer.c_str());
+    _doc_xlarge.clear();
+    buffer.clear();
   }
   #endif
 
@@ -898,25 +930,40 @@ void Udawa::FSDownloader() {
     // We need a WiFiClient for ArduinoHttpClient
     WiFiClient wifi;
 
-    // --- New code for URL Parsing ---
-    // The ArduinoHttpClient needs the host, port, and path separately.
-    // We use the ParsedUrl helper to get these from the full URL.
-    ParsedUrl parsedUrl(config.state.binURL);
-    if (!parsedUrl.host()) {
+    // --- New URL Parsing Logic ---
+    char host[128];
+    char path[128];
+    uint16_t port = 80; // Default to port 80
+
+    // Use sscanf to parse the URL from your configuration
+    // This format string looks for "http://", then captures the host (up to '/'),
+    // an optional port (:port), and the rest as the path.
+    if (sscanf(config.state.binURL, "http://%99[^:]:%hu/%99[^\n]", host, &port, path) == 3) {
+        // Successfully parsed host, port, and path
+    } else if (sscanf(config.state.binURL, "http://%99[^/]/%99[^\n]", host, path) == 2) {
+        // Successfully parsed host and path, port remains 80
+    } else {
         logger->error(PSTR(__func__), PSTR("Failed to parse URL: %s\n"), config.state.binURL);
-        reboot(300);
         return;
     }
-    // --- End of new code ---
+    // Prepend a '/' to the path if it's missing, as required by HttpClient
+    if (path[0] != '/') {
+        String tempPath = String("/") + String(path);
+        strncpy(path, tempPath.c_str(), sizeof(path) - 1);
+        path[sizeof(path) - 1] = '\0'; // Ensure null termination
+    }
+    // --- End of New URL Parsing Logic ---
 
     // Create the HttpClient instance with the WiFiClient and parsed server details
-    HttpClient http(wifi, parsedUrl.host(), parsedUrl.port());
+    HttpClient http(wifi, host, port);
 
-    logger->info(PSTR(__func__), PSTR("Downloading SPIFFS from host: %s, port: %d, path: %s\n"), parsedUrl.host(), parsedUrl.port(), parsedUrl.path());
+    logger->info(PSTR(__func__), PSTR("Downloading SPIFFS from host: %s, port: %d, path: %s\n"), host, port, path);
 
     // Make the GET request
-    http.get(parsedUrl.path());
+    http.get(path);
 
+    // ... (the rest of your function remains exactly the same) ...
+    
     // Get the status code from the response
     int httpCode = http.responseStatusCode();
 
@@ -925,7 +972,6 @@ void Udawa::FSDownloader() {
     String acceptRange;
 
     if (httpCode == 200) { // HTTP_CODE_OK
-        // --- Header processing is now done in a loop ---
         while (http.headerAvailable()) {
             String headerName = http.readHeaderName();
             String headerValue = http.readHeaderValue();
@@ -938,7 +984,6 @@ void Udawa::FSDownloader() {
                 acceptRange = headerValue;
             }
         }
-        // --- End of new header logic ---
 
         if (acceptRange == "bytes") {
             logger->info(PSTR(__func__), PSTR("This server supports resume!\n"));
@@ -948,15 +993,11 @@ void Udawa::FSDownloader() {
 
     } else {
         logger->error(PSTR(__func__), PSTR("Server responded with HTTP Status %d.\n"), httpCode);
-        reboot(300);
         return;
     }
 
-    // After reading headers, get the total body length.
-    // This will be the same as updateSize if the Content-Length header was present.
     updateSize = http.contentLength();
 
-    // Check updateSize and content type
     if (updateSize <= 0) {
         logger->error(PSTR(__func__), PSTR("Response is empty or invalid! updateSize: %d, contentType: %s\n"), (int)updateSize, contentType.c_str());
         reboot(3);
@@ -965,8 +1006,6 @@ void Udawa::FSDownloader() {
 
     logger->info(PSTR(__func__), PSTR("updateSize: %d, contentType: %s\n"), (int)updateSize, contentType.c_str());
     
-    // --- The http object itself is the stream ---
-    // No need for getStreamPtr(). We pass the client object directly.
     bool canBegin = Update.begin(updateSize, U_SPIFFS);
 
     if (!canBegin) {
@@ -982,7 +1021,6 @@ void Udawa::FSDownloader() {
 
     logger->info(PSTR(__func__), PSTR("Begin LittleFS OTA. This may take 2 - 5 mins to complete. Things might be quiet for a while.. Patience!\n"));
 
-    // --- Use the 'http' object directly as the stream ---
     size_t written = Update.writeStream(http);
 
     if (written == updateSize) {
@@ -1025,6 +1063,5 @@ void Udawa::FSDownloader() {
         reboot(3);
     }
 
-    // The code should reboot from one of the conditions above, but as a fallback:
     reboot(3);
 }

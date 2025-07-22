@@ -103,18 +103,16 @@ int UdawaWiFiHelper::rssiToPercent(int rssi) {
   return percentage;
 }
 
-void UdawaWiFiHelper::getAvailableWiFi(JsonDocument &doc){
+void UdawaWiFiHelper::getAvailableWiFi(StaticJsonDocument<JSON_DOC_SIZE_XLARGE> &doc){
     _logger->debug(PSTR(__func__), PSTR("Starting WiFi scanner...\n"));
     int num = WiFi.scanNetworks();
-    _logger->debug(PSTR(__func__), PSTR("Scan finished.\n"));
-    StaticJsonDocument<JSON_DOC_SIZE_XLARGE> object;
-    JsonObject obj = object.to<JsonObject>();
+    _logger->debug(PSTR(__func__), PSTR("Scan finished. Found %d networks.\n"), num);
 
     for(int i = 0; i < num; i++){
-        object["ssid"] = WiFi.SSID(i);
-        object["rssi"] = rssiToPercent(WiFi.RSSI(i));
-        _logger->debug(PSTR(__func__), PSTR("Found %s with signal strength %i\n"), WiFi.SSID(i), WiFi.RSSI(i));
-        doc.add(obj);
+        JsonObject obj = doc.createNestedObject();
+        obj["ssid"] = WiFi.SSID(i);
+        obj["rssi"] = rssiToPercent(WiFi.RSSI(i));
+        _logger->debug(PSTR(__func__), PSTR("Found %s with signal strength %i\n"), WiFi.SSID(i).c_str(), WiFi.RSSI(i));
     }
 }
 

@@ -38,7 +38,7 @@ class UdawaWiFiHelper{
             const char* dssid, const char* dpass, const char* hname, const char* htP);
         void setInitState (bool fInit);
         void run();
-        void getAvailableWiFi(JsonDocument &doc);
+        void getAvailableWiFi(StaticJsonDocument<JSON_DOC_SIZE_XLARGE> &doc);
         int rssiToPercent(int rssi);
     private:
         WiFiHelperState _state;

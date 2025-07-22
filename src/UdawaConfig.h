@@ -64,6 +64,7 @@ class UdawaConfig{
     private:
         UdawaLogger *_logger = UdawaLogger::getInstance(LogLevel::VERBOSE);
         const char *_path;
+        StaticJsonDocument<JSON_DOC_SIZE_XLARGE> _data;
         
 };
 
@@ -75,6 +76,7 @@ class GenericConfig{
   private:
     UdawaLogger *_logger = UdawaLogger::getInstance(LogLevel::VERBOSE);
     const char *_path;
+    StaticJsonDocument<JSON_DOC_SIZE_XLARGE> _data;
 };
 
 #endif

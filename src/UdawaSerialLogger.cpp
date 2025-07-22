@@ -87,11 +87,30 @@ void UdawaSerialLogger::write(const char *tag, LogLevel level, const char *fmt, 
 
     if(xSemaphoreUdawaSerialLogger != NULL && xSemaphoreTake(xSemaphoreUdawaSerialLogger, (TickType_t) 20))
     {
-        //esp_log_level_t esp_log_level = (esp_log_level_t)_mapLogLevel(level);
-        esp_log_level_t esp_log_level = ESP_LOG_NONE;
-        esp_log_write(esp_log_level, tag, "\033[0;%dm%c (%d) %s: ", _getConsoleColorCode(level), _getErrorChar(level), esp_log_timestamp(), tag);
-        esp_log_writev(esp_log_level, tag, fmt, args);
-        esp_log_write(esp_log_level, tag, "\033[0m");
+        // 1. Create a sufficiently large buffer on the stack.
+        //    1024 bytes should be safe for most log messages.
+        char log_buffer[1024];
+
+        // 2. Format the log message prefix into the buffer.
+        //    snprintf is safe and prevents overflows.
+        int prefix_len = snprintf(log_buffer, sizeof(log_buffer), "\033[0;%dm%c (%lu) %s: ", 
+                                  _getConsoleColorCode(level), 
+                                  _getErrorChar(level), 
+                                  (unsigned long)esp_log_timestamp(), 
+                                  tag);
+
+        // 3. Format the actual message content onto the end of the prefix.
+        //    Check if there's space before writing.
+        if (prefix_len < sizeof(log_buffer)) {
+            vsnprintf(log_buffer + prefix_len, sizeof(log_buffer) - prefix_len, fmt, args);
+        }
+
+        // 4. Print the complete, formatted buffer to the Serial port.
+        Serial.print(log_buffer);
+        
+        // 5. Print the color reset code.
+        Serial.print("\033[0m");
+
         xSemaphoreGive(xSemaphoreUdawaSerialLogger);
     }
     else{
