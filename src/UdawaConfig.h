@@ -63,20 +63,17 @@ class UdawaConfig{
         UdawaConfigStruct state;
     private:
         UdawaLogger *_logger = UdawaLogger::getInstance(LogLevel::VERBOSE);
-        const char *_path;
-        StaticJsonDocument<JSON_DOC_SIZE_XLARGE> _data;
-        
+        const char *_path;        
 };
 
 class GenericConfig{
   public:
     GenericConfig(const char* path);
-    bool load(StaticJsonDocument<JSON_DOC_SIZE_XLARGE> &data);
-    bool save(StaticJsonDocument<JSON_DOC_SIZE_XLARGE> &data);
+    bool load(DynamicJsonDocument &data);
+    bool save(DynamicJsonDocument &data);
   private:
     UdawaLogger *_logger = UdawaLogger::getInstance(LogLevel::VERBOSE);
     const char *_path;
-    StaticJsonDocument<JSON_DOC_SIZE_XLARGE> _data;
 };
 
 #endif

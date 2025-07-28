@@ -102,7 +102,7 @@ class Udawa {
             AsyncWebSocket ws;
             void addOnWsEvent(WsOnEventCallback callback);
             void wsBroadcast(const char *buffer);
-            void wsBroadcast(StaticJsonDocument<JSON_DOC_SIZE_XLARGE> &doc);
+            void wsBroadcast(DynamicJsonDocument &doc);
             SemaphoreHandle_t xSemaphoreWSBroadcast;
         #endif
         void reboot(int countDown);
@@ -117,7 +117,7 @@ class Udawa {
         void addOnFSDownloadedCallback(FSDownloadedCallback callback);
         std::vector<FSDownloadedCallback> _onFSDownloadedCallback;
 
-        void I2CScanner(StaticJsonDocument<JSON_DOC_SIZE_MEDIUM> &doc);
+        void I2CScanner(DynamicJsonDocument &doc);
         void I2CScanner();
 
     private:
@@ -155,7 +155,6 @@ class Udawa {
         #ifdef USE_HW_RTC
         ErriezDS3231 _hwRTC;
         #endif
-        StaticJsonDocument<JSON_DOC_SIZE_XLARGE> _doc_xlarge;
 };
 
 #endif

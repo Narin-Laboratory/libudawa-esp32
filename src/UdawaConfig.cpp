@@ -49,7 +49,7 @@ bool UdawaConfig::load(){
                 _logger->warn(PSTR(__func__),PSTR("%s size is abnormal: %d!\n"), _path, file.size());
             }
 
-
+            DynamicJsonDocument _data(JSON_DOC_SIZE_XLARGE);
             DeserializationError err = deserializeJson(_data, file);
 
             if(err == DeserializationError::Ok){
@@ -138,7 +138,6 @@ bool UdawaConfig::load(){
                 xSemaphoreGive( xSemaphoreConfig );
                 return false;
             }
-            _data.clear();
             file.close();
             xSemaphoreGive( xSemaphoreConfig );
             return true;
@@ -167,7 +166,7 @@ bool UdawaConfig::save(){
             return false;
         }
 
-        _data.clear();
+        DynamicJsonDocument _data(JSON_DOC_SIZE_XLARGE);
         _data[PSTR("fInit")] = state.fInit;
         _data[PSTR("hwid")] = state.hwid;
         _data[PSTR("name")] = state.name;
@@ -206,7 +205,6 @@ bool UdawaConfig::save(){
         serializeJson(_data, file);
 
         _logger->debug(PSTR(__func__),PSTR("%s saved successfully.\n"), _path);
-        _data.clear();
         file.close();        
         xSemaphoreGive( xSemaphoreConfig );
         return true;
@@ -224,7 +222,7 @@ GenericConfig::GenericConfig(const char* path) : _path(path) {
 
 }
 
-bool GenericConfig::load(StaticJsonDocument<JSON_DOC_SIZE_XLARGE> &data){
+bool GenericConfig::load(DynamicJsonDocument &data){
     if( xSemaphoreConfig != NULL ){
         if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 5000 ) == pdTRUE ){
             _logger->info(PSTR(__func__),PSTR("Loading %s.\n"), _path);
@@ -258,7 +256,7 @@ bool GenericConfig::load(StaticJsonDocument<JSON_DOC_SIZE_XLARGE> &data){
     return false;
 }
 
-bool GenericConfig::save(StaticJsonDocument<JSON_DOC_SIZE_XLARGE> &data){
+bool GenericConfig::save(DynamicJsonDocument &data){
     if( xSemaphoreConfig != NULL ){
       if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 5000 ) == pdTRUE )
       {
