@@ -102,7 +102,11 @@ class Udawa {
             AsyncWebSocket ws;
             void addOnWsEvent(WsOnEventCallback callback);
             void wsBroadcast(const char *buffer);
+<<<<<<< HEAD
             void wsBroadcast(DynamicJsonDocument &doc);
+=======
+            void wsBroadcast(JsonDocument &doc);
+>>>>>>> d112ae5 (WIP TBHelper)
             SemaphoreHandle_t xSemaphoreWSBroadcast;
         #endif
         void reboot(int countDown);
@@ -117,7 +121,11 @@ class Udawa {
         void addOnFSDownloadedCallback(FSDownloadedCallback callback);
         std::vector<FSDownloadedCallback> _onFSDownloadedCallback;
 
+<<<<<<< HEAD
         void I2CScanner(DynamicJsonDocument &doc);
+=======
+        void I2CScanner(JsonDocument &doc);
+>>>>>>> d112ae5 (WIP TBHelper)
         void I2CScanner();
 
     private:

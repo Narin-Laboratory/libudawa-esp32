@@ -222,7 +222,11 @@ GenericConfig::GenericConfig(const char* path) : _path(path) {
 
 }
 
+<<<<<<< HEAD
 bool GenericConfig::load(DynamicJsonDocument &data){
+=======
+bool GenericConfig::load(JsonDocument &data){
+>>>>>>> d112ae5 (WIP TBHelper)
     if( xSemaphoreConfig != NULL ){
         if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 5000 ) == pdTRUE ){
             _logger->info(PSTR(__func__),PSTR("Loading %s.\n"), _path);
@@ -256,7 +260,11 @@ bool GenericConfig::load(DynamicJsonDocument &data){
     return false;
 }
 
+<<<<<<< HEAD
 bool GenericConfig::save(DynamicJsonDocument &data){
+=======
+bool GenericConfig::save(JsonDocument &data){
+>>>>>>> d112ae5 (WIP TBHelper)
     if( xSemaphoreConfig != NULL ){
       if( xSemaphoreTake( xSemaphoreConfig, ( TickType_t ) 5000 ) == pdTRUE )
       {

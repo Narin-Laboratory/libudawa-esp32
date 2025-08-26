@@ -38,7 +38,11 @@ void Udawa::begin(){
     Wire.setClock(400000);
     #endif
 
+<<<<<<< HEAD
     DynamicJsonDocument doc(JSON_DOC_SIZE_XLARGE);
+=======
+    JsonDocument doc;
+>>>>>>> d112ae5 (WIP TBHelper)
     wiFiHelper.getAvailableWiFi(doc);
     File file = LittleFS.open("/WiFiList.json", FILE_WRITE);
     serializeJson(doc, file);
@@ -250,7 +254,11 @@ void Udawa::_alarmTaskRoutine(void *arg){
       if( xQueueReceive( self->_xQueueAlarm,  &( alarmMsg ), ( TickType_t ) 100 ) == pdPASS )
       {
         if(alarmMsg.code > 0){
+<<<<<<< HEAD
           DynamicJsonDocument doc(JSON_DOC_SIZE_MEDIUM);
+=======
+          JsonDocument doc;
+>>>>>>> d112ae5 (WIP TBHelper)
           JsonObject alarm = doc[PSTR("alarm")].to<JsonObject>();
           alarm[PSTR("code")] = alarmMsg.code;
           alarm[PSTR("time")] = self->RTC.getDateTime();
@@ -512,7 +520,11 @@ void Udawa::wsBroadcast(const char *buffer){
   }
 }
 
+<<<<<<< HEAD
 void Udawa::wsBroadcast(DynamicJsonDocument &doc){
+=======
+void Udawa::wsBroadcast(JsonDocument &doc){
+>>>>>>> d112ae5 (WIP TBHelper)
   if(config.state.fWeb){
     if( xSemaphoreWSBroadcast != NULL){
       if( xSemaphoreTake( xSemaphoreWSBroadcast, ( TickType_t ) 1000 ) == pdTRUE )
@@ -533,46 +545,47 @@ void Udawa::wsBroadcast(DynamicJsonDocument &doc){
 
 void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len){
   IPAddress clientIP = client->remoteIP();
+  JsonDocument doc;
   switch(type) {
     case WS_EVT_DISCONNECT:
-      {
-        logger->verbose(PSTR(__func__), PSTR("Client disconnected.\n"));
-        _wsClientAuthenticationStatus.erase(client->id());
-        _wsClientAuthAttemptTimestamps.erase(clientIP);
-        _wsClientSalts.erase(client->id());  // Remove salt on disconnect
-        break;     
-      }
-      break;
+    {
+      logger->verbose(PSTR(__func__), PSTR("Client disconnected.\n"));
+      _wsClientAuthenticationStatus.erase(client->id());
+      _wsClientAuthAttemptTimestamps.erase(clientIP);
+      _wsClientSalts.erase(client->id());  // Remove salt on disconnect
+      break;     
+    }
     case WS_EVT_CONNECT:
-      {
-        logger->verbose(PSTR(__func__), PSTR("New client arrived [%s]\n"), clientIP.toString().c_str());
-        _wsClientAuthenticationStatus[client->id()] = false;
-        _wsClientAuthAttemptTimestamps[clientIP] = millis();
+    {
+      logger->verbose(PSTR(__func__), PSTR("New client arrived [%s]\n"), clientIP.toString().c_str());
+      _wsClientAuthenticationStatus[client->id()] = false;
+      _wsClientAuthAttemptTimestamps[clientIP] = millis();
 
-        if(config.state.fInit){
-          // Generate a random salt
-          unsigned char salt[16];
-          mbedtls_entropy_context entropy;
-          mbedtls_ctr_drbg_context ctr_drbg;
-          const char *pers = "ws_salt";
+      if(config.state.fInit){
+        // Generate a random salt
+        unsigned char salt[16];
+        mbedtls_entropy_context entropy;
+        mbedtls_ctr_drbg_context ctr_drbg;
+        const char *pers = "ws_salt";
 
-          mbedtls_entropy_init(&entropy);
-          mbedtls_ctr_drbg_init(&ctr_drbg);
-          mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, (const unsigned char *)pers, strlen(pers));
-          mbedtls_ctr_drbg_random(&ctr_drbg, salt, sizeof(salt));
-          mbedtls_ctr_drbg_free(&ctr_drbg);
-          mbedtls_entropy_free(&entropy);
+        mbedtls_entropy_init(&entropy);
+        mbedtls_ctr_drbg_init(&ctr_drbg);
+        mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, (const unsigned char *)pers, strlen(pers));
+        mbedtls_ctr_drbg_random(&ctr_drbg, salt, sizeof(salt));
+        mbedtls_ctr_drbg_free(&ctr_drbg);
+        mbedtls_entropy_free(&entropy);
 
-          String saltHex;
-          for (int i = 0; i < sizeof(salt); i++) {
-              char hex[3];
-              sprintf(hex, "%02x", salt[i]);
-              saltHex += hex;
-          }
-          
-          // Store the salt for this client
-          _wsClientSalts[client->id()] = saltHex;
+        String saltHex;
+        for (int i = 0; i < sizeof(salt); i++) {
+            char hex[3];
+            sprintf(hex, "%02x", salt[i]);
+            saltHex += hex;
+        }
+        
+        // Store the salt for this client
+        _wsClientSalts[client->id()] = saltHex;
 
+<<<<<<< HEAD
           // Send salt to the client
             StaticJsonDocument<JSON_DOC_SIZE_SMALL> doc;
             JsonObject setSalt = doc.createNestedObject(PSTR("setSalt"));
@@ -594,27 +607,57 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
         DeserializationError err = deserializeJson(doc, (const char*)data, len);
         /*if(err != DeserializationError::Ok){
           logger->error(PSTR(__func__), PSTR("Failed to parse JSON.\n"));
+=======
+        // Send salt to the client
+          doc.clear();
+          JsonObject setSalt = doc.createNestedObject(PSTR("setSalt"));
+          setSalt[PSTR("salt")] = saltHex;
+          setSalt[PSTR("name")] = config.state.name;
+          setSalt[PSTR("model")] = config.state.model;
+          setSalt[PSTR("group")] = config.state.group;
+          String message;
+          serializeJson(doc, message);
+          doc.clear();
+          client->text(message);
+          break;
+        }
+      break;
+    }
+    case WS_EVT_DATA:
+    {
+      doc.clear();
+      DeserializationError err = deserializeJson(doc, (const char*)data, len);
+      /*if(err != DeserializationError::Ok){
+        logger->error(PSTR(__func__), PSTR("Failed to parse JSON.\n"));
+        return;
+      }*/
+      // If client is not authenticated, check credentials
+      if(!_wsClientAuthenticationStatus[client->id()] && config.state.fInit) {
+        logger->verbose(PSTR(__func__), PSTR("Client is NOT authenticated (%i) AND fInit is TRUE (%i)\n"), _wsClientAuthenticationStatus[client->id()], config.state.fInit);
+        unsigned long currentTime = millis();
+        unsigned long lastAttemptTime = _wsClientAuthAttemptTimestamps[clientIP];
+
+        /**if (currentTime - lastAttemptTime < 1000) {
+          // Too many attempts in short time, block this IP for blockInterval
+          //_wsClientAuthAttemptTimestamps[clientIP] = currentTime + WS_BLOCKED_DURATION - WS_RATE_LIMIT_INTERVAL;
+          logger->verbose(PSTR(__func__), PSTR("Too many authentication attempts. Blocking for %d seconds. Rate limit %d.\n"), WS_BLOCKED_DURATION / 1000, WS_RATE_LIMIT_INTERVAL);
+          //client->close();
+>>>>>>> d112ae5 (WIP TBHelper)
           return;
-        }*/
-        // If client is not authenticated, check credentials
-        if(!_wsClientAuthenticationStatus[client->id()] && config.state.fInit) {
-          logger->verbose(PSTR(__func__), PSTR("Client is NOT authenticated (%i) AND fInit is TRUE (%i)\n"), _wsClientAuthenticationStatus[client->id()], config.state.fInit);
-          unsigned long currentTime = millis();
-          unsigned long lastAttemptTime = _wsClientAuthAttemptTimestamps[clientIP];
+        }**/
 
-          /**if (currentTime - lastAttemptTime < 1000) {
-            // Too many attempts in short time, block this IP for blockInterval
-            //_wsClientAuthAttemptTimestamps[clientIP] = currentTime + WS_BLOCKED_DURATION - WS_RATE_LIMIT_INTERVAL;
-            logger->verbose(PSTR(__func__), PSTR("Too many authentication attempts. Blocking for %d seconds. Rate limit %d.\n"), WS_BLOCKED_DURATION / 1000, WS_RATE_LIMIT_INTERVAL);
-            //client->close();
-            return;
-          }**/
-
-          if (err != DeserializationError::Ok) {
+        if (err != DeserializationError::Ok) {
+          //client->printf(PSTR("{\"status\": {\"code\": 400, \"msg\": \"Bad request.\"}}"));
+          //_wsClientAuthAttemptTimestamps[clientIP] = currentTime;
+          return;
+        }
+        else{
+          if(doc[PSTR("auth")][PSTR("salt")] == nullptr || doc[PSTR("auth")][PSTR("hash")] == nullptr){
             //client->printf(PSTR("{\"status\": {\"code\": 400, \"msg\": \"Bad request.\"}}"));
             //_wsClientAuthAttemptTimestamps[clientIP] = currentTime;
             return;
           }
+<<<<<<< HEAD
           else{
             if(doc[PSTR("auth")][PSTR("salt")] == nullptr || doc[PSTR("auth")][PSTR("hash")] == nullptr){
               //client->printf(PSTR("{\"status\": {\"code\": 400, \"msg\": \"Bad request.\"}}"));
@@ -643,16 +686,124 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
             } else {
           logger->warn(PSTR(__func__), PSTR("Salt mismatch or expired.\n"));
           client->printf(PSTR("{\"status\": {\"code\": 401, \"msg\": \"Salt mismatch or expired.\", \"model\": \"%s\"}}"), config.state.model);
+=======
+
+          String clientAuth = doc[PSTR("auth")][PSTR("hash")].as<String>();
+          String clientSalt = doc[PSTR("auth")][PSTR("salt")].as<String>();
+          //logger->debug(PSTR(__func__), PSTR("\n\tserver: %s\n\tclient: %s\n\tkey: %s\n\tsalt: %s\n"), _auth.c_str(), auth.c_str(), config.state.htP, salt.c_str());
+          
+          if (_wsClientSalts[client->id()] == clientSalt) {
+              // Compute expected HMAC with stored salt
+              String expectedAuth = hmacSha256(config.state.htP, _wsClientSalts[client->id()]);
+
+              // Check if the HMACs match
+              //logger->verbose(PSTR(__func__), PSTR("\nhtP:\t%s \n\nclientAuth:\t%s\n\nexpectedAuth:\t%s\n"), config.state.htP, clientAuth.c_str(), expectedAuth.c_str());
+              if (clientAuth == expectedAuth) {
+                  _wsClientAuthenticationStatus[client->id()] = true;
+                  logger->verbose(PSTR(__func__), PSTR("Client authenticated successfully.\n"));
+                  client->printf(PSTR("{\"status\": {\"code\": 200, \"msg\": \"Authorized.\", \"model\": \"%s\"}}"), config.state.model);
+              } else {
+                  logger->warn(PSTR(__func__), PSTR("Authentication failed.\n"));
+                  client->printf(PSTR("{\"status\": {\"code\": 401, \"msg\": \"Authorization failed.\", \"model\": \"%s\"}}"), config.state.model);
+              }
+          } else {
+              logger->warn(PSTR(__func__), PSTR("Salt mismatch or expired.\n"));
+              client->printf(PSTR("{\"status\": {\"code\": 401, \"msg\": \"Salt mismatch or expired.\", \"model\": \"%s\"}}"), config.state.model);
+          }
+          // Update timestamp for rate limiting
+          _wsClientAuthAttemptTimestamps[clientIP] = currentTime;
+          return;
+        }
+      }
+      else {
+        // The client is already authenticated or fInit is false, you can process the received data
+        //...
+
+      if (doc[PSTR("setConfig")].is<JsonObject>()) {
+        if (doc[PSTR("setConfig")][PSTR("cfg")].is<JsonObject>()) {
+          if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wssid")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wssid")].as<const char*>()) > 0) {
+          strlcpy(config.state.wssid, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wssid")].as<const char*>(), sizeof(config.state.wssid));
+          logger->debug(PSTR(__func__), PSTR("wssid: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wssid")].as<const char*>());
+          }
+          if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wpass")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wpass")].as<const char*>()) > 0) {
+          strlcpy(config.state.wpass, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wpass")].as<const char*>(), sizeof(config.state.wpass));
+          logger->debug(PSTR(__func__), PSTR("wpass: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wpass")].as<const char*>());
+          }
+          if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("gmtOff")].is<int>()) {
+          config.state.gmtOff = doc[PSTR("setConfig")][PSTR("cfg")][PSTR("gmtOff")].as<int>();
+          logger->debug(PSTR(__func__), PSTR("gmtOff: %d\n"), config.state.gmtOff);  // Display as integer
+          }
+          if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("group")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("group")].as<const char*>()) > 0) {
+          strlcpy(config.state.group, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("group")].as<const char*>(), sizeof(config.state.group));
+          logger->debug(PSTR(__func__), PSTR("group: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("group")].as<const char*>());
+          }
+          if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("name")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("name")].as<const char*>()) > 0) {
+          strlcpy(config.state.name, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("name")].as<const char*>(), sizeof(config.state.name));
+          logger->debug(PSTR(__func__), PSTR("name: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("name")].as<const char*>());
+          }
+          if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("hname")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("hname")].as<const char*>()) > 0) {
+          strlcpy(config.state.hname, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("hname")].as<const char*>(), sizeof(config.state.hname));
+          logger->debug(PSTR(__func__), PSTR("hname: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("hname")].as<const char*>());
+          }
+          if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("htP")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("htP")].as<const char*>()) > 0) {
+          strlcpy(config.state.htP, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("htP")].as<const char*>(), sizeof(config.state.htP));
+          logger->debug(PSTR(__func__), PSTR("htP: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("htP")].as<const char*>());
+          }
+          if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("binURL")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("binURL")].as<const char*>()) > 0) {
+          strlcpy(config.state.binURL, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("binURL")].as<const char*>(), sizeof(config.state.binURL));
+          logger->debug(PSTR(__func__), PSTR("binURL: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("binURL")].as<const char*>());
+          }
+          #ifdef USE_IOT
+          if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("tbAddr")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("tbAddr")].as<const char*>()) > 0) {
+          strlcpy(config.state.tbAddr, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("tbAddr")].as<const char*>(), sizeof(config.state.tbAddr));
+          logger->debug(PSTR(__func__), PSTR("tbAddr: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("tbAddr")].as<const char*>());
+          }
+          if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("tbPort")].is<uint16_t>()) {
+          config.state.tbPort = doc[PSTR("setConfig")][PSTR("cfg")][PSTR("tbPort")].as<uint16_t>();
+          logger->debug(PSTR(__func__), PSTR("tbPort: %d\n"), config.state.tbPort); 
+          }
+          if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("fIoT")].is<bool>()) {
+          config.state.fIoT = doc[PSTR("setConfig")][PSTR("cfg")][PSTR("fIoT")].as<bool>();
+          logger->debug(PSTR(__func__), PSTR("fIoT: %d\n"), config.state.fIoT); 
+          }
+          if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("provDK")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("provDK")].as<const char*>()) > 0) {
+          strlcpy(config.state.provDK, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("provDK")].as<const char*>(), sizeof(config.state.provDK));
+          logger->debug(PSTR(__func__), PSTR("provDK: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("provDK")].as<const char*>());
+          }
+          if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("provDS")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("provDS")].as<const char*>()) > 0) {
+          strlcpy(config.state.provDS, doc[PSTR("setConfig")][PSTR("cfg")][PSTR("provDS")].as<const char*>(), sizeof(config.state.provDS));
+          logger->debug(PSTR(__func__), PSTR("provDS: %s\n"), doc[PSTR("setConfig")][PSTR("cfg")][PSTR("provDS")].as<const char*>());
+          }
+          #endif
+        }
+        config.save();
+        }
+
+        else if(doc[PSTR("getConfig")].is<const char*>()){
+          syncClientAttr(1);
+        }
+
+        else if(doc[PSTR("getAvailableWiFi")].is<const char*>()){
+          File file = LittleFS.open("/WiFiList.json", FILE_READ);
+          if (file) {
+            size_t fileSize = file.size();
+            // Allocate buffer for {"WiFiList":} + file content + } + null terminator
+            size_t bufferSize = 13 + fileSize + 2;
+            char* buffer = new (std::nothrow) char[bufferSize];
+            if (buffer) {
+              strcpy(buffer, "{\"WiFiList\":");
+              file.readBytes(buffer + 12, fileSize);
+              buffer[12 + fileSize] = '}';
+              buffer[12 + fileSize + 1] = '\0';
+              wsBroadcast(buffer);
+              delete[] buffer;
+>>>>>>> d112ae5 (WIP TBHelper)
             }
-            // Update timestamp for rate limiting
-            _wsClientAuthAttemptTimestamps[clientIP] = currentTime;
-            return;
+            file.close();
           }
         }
-        else {
-          // The client is already authenticated or fInit is false, you can process the received data
-          //...
 
+<<<<<<< HEAD
         if (doc[PSTR("setConfig")].is<JsonObject>()) {
           if (doc[PSTR("setConfig")][PSTR("cfg")].is<JsonObject>()) {
             if (doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wssid")].is<const char*>() && strlen(doc[PSTR("setConfig")][PSTR("cfg")][PSTR("wssid")].as<const char*>()) > 0) {
@@ -714,9 +865,17 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
           }
 
           else if(doc[PSTR("getConfig")].is<const char*>()){
+=======
+        else if(doc[PSTR("setFInit")].is<JsonObject>()){
+          if(doc[PSTR("setFInit")][PSTR("fInit")].is<bool>()){
+            _setFInit(doc[PSTR("setFInit")][PSTR("fInit")].as<bool>());
+>>>>>>> d112ae5 (WIP TBHelper)
             syncClientAttr(1);
           }
+          reboot(3);
+        }
 
+<<<<<<< HEAD
           else if(doc[PSTR("getAvailableWiFi")].is<const char*>()){
             File file = LittleFS.open("/WiFiList.json", FILE_READ);
             if (file) {
@@ -762,8 +921,29 @@ void Udawa::_onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, A
             callback(server, client, type, arg, data, len); // Call each callback
           }
         }
+=======
+        else if(doc[PSTR("setRTCUpdate")].is<JsonObject>()){
+          if(doc[PSTR("setRTCUpdate")][PSTR("ts")].is<unsigned long>()){
+            rtcUpdate(doc[PSTR("setRTCUpdate")][PSTR("ts")].as<unsigned long>());
+          }
+        }
+
+        else if(doc[PSTR("reboot")].is<int>()){
+          reboot(doc[PSTR("reboot")].as<int>());
+        }
+
+        else if(doc[PSTR("FSUpdate")].is<bool>()){
+          crashState.fFSDownloading = true;
+        }
+
+        for (auto callback : _onWSEventCallbacks) { 
+          callback(server, client, type, arg, data, len); // Call each callback
+        }
+>>>>>>> d112ae5 (WIP TBHelper)
       }
-      break;
+      doc.clear();
+    }
+    break;
     case WS_EVT_ERROR:
       {
         logger->warn(PSTR(__func__), PSTR("ws [%u] error\n"), client->id());
@@ -779,6 +959,7 @@ void Udawa::addOnWsEvent(WsOnEventCallback callback) {
 #endif
 
 void Udawa::_crashStateTruthKeeper(uint8_t direction){
+  JsonDocument doc;
   crashState.rtcp = millis();
   DynamicJsonDocument doc(JSON_DOC_SIZE_XLARGE);
 
@@ -797,6 +978,11 @@ void Udawa::_crashStateTruthKeeper(uint8_t direction){
     doc[PSTR("lastRecordedDatetime")] = RTC.getEpoch();
     _crashStateConfig.save(doc);
   }
+<<<<<<< HEAD
+=======
+
+  doc.clear();
+>>>>>>> d112ae5 (WIP TBHelper)
 }
 
 void Udawa::rtcUpdate(long ts){
@@ -861,7 +1047,13 @@ void Udawa::syncClientAttr(uint8_t direction){
 
   #ifdef USE_LOCAL_WEB_INTERFACE
   if((direction == 0 || direction == 1)){
+<<<<<<< HEAD
     JsonObject attr = doc["attr"].to<JsonObject>(); 
+=======
+    JsonDocument doc;
+
+    JsonObject attr = doc.createNestedObject("attr");
+>>>>>>> d112ae5 (WIP TBHelper)
     attr[PSTR("ipad")] = ip.c_str();
     attr[PSTR("compdate")] = COMPILED;
     attr[PSTR("fmTitle")] = CURRENT_FIRMWARE_TITLE;
@@ -879,7 +1071,11 @@ void Udawa::syncClientAttr(uint8_t direction){
     doc.clear();
     buffer.clear();
 
+<<<<<<< HEAD
     JsonObject cfg = doc[PSTR("cfg")].to<JsonObject>(); 
+=======
+    JsonObject cfg = doc.createNestedObject("cfg");
+>>>>>>> d112ae5 (WIP TBHelper)
     cfg[PSTR("name")] = config.state.name;
     cfg[PSTR("model")] = config.state.model;
     cfg[PSTR("group")] = config.state.group;
@@ -902,7 +1098,11 @@ void Udawa::syncClientAttr(uint8_t direction){
   }
 }
 
+<<<<<<< HEAD
 void Udawa::I2CScanner(DynamicJsonDocument &doc){
+=======
+void Udawa::I2CScanner(JsonDocument &doc){
+>>>>>>> d112ae5 (WIP TBHelper)
   JsonArray i2c = doc[PSTR("i2c")].to<JsonArray>();
   for (uint8_t i = 0; i < 127; i++) {
     Wire.beginTransmission(i);

@@ -63,17 +63,32 @@ class UdawaConfig{
         UdawaConfigStruct state;
     private:
         UdawaLogger *_logger = UdawaLogger::getInstance(LogLevel::VERBOSE);
+<<<<<<< HEAD
         const char *_path;        
+=======
+        const char *_path;
+        JsonDocument _data;
+        
+>>>>>>> d112ae5 (WIP TBHelper)
 };
 
 class GenericConfig{
   public:
     GenericConfig(const char* path);
+<<<<<<< HEAD
     bool load(DynamicJsonDocument &data);
     bool save(DynamicJsonDocument &data);
   private:
     UdawaLogger *_logger = UdawaLogger::getInstance(LogLevel::VERBOSE);
     const char *_path;
+=======
+    bool load(JsonDocument &data);
+    bool save(JsonDocument &data);
+  private:
+    UdawaLogger *_logger = UdawaLogger::getInstance(LogLevel::VERBOSE);
+    const char *_path;
+    JsonDocument _data;
+>>>>>>> d112ae5 (WIP TBHelper)
 };
 
 #endif
