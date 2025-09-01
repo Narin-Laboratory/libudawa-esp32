@@ -103,11 +103,7 @@ int UdawaWiFiHelper::rssiToPercent(int rssi) {
   return percentage;
 }
 
-<<<<<<< HEAD
-void UdawaWiFiHelper::getAvailableWiFi(DynamicJsonDocument &doc){
-=======
 void UdawaWiFiHelper::getAvailableWiFi(JsonDocument &doc){
->>>>>>> d112ae5 (WIP TBHelper)
     _logger->debug(PSTR(__func__), PSTR("Starting WiFi scanner...\n"));
     int num = WiFi.scanNetworks();
     _logger->debug(PSTR(__func__), PSTR("Scan finished. Found %d networks.\n"), num);
