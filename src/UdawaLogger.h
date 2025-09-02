@@ -46,4 +46,28 @@ class UdawaLogger
         LogLevel _logLevel;
 };
 
+class UdawaThingsboardLogger{
+    public:
+        static void log(const char *error){
+            UdawaLogger *_logger = UdawaLogger::getInstance(LogLevel::VERBOSE);
+            _logger->debug(PSTR(__func__), PSTR("%s\n"), error);
+        }
+        template<typename ...Args>
+        static int printfln(char const * const format, Args const &... args){
+            UdawaLogger *_logger = UdawaLogger::getInstance(LogLevel::VERBOSE);
+            size_t len = strlen(format);
+            char newFormat[len + 2];  // +2 for '\n' and null terminator
+            strcpy(newFormat, format);
+            strcat(newFormat, "\n");
+
+            _logger->debug(PSTR(__func__), newFormat, args...);
+            return 1U;
+        }
+        static int println(char const * const message){
+            UdawaLogger *_logger = UdawaLogger::getInstance(LogLevel::VERBOSE);
+            _logger->debug(PSTR(__func__), PSTR("%s\n"), message);
+            return 1U;
+        }
+};
+
 #endif

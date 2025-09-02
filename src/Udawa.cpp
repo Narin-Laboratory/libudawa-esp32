@@ -96,7 +96,7 @@ void Udawa::run(){
     ws.cleanupClients();
     #endif
 
-    if( !crashState.crashStateCheckedFlag && (now - crashState.crashStateCheckTimer) > 30000 ){
+    if( !crashState.crashStateCheckedFlag && (now - crashState.crashStateCheckTimer) > 60000 ){
       crashState.fSafeMode = false;
       crashState.crashCnt = 0;
       logger->info(PSTR(__func__), PSTR("fSafeMode & Crash Counter cleared! Try to reboot normally.\n"));
