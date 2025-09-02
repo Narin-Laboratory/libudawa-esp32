@@ -104,7 +104,7 @@ void Udawa::run(){
       crashState.crashStateCheckedFlag = true;
     }
 
-    if( (now - crashState.lastRecordedDatetimeSavedTimer) > 60000 ){
+    if( (now - crashState.lastRecordedDatetimeSavedTimer) > 300000 ){
       crashState.lastRecordedDatetimeSavedTimer = now;
       _crashStateTruthKeeper(2);
       logger->verbose(PSTR(__func__), PSTR("Crash state saved.\n"));
